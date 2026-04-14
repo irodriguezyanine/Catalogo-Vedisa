@@ -2031,7 +2031,7 @@ export function CatalogHomeClient({ feed }: Props) {
         >
           <div className="mb-4">
             <p className="premium-kicker">Cómo participar</p>
-            <h2 className="text-2xl font-bold text-[#2980b9]">¿Cómo participar en los remates?</h2>
+            <h2 className="text-2xl font-bold text-slate-900">¿Cómo participar en los remates?</h2>
             <p className="mt-2 text-sm text-slate-700">
               Participar en nuestras subastas online es <strong>fácil y seguro</strong>. Sigue estos pasos:
             </p>
@@ -2115,7 +2115,7 @@ export function CatalogHomeClient({ feed }: Props) {
             ].map((step) => (
               <div
                 key={step.step}
-                className="h-full rounded-[14px] border-2 border-[#ffc107] bg-gradient-to-b from-[#fffdf5] via-white to-[#fff9e8] px-4 py-6 text-center shadow-[0_6px_24px_rgba(255,193,7,0.4)] transition duration-200 hover:-translate-y-[3px] hover:shadow-[0_10px_30px_rgba(255,193,7,0.6)]"
+                className="h-full rounded-xl border border-slate-200 bg-white px-4 py-6 text-center shadow-sm transition duration-200 hover:-translate-y-1 hover:border-cyan-200 hover:shadow-md"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -2124,10 +2124,6 @@ export function CatalogHomeClient({ feed }: Props) {
                   className="mx-auto mb-4 w-[120px] max-w-full md:w-[96px]"
                   loading="lazy"
                 />
-                <span className="mx-auto mb-2 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                  <span aria-hidden="true">✓</span>
-                  Proceso seguro
-                </span>
                 <h3 className="text-base font-bold text-slate-900">
                   {step.step}. {step.title}
                 </h3>
