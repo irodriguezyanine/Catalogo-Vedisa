@@ -1,6 +1,6 @@
 import Image from "next/image";
 import { CatalogCard } from "@/components/catalog-card";
-import { getCatalogFeed, sourceLabel } from "@/lib/catalog";
+import { getCatalogFeed } from "@/lib/catalog";
 import type { CatalogItem } from "@/types/catalog";
 
 export const revalidate = 300;
@@ -56,9 +56,9 @@ function FeaturedStrip({ items }: FeaturedStripProps) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <p className="premium-kicker">Selecciones premium</p>
-          <h2 className="text-2xl font-bold text-white">Vitrina destacada</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Vitrina destacada</h2>
         </div>
-        <p className="text-xs text-zinc-400">Desliza horizontalmente</p>
+        <p className="text-xs text-slate-500">Desliza horizontalmente</p>
       </div>
       <div className="featured-strip">
         {items.map((item) => {
@@ -70,11 +70,11 @@ function FeaturedStrip({ items }: FeaturedStripProps) {
               <img src={image} alt={item.title} className="featured-image" loading="lazy" />
               <div className="featured-overlay" />
               <div className="featured-content">
-                <p className="line-clamp-1 text-sm font-semibold uppercase tracking-wide text-cyan-300">
+                <p className="line-clamp-1 text-sm font-semibold uppercase tracking-wide text-cyan-700">
                   {item.status ?? "Unidad disponible"}
                 </p>
                 <h3 className="line-clamp-2 text-xl font-bold text-white">{item.title}</h3>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-200">
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-100">
                   {item.subtitle ? <span className="featured-chip">{item.subtitle}</span> : null}
                   {date ? <span className="featured-chip">Remate {date}</span> : null}
                 </div>
@@ -92,11 +92,9 @@ function Section({ id, title, subtitle, items, badgeClassName }: SectionProps) {
     <section id={id} className="section-shell scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="premium-kicker">
-            Seccion destacada
-          </p>
-          <h2 className="text-2xl font-bold text-white">{title}</h2>
-          <p className="mt-1 text-sm text-zinc-300">{subtitle}</p>
+          <p className="premium-kicker">Seccion destacada</p>
+          <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
+          <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
         </div>
         <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ${badgeClassName}`}>
           {items.length} publicaciones
@@ -104,7 +102,7 @@ function Section({ id, title, subtitle, items, badgeClassName }: SectionProps) {
       </header>
 
       {items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-zinc-700 bg-zinc-900/70 p-6 text-sm text-zinc-400">
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
           No hay elementos disponibles en esta seccion por ahora.
         </div>
       ) : (
@@ -134,17 +132,17 @@ export default async function Home() {
   const premiumPicks = items.slice(0, 8);
   const stats = [
     { label: "Publicaciones activas", value: String(items.length) },
-    { label: "Fuente de datos", value: sourceLabel(feed.source) },
     { label: "Cobertura", value: "Nacional" },
-    { label: "Actualizacion", value: "Cada 5 min" },
+    { label: "Vehiculos con fotos", value: String(items.filter((item) => item.images.length > 0).length) },
+    { label: "Visores 3D activos", value: String(items.filter((item) => !!item.view3dUrl).length) },
   ];
 
   return (
-    <main className="premium-bg min-h-screen text-white">
+    <main className="premium-bg min-h-screen text-slate-900">
       <div className="premium-glow premium-glow-cyan" />
       <div className="premium-glow premium-glow-gold" />
 
-      <section className="relative z-10 border-b border-white/10 bg-black/40 backdrop-blur-xl">
+      <section className="relative z-10 border-b border-cyan-100 bg-white/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <Image
@@ -158,39 +156,36 @@ export default async function Home() {
             <nav className="flex flex-wrap gap-2 text-sm">
               <a
                 href="#proximos-remates"
-                className="rounded-full border border-zinc-700 bg-zinc-900/40 px-3 py-1 transition hover:border-cyan-400 hover:text-cyan-300"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700"
               >
                 Proximos remates
               </a>
               <a
                 href="#ventas-directas"
-                className="rounded-full border border-zinc-700 bg-zinc-900/40 px-3 py-1 transition hover:border-cyan-400 hover:text-cyan-300"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700"
               >
                 Ventas Directas
               </a>
               <a
                 href="#novedades"
-                className="rounded-full border border-zinc-700 bg-zinc-900/40 px-3 py-1 transition hover:border-cyan-400 hover:text-cyan-300"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700"
               >
                 Novedades
               </a>
               <a
                 href="#catalogo"
-                className="rounded-full border border-zinc-700 bg-zinc-900/40 px-3 py-1 transition hover:border-cyan-400 hover:text-cyan-300"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700"
               >
                 Catalogo
               </a>
             </nav>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-zinc-300">
-              Plataforma de exhibicion de remates e inventario con actualizacion dinamica.
+            <p className="text-sm text-slate-600">
+              Plataforma de exhibicion de remates e inventario con integracion automatica.
             </p>
             <div className="flex items-center gap-2 text-xs">
-              <span className="rounded-full bg-emerald-600 px-3 py-1 font-semibold text-white">
-                Fuente: {sourceLabel(feed.source)}
-              </span>
-              <span className="rounded-full bg-zinc-800 px-3 py-1 text-zinc-200">
+              <span className="rounded-full bg-cyan-600 px-3 py-1 font-semibold text-white">
                 {items.length} vehiculos
               </span>
             </div>
@@ -205,27 +200,21 @@ export default async function Home() {
 
       <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-5 lg:px-8">
         <div className="premium-panel premium-panel-hero lg:col-span-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">
             Landing Premium
           </p>
-          <h1 className="mt-3 text-3xl font-black leading-tight text-white md:text-5xl">
+          <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
             Plataforma corporativa para exhibir remates y ventas de alto impacto.
           </h1>
-          <p className="mt-4 max-w-2xl text-sm text-zinc-300 md:text-base">
-            Vedisaremates conecta inventario dinamico, fotografias y experiencia visual moderna para una vitrina
-            digital confiable, elegante y orientada a conversion.
+          <p className="mt-4 max-w-2xl text-sm text-slate-600 md:text-base">
+            Vedisaremates conecta inventario, fotografias y visores 3D para una vitrina digital moderna, confiable y
+            enfocada en conversion.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <a
-              href="#catalogo"
-              className="premium-btn-primary"
-            >
+            <a href="#catalogo" className="premium-btn-primary">
               Ver catalogo completo
             </a>
-            <a
-              href="#proximos-remates"
-              className="premium-btn-secondary"
-            >
+            <a href="#proximos-remates" className="premium-btn-secondary">
               Explorar secciones
             </a>
           </div>
@@ -233,8 +222,8 @@ export default async function Home() {
         <div className="grid gap-3 lg:col-span-2">
           {stats.map((stat) => (
             <div key={stat.label} className="premium-stat">
-              <p className="text-xs uppercase tracking-widest text-zinc-400">{stat.label}</p>
-              <p className="mt-1 text-xl font-bold text-white">{stat.value}</p>
+              <p className="text-xs uppercase tracking-widest text-slate-500">{stat.label}</p>
+              <p className="mt-1 text-xl font-bold text-slate-900">{stat.value}</p>
             </div>
           ))}
         </div>
@@ -247,23 +236,23 @@ export default async function Home() {
           <div className="grid gap-4 md:grid-cols-3">
             <div className="premium-stat">
               <p className="premium-kicker">Experiencia</p>
-              <h3 className="mt-1 text-lg font-bold text-white">Navegacion fluida</h3>
-              <p className="mt-2 text-sm text-zinc-300">
+              <h3 className="mt-1 text-lg font-bold text-slate-900">Navegacion fluida</h3>
+              <p className="mt-2 text-sm text-slate-600">
                 Arquitectura optimizada para mostrar mas inventario con carga veloz.
               </p>
             </div>
             <div className="premium-stat">
               <p className="premium-kicker">Confianza</p>
-              <h3 className="mt-1 text-lg font-bold text-white">Data centralizada</h3>
-              <p className="mt-2 text-sm text-zinc-300">
-                Integracion directa a Supabase para evitar desfases entre sistemas.
+              <h3 className="mt-1 text-lg font-bold text-slate-900">Data centralizada</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Integracion directa con AWS + Supabase para evitar desfases entre sistemas.
               </p>
             </div>
             <div className="premium-stat">
               <p className="premium-kicker">Escalabilidad</p>
-              <h3 className="mt-1 text-lg font-bold text-white">Listo para crecer</h3>
-              <p className="mt-2 text-sm text-zinc-300">
-                Base preparada para agregar buscador avanzado, filtros y portal de clientes.
+              <h3 className="mt-1 text-lg font-bold text-slate-900">Listo para crecer</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Base preparada para filtros avanzados, buscador inteligente y portal de clientes.
               </p>
             </div>
           </div>
@@ -295,16 +284,16 @@ export default async function Home() {
           title="Catalogo"
           subtitle="Galeria general con historial de remates y unidades destacadas."
           items={catalogo}
-          badgeClassName="bg-zinc-200 text-zinc-900"
+          badgeClassName="bg-slate-200 text-slate-900"
         />
 
         <section className="section-shell">
           <div className="premium-panel">
             <p className="premium-kicker">Call to action</p>
-            <h2 className="mt-2 text-2xl font-bold text-white md:text-3xl">
+            <h2 className="mt-2 text-2xl font-bold text-slate-900 md:text-3xl">
               Potencia tu vitrina digital con una experiencia de remates de nivel corporativo.
             </h2>
-            <p className="mt-3 max-w-2xl text-sm text-zinc-300">
+            <p className="mt-3 max-w-2xl text-sm text-slate-600">
               Este landing ya esta listo para integrar filtros inteligentes, formularios de contacto y automatizaciones
               comerciales para cerrar mas oportunidades.
             </p>
@@ -320,10 +309,10 @@ export default async function Home() {
         </section>
       </div>
 
-      <footer className="border-t border-white/10 bg-black/50">
-        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-xs text-zinc-400 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+      <footer className="border-t border-cyan-100 bg-white/80">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-xs text-slate-500 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <p>VEDISAREMATES.CL · Maximizacion de recupero vehicular</p>
-          <p>Catalogo corporativo con actualizacion automatica de inventario</p>
+          <p>Catalogo corporativo con integracion automatica de inventario</p>
         </div>
       </footer>
     </main>

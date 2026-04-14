@@ -21,9 +21,9 @@ body {
 .premium-bg {
   position: relative;
   background:
-    radial-gradient(circle at 12% 18%, rgba(51, 199, 227, 0.18), transparent 36%),
-    radial-gradient(circle at 82% 12%, rgba(255, 198, 0, 0.15), transparent 34%),
-    linear-gradient(180deg, #06090f 0%, #0a0e16 35%, #0d1118 100%);
+    radial-gradient(circle at 12% 18%, rgba(51, 199, 227, 0.2), transparent 36%),
+    radial-gradient(circle at 82% 12%, rgba(114, 224, 245, 0.2), transparent 34%),
+    linear-gradient(180deg, #eef5fb 0%, #f5f8fc 35%, #eef3f8 100%);
 }
 
 .premium-glow {
@@ -34,7 +34,7 @@ body {
   filter: blur(85px);
   z-index: 0;
   pointer-events: none;
-  opacity: 0.35;
+  opacity: 0.28;
   animation: floatGlow 12s ease-in-out infinite;
 }
 
@@ -47,40 +47,40 @@ body {
 .premium-glow-gold {
   right: -7rem;
   top: 30%;
-  background: rgba(255, 198, 0, 0.65);
+  background: rgba(124, 217, 243, 0.62);
   animation-delay: 1.2s;
 }
 
 .premium-panel {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(125, 162, 186, 0.22);
   border-radius: 1.25rem;
   padding: 2rem;
-  background: linear-gradient(145deg, rgba(12, 20, 32, 0.85), rgba(20, 28, 42, 0.72));
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(245, 250, 255, 0.9));
+  box-shadow: 0 18px 40px rgba(41, 95, 127, 0.14);
 }
 
 .premium-panel-hero {
-  border-color: rgba(51, 199, 227, 0.35);
+  border-color: rgba(51, 199, 227, 0.45);
 }
 
 .premium-panel::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(120deg, rgba(51, 199, 227, 0.14), transparent 35%, rgba(255, 198, 0, 0.12));
-  opacity: 0.9;
+  background: linear-gradient(120deg, rgba(51, 199, 227, 0.09), transparent 35%, rgba(114, 224, 245, 0.1));
+  opacity: 1;
   pointer-events: none;
 }
 
 .premium-stat {
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(149, 189, 214, 0.3);
   border-radius: 1rem;
   padding: 1rem;
-  background: rgba(8, 12, 18, 0.68);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(4px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
 }
 
 .premium-kicker {
@@ -88,14 +88,14 @@ body {
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgb(161 161 170);
+  color: rgb(71 122 148);
 }
 
 .section-shell {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(143, 183, 209, 0.28);
   border-radius: 1.2rem;
   padding: 1.3rem;
-  background: linear-gradient(180deg, rgba(10, 14, 20, 0.64), rgba(8, 12, 16, 0.5));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 255, 0.9));
 }
 
 .premium-btn-primary {
@@ -116,16 +116,16 @@ body {
 
 .premium-btn-secondary {
   border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(113, 156, 184, 0.45);
   padding: 0.56rem 1.25rem;
   font-size: 0.86rem;
   font-weight: 700;
-  color: rgb(228 228 231);
+  color: rgb(36 74 98);
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
 .premium-btn-secondary:hover {
-  border-color: rgba(255, 255, 255, 0.55);
+  border-color: rgba(42, 132, 173, 0.75);
   transform: translateY(-1px);
 }
 
@@ -144,7 +144,7 @@ body {
 }
 
 .featured-strip::-webkit-scrollbar-thumb {
-  background: rgba(113, 113, 122, 0.65);
+  background: rgba(85, 144, 173, 0.65);
   border-radius: 9999px;
 }
 
@@ -153,8 +153,8 @@ body {
   height: 208px;
   border-radius: 1rem;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgb(9 14 20);
+  border: 1px solid rgba(187, 216, 231, 0.75);
+  background: rgb(225 239 248);
   scroll-snap-align: start;
 }
 
@@ -172,7 +172,7 @@ body {
 .featured-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(3, 6, 10, 0.05) 20%, rgba(3, 6, 10, 0.86));
+  background: linear-gradient(180deg, rgba(14, 33, 45, 0.08) 20%, rgba(9, 24, 34, 0.82));
 }
 
 .featured-content {
@@ -185,8 +185,8 @@ body {
 
 .featured-chip {
   border-radius: 9999px;
-  background: rgba(24, 30, 40, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.17);
+  background: rgba(17, 53, 72, 0.78);
+  border: 1px solid rgba(174, 225, 247, 0.35);
   padding: 0.22rem 0.58rem;
 }
 
