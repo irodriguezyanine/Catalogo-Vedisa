@@ -2,6 +2,12 @@ export type SectionId = "proximos-remates" | "ventas-directas" | "novedades" | "
 
 export type VehicleTypeId = "livianos" | "pesados" | "maquinaria" | "otros";
 
+export type UpcomingAuction = {
+  id: string;
+  name: string;
+  date: string;
+};
+
 export type EditorVehicleDetails = {
   title?: string;
   subtitle?: string;
@@ -24,6 +30,8 @@ export type EditorConfig = {
   hiddenVehicleIds: string[];
   vehiclePrices: Record<string, string>;
   vehicleDetails: Record<string, EditorVehicleDetails>;
+  upcomingAuctions: UpcomingAuction[];
+  vehicleUpcomingAuctionIds: Record<string, string>;
 };
 
 export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
@@ -36,4 +44,6 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
   hiddenVehicleIds: [],
   vehiclePrices: {},
   vehicleDetails: {},
+  upcomingAuctions: [],
+  vehicleUpcomingAuctionIds: {},
 };

@@ -1,8 +1,10 @@
+import { useEffect, useMemo, useState } from "react";
 import type { CatalogItem } from "@/types/catalog";
 
 type CatalogCardProps = {
   item: CatalogItem;
   priceLabel?: string | null;
+  upcomingAuctionLabel?: string;
   onOpen?: () => void;
 };
 
@@ -25,6 +27,14 @@ function shortText(value?: string, max = 90): string | undefined {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
+function isLikelyImageUrl(url?: string): boolean {
+  if (!url || !url.startsWith("http")) return false;
+  const normalized = url.toLowerCase();
+  if (normalized.includes("glo3d.net/iframe") || normalized.includes("<iframe")) return false;
+  if (/\.(jpg|jpeg|png|webp|gif|bmp|avif)(\?|$)/i.test(normalized)) return true;
+  return /cdn\.|cloudfront|amazonaws|supabase|img|image|media/.test(normalized);
+}
+
 function getPatent(item: CatalogItem): string {
   const raw = item.raw as Record<string, unknown>;
   const value = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number].find(
@@ -44,25 +54,38 @@ function getBrandModel(item: CatalogItem): string {
   return `${brand ?? ""} ${model ?? ""}`.trim() || item.title;
 }
 
-export function CatalogCard({ item, priceLabel, onOpen }: CatalogCardProps) {
-  const cover = item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg";
-  const thumbs = item.images.slice(0, 8);
+export function CatalogCard({ item, priceLabel, upcomingAuctionLabel, onOpen }: CatalogCardProps) {
+  const coverCandidate = item.thumbnail ?? item.images[0];
+  const cover = isLikelyImageUrl(coverCandidate) ? (coverCandidate as string) : "/placeholder-car.svg";
+  const [coverSrc, setCoverSrc] = useState(cover);
+  const thumbs = useMemo(
+    () =>
+      item.images
+        .filter((url) => isLikelyImageUrl(url) && url !== coverSrc)
+        .slice(0, 8),
+    [item.images, coverSrc],
+  );
   const formattedDate = formatDate(item.auctionDate);
   const patent = getPatent(item);
   const brandModel = getBrandModel(item);
   const whatsappText = `Hola, estoy interesado en ofertar por el vehículo ${patent} ${brandModel}`;
   const whatsappUrl = `${WHATSAPP_BASE_URL}&text=${encodeURIComponent(whatsappText)}&type=phone_number&app_absent=0`;
 
+  useEffect(() => {
+    setCoverSrc(cover);
+  }, [cover]);
+
   return (
-    <article className="group w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-md transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg">
-      <button type="button" onClick={onOpen} className="w-full text-left">
+    <article className="group glass-soft w-full overflow-hidden rounded-2xl text-left shadow-md transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg">
+      <button type="button" onClick={onOpen} className="ui-focus w-full text-left">
         <div className="relative h-56 w-full bg-slate-100">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={cover}
+            src={coverSrc}
             alt={item.title}
             className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
             loading="lazy"
+            onError={() => setCoverSrc("/placeholder-car.svg")}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/5 to-transparent" />
           {item.status ? (
@@ -96,6 +119,11 @@ export function CatalogCard({ item, priceLabel, onOpen }: CatalogCardProps) {
                 {shortText(item.location, 35)}
               </span>
             ) : null}
+            {upcomingAuctionLabel ? (
+              <span className="rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700">
+                {shortText(`Remate: ${upcomingAuctionLabel}`, 38)}
+              </span>
+            ) : null}
           </div>
 
           {thumbs.length > 1 ? (
@@ -108,6 +136,9 @@ export function CatalogCard({ item, priceLabel, onOpen }: CatalogCardProps) {
                     alt={`${item.title} miniatura`}
                     className="h-full w-full object-cover"
                     loading="lazy"
+                    onError={(event) => {
+                      event.currentTarget.style.display = "none";
+                    }}
                   />
                 </div>
               ))}
@@ -137,7 +168,7 @@ export function CatalogCard({ item, priceLabel, onOpen }: CatalogCardProps) {
           href={whatsappUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-2 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:brightness-95"
+          className="ui-focus inline-flex items-center gap-2 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-95"
           aria-label={`Contactar por WhatsApp por ${item.title}`}
         >
           <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">

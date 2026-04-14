@@ -9,12 +9,13 @@ import {
   DEFAULT_EDITOR_CONFIG,
   type EditorConfig,
   type EditorVehicleDetails,
+  type UpcomingAuction,
   type SectionId,
   type VehicleTypeId,
 } from "@/types/editor";
 
 const EDITOR_STORAGE_KEY = "vedisa_editor_config_local";
-const EDITOR_SECTIONS: SectionId[] = ["proximos-remates", "ventas-directas", "novedades", "catalogo"];
+const EDITOR_CATEGORY_SECTIONS: SectionId[] = ["ventas-directas", "novedades", "catalogo"];
 const EDITOR_PAGE_SIZE = 20;
 
 function normalizeText(value?: string): string {
@@ -71,6 +72,17 @@ function formatPrice(value?: string): string | null {
 
 function sectionFallback(items: CatalogItem[], start: number, count: number): CatalogItem[] {
   return items.slice(start, start + count);
+}
+
+function formatAuctionDateLabel(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("es-CL", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
 function cleanOptional(value?: string): string | undefined {
@@ -208,10 +220,19 @@ type SectionProps = {
   subtitle: string;
   items: CatalogItem[];
   priceMap: Record<string, string>;
+  upcomingAuctionByVehicleKey?: Record<string, string>;
   onOpenVehicle: (item: CatalogItem) => void;
 };
 
-function Section({ id, title, subtitle, items, priceMap, onOpenVehicle }: SectionProps) {
+function Section({
+  id,
+  title,
+  subtitle,
+  items,
+  priceMap,
+  upcomingAuctionByVehicleKey,
+  onOpenVehicle,
+}: SectionProps) {
   return (
     <section id={id} className="section-shell scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -236,11 +257,67 @@ function Section({ id, title, subtitle, items, priceMap, onOpenVehicle }: Sectio
               key={`${id}-${item.id}`}
               item={item}
               priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
+              upcomingAuctionLabel={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
               onOpen={() => onOpenVehicle(item)}
             />
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+type UpcomingAuctionsSectionProps = {
+  groups: Array<{ auction: UpcomingAuction; items: CatalogItem[] }>;
+  priceMap: Record<string, string>;
+  upcomingAuctionByVehicleKey: Record<string, string>;
+  onOpenVehicle: (item: CatalogItem) => void;
+};
+
+function UpcomingAuctionsSection({
+  groups,
+  priceMap,
+  upcomingAuctionByVehicleKey,
+  onOpenVehicle,
+}: UpcomingAuctionsSectionProps) {
+  return (
+    <section id="proximos-remates" className="section-shell scroll-mt-24">
+      <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="premium-kicker">Agenda de remates</p>
+          <h2 className="text-2xl font-bold text-slate-900">Próximos remates</h2>
+          <p className="mt-1 text-sm text-slate-600">Cada remate funciona como categoría con fecha y vehículos asignados.</p>
+        </div>
+      </header>
+      <div className="space-y-8">
+        {groups.map(({ auction, items }) => (
+          <div key={auction.id}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2">
+              <h3 className="text-base font-semibold text-indigo-900">{auction.name}</h3>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-indigo-700">
+                {formatAuctionDateLabel(auction.date)} · {items.length} vehículos
+              </span>
+            </div>
+            {items.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+                Sin vehículos asignados en este remate.
+              </div>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {items.map((item) => (
+                  <CatalogCard
+                    key={`${auction.id}-${item.id}`}
+                    item={item}
+                    priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
+                    upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                    onOpen={() => onOpenVehicle(item)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -259,6 +336,8 @@ export function CatalogHomeClient({ feed }: Props) {
   const [editorPage, setEditorPage] = useState(1);
   const [editingVehicleKey, setEditingVehicleKey] = useState<string | null>(null);
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
+  const [newAuctionName, setNewAuctionName] = useState("");
+  const [newAuctionDate, setNewAuctionDate] = useState("");
   const [loginEmail, setLoginEmail] = useState("jpmontero@vedisaremates.cl");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -331,6 +410,44 @@ export function CatalogHomeClient({ feed }: Props) {
     normalizeText([item.status, item.subtitle, item.title].filter(Boolean).join(" ")).includes("novedad"),
   );
 
+  const upcomingAuctionByVehicleKey = useMemo(() => {
+    const labels: Record<string, string> = {};
+    const auctionsById = new Map(
+      (config.upcomingAuctions ?? []).map((auction) => [auction.id, auction] as const),
+    );
+    for (const [vehicleKey, auctionId] of Object.entries(config.vehicleUpcomingAuctionIds ?? {})) {
+      const auction = auctionsById.get(auctionId);
+      if (!auction) continue;
+      const dateLabel = formatAuctionDateLabel(auction.date);
+      labels[vehicleKey] = dateLabel ? `${auction.name} · ${dateLabel}` : auction.name;
+    }
+    return labels;
+  }, [config.upcomingAuctions, config.vehicleUpcomingAuctionIds]);
+
+  const sortedUpcomingAuctions = useMemo(
+    () =>
+      [...(config.upcomingAuctions ?? [])].sort((a, b) =>
+        (a.date ?? "").localeCompare(b.date ?? "", "es"),
+      ),
+    [config.upcomingAuctions],
+  );
+
+  const upcomingAuctionGroups = useMemo(
+    () =>
+      sortedUpcomingAuctions.map((auction) => ({
+        auction,
+        items: visibleItems.filter(
+          (item) =>
+            (config.vehicleUpcomingAuctionIds[getVehicleKey(item)] ?? "") === auction.id,
+        ),
+      })),
+    [sortedUpcomingAuctions, visibleItems, config.vehicleUpcomingAuctionIds],
+  );
+
+  const hasUpcomingAuctionCategories =
+    sortedUpcomingAuctions.length > 0 &&
+    upcomingAuctionGroups.some((group) => group.items.length > 0);
+
   const proximosRemates = getSectionItems(
     "proximos-remates",
     proximosByKeyword.length > 0 ? proximosByKeyword.slice(0, 12) : sectionFallback(visibleItems, 0, 12),
@@ -345,13 +462,6 @@ export function CatalogHomeClient({ feed }: Props) {
   );
   const catalogoItems = getSectionItems("catalogo", visibleItems);
   const filteredCatalogItems = catalogoItems.filter((item) => inferVehicleType(item) === activeTypeTab);
-
-  const stats = [
-    { label: "Publicaciones activas", value: String(visibleItems.length) },
-    { label: "Cobertura", value: "Nacional" },
-    { label: "Vehiculos con fotos", value: String(visibleItems.filter((item) => item.images.length > 0).length) },
-    { label: "Visores 3D activos", value: String(visibleItems.filter((item) => !!item.view3dUrl).length) },
-  ];
 
   const filteredEditorItems = useMemo(() => {
     const query = normalizeText(searchTerm);
@@ -394,6 +504,64 @@ export function CatalogHomeClient({ feed }: Props) {
       ...prev,
       vehiclePrices: { ...prev.vehiclePrices, [itemKey]: value },
     }));
+  };
+
+  const createUpcomingAuction = () => {
+    const name = newAuctionName.trim();
+    const date = newAuctionDate.trim();
+    if (!name || !date) {
+      alert("Debes completar nombre y fecha del remate.");
+      return;
+    }
+    const id = `remate-${crypto.randomUUID()}`;
+    setConfig((prev) => ({
+      ...prev,
+      upcomingAuctions: [...prev.upcomingAuctions, { id, name, date }],
+    }));
+    setNewAuctionName("");
+    setNewAuctionDate("");
+  };
+
+  const removeUpcomingAuction = (auctionId: string) => {
+    setConfig((prev) => {
+      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      for (const [vehicleKey, value] of Object.entries(nextAssignments)) {
+        if (value === auctionId) delete nextAssignments[vehicleKey];
+      }
+      const assignedVehicleKeys = new Set(Object.keys(nextAssignments));
+      return {
+        ...prev,
+        upcomingAuctions: prev.upcomingAuctions.filter((auction) => auction.id !== auctionId),
+        vehicleUpcomingAuctionIds: nextAssignments,
+        sectionVehicleIds: {
+          ...prev.sectionVehicleIds,
+          "proximos-remates": (prev.sectionVehicleIds["proximos-remates"] ?? []).filter((key) =>
+            assignedVehicleKeys.has(key),
+          ),
+        },
+      };
+    });
+  };
+
+  const assignVehicleToUpcomingAuction = (itemKey: string, auctionId: string) => {
+    setConfig((prev) => {
+      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      if (auctionId) nextAssignments[itemKey] = auctionId;
+      else delete nextAssignments[itemKey];
+
+      const sectionSet = new Set(prev.sectionVehicleIds["proximos-remates"] ?? []);
+      if (auctionId) sectionSet.add(itemKey);
+      else sectionSet.delete(itemKey);
+
+      return {
+        ...prev,
+        vehicleUpcomingAuctionIds: nextAssignments,
+        sectionVehicleIds: {
+          ...prev.sectionVehicleIds,
+          "proximos-remates": Array.from(sectionSet),
+        },
+      };
+    });
   };
 
   const openDetailsEditor = (item: CatalogItem) => {
@@ -466,7 +634,7 @@ export function CatalogHomeClient({ feed }: Props) {
       <div className="premium-glow premium-glow-cyan" />
       <div className="premium-glow premium-glow-gold" />
 
-      <section className="relative z-10 border-b border-cyan-100 bg-white/90 backdrop-blur-xl">
+      <section className="sticky top-0 z-30 border-b border-cyan-100/80 bg-white/88 shadow-[0_8px_24px_rgba(87,141,167,0.08)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <Link href="/" className="inline-flex">
@@ -481,37 +649,37 @@ export function CatalogHomeClient({ feed }: Props) {
             </Link>
             <div className="flex items-center gap-2">
               <nav className="flex flex-wrap gap-2 text-sm">
-                <a href="#proximos-remates" className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700">
+                <a href="#proximos-remates" className="premium-link-pill ui-focus">
                   Proximos remates
                 </a>
-                <a href="#ventas-directas" className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700">
+                <a href="#ventas-directas" className="premium-link-pill ui-focus">
                   Ventas directas
                 </a>
-                <a href="#novedades" className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700">
+                <a href="#novedades" className="premium-link-pill ui-focus">
                   Novedades
                 </a>
-                <a href="#catalogo" className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 transition hover:border-cyan-400 hover:text-cyan-700">
+                <a href="#catalogo" className="premium-link-pill ui-focus">
                   Catalogo
                 </a>
               </nav>
               {isAdmin ? (
-                <button className="rounded-full bg-slate-900 px-3 py-1 text-xs text-white" onClick={logout}>
+                <button className="ui-focus rounded-full bg-slate-900 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-slate-700" onClick={logout}>
                   Salir editor
                 </button>
               ) : (
-                <button className="rounded-full bg-cyan-600 px-3 py-1 text-xs text-white" onClick={() => setShowLogin(true)}>
+                <button className="ui-focus rounded-full bg-cyan-600 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-cyan-500" onClick={() => setShowLogin(true)}>
                   Login
                 </button>
               )}
             </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="rounded-xl border border-cyan-100 bg-gradient-to-r from-cyan-50 via-white to-slate-50 px-4 py-3 shadow-sm">
-              <p className="text-base font-semibold leading-snug text-slate-800">
-                Bienvenidos al catálogo de vehículos del portal líder en subastas de vehículos siniestrados.
+            <div className="glass-soft rounded-xl px-4 py-3">
+              <p className="text-lg font-bold leading-snug text-slate-900">
+                Catálogo oficial de VEDISA REMATES
               </p>
               <p className="mt-1 text-sm text-slate-600">
-                Participa fácilmente: regístrate en{" "}
+                Participa de forma segura en subastas de vehículos siniestrados: regístrate en{" "}
                 <a
                   className="font-semibold text-cyan-700 underline decoration-cyan-500/60 underline-offset-2"
                   href="https://vehiculoschocados.cl/"
@@ -520,7 +688,7 @@ export function CatalogHomeClient({ feed }: Props) {
                 >
                   https://vehiculoschocados.cl/
                 </a>{" "}
-                y asegura tu garantía para comenzar a ofertar.
+                y activa tu garantía para comenzar a ofertar.
               </p>
             </div>
             <span className="rounded-full bg-cyan-600 px-3 py-1 text-xs font-semibold text-white">{visibleItems.length} vehiculos</span>
@@ -533,15 +701,69 @@ export function CatalogHomeClient({ feed }: Props) {
 
       {isAdmin ? (
         <section className="relative z-10 mx-auto mt-6 max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="section-shell space-y-4">
+          <div className="section-shell glass-soft space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Modo editor administrador</h3>
                 <p className="text-xs text-slate-500">Gestion de visibilidad, categorias, precios y detalles manuales por publicacion.</p>
               </div>
-              <button onClick={saveConfig} disabled={saving} className="rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              <button onClick={saveConfig} disabled={saving} className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-500 disabled:opacity-60">
                 {saving ? "Guardando..." : "Guardar cambios"}
               </button>
+            </div>
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-52 flex-1">
+                  <label className="mb-1 block text-xs font-semibold text-indigo-800">Nombre del remate</label>
+                  <input
+                    value={newAuctionName}
+                    onChange={(event) => setNewAuctionName(event.target.value)}
+                    placeholder="Ej: Remate Abril #2"
+                    className="ui-focus w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-indigo-800">Fecha</label>
+                  <input
+                    type="date"
+                    value={newAuctionDate}
+                    onChange={(event) => setNewAuctionDate(event.target.value)}
+                    className="ui-focus rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={createUpcomingAuction}
+                  className="ui-focus rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+                >
+                  Crear remate
+                </button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {sortedUpcomingAuctions.length === 0 ? (
+                  <p className="text-xs text-slate-500">Aún no hay remates creados.</p>
+                ) : (
+                  sortedUpcomingAuctions.map((auction) => {
+                    const count = Object.values(config.vehicleUpcomingAuctionIds).filter(
+                      (id) => id === auction.id,
+                    ).length;
+                    return (
+                      <div key={auction.id} className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs">
+                        <span className="font-semibold text-indigo-800">{auction.name}</span>
+                        <span className="text-slate-500">{formatAuctionDateLabel(auction.date)}</span>
+                        <span className="text-slate-500">({count})</span>
+                        <button
+                          type="button"
+                          onClick={() => removeUpcomingAuction(auction.id)}
+                          className="ui-focus rounded bg-rose-50 px-2 py-0.5 text-rose-700 transition hover:bg-rose-100"
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
             <input
               value={searchTerm}
@@ -550,17 +772,17 @@ export function CatalogHomeClient({ feed }: Props) {
                 setEditorPage(1);
               }}
               placeholder="Buscar vehículo para editar..."
-              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+              className="ui-focus w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
             />
             <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
-              <div className="sticky top-0 z-10 grid grid-cols-12 items-center gap-2 border-b border-slate-200 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+              <div className="sticky top-0 z-10 grid grid-cols-14 items-center gap-2 border-b border-slate-200 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                 <div className="col-span-2">Patente</div>
                 <div className="col-span-3">Modelo vehiculo</div>
                 <div className="col-span-1 text-center">Visible</div>
-                <div className="col-span-1 text-center">Próx.</div>
                 <div className="col-span-1 text-center">V. Directa</div>
                 <div className="col-span-1 text-center">Novedad</div>
                 <div className="col-span-1 text-center">Catálogo</div>
+                <div className="col-span-3">Remate asignado</div>
                 <div className="col-span-1">Precio</div>
                 <div className="col-span-1 text-center">Detalle</div>
               </div>
@@ -568,22 +790,34 @@ export function CatalogHomeClient({ feed }: Props) {
                 const key = getVehicleKey(item);
                 const hidden = config.hiddenVehicleIds.includes(key);
                 return (
-                  <div key={`editor-${key}`} className="grid grid-cols-12 items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs transition hover:bg-cyan-50/40">
+                  <div key={`editor-${key}`} className="grid grid-cols-14 items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs transition odd:bg-white even:bg-slate-50/35 hover:bg-cyan-50/60">
                     <div className="col-span-2 font-semibold text-slate-700">{getPatent(item)}</div>
                     <div className="col-span-3 text-slate-700">{getModel(item)}</div>
                     <label className="col-span-1 flex items-center justify-center">
-                      <input type="checkbox" checked={!hidden} onChange={() => toggleHidden(key)} />
+                      <input className="ui-focus" type="checkbox" checked={!hidden} onChange={() => toggleHidden(key)} />
                     </label>
-                    {EDITOR_SECTIONS.map((section) => {
+                    {EDITOR_CATEGORY_SECTIONS.map((section) => {
                       const selected = (config.sectionVehicleIds[section] ?? []).includes(key);
                       return (
                         <label key={`${key}-${section}`} className="col-span-1 flex items-center justify-center">
-                          <input type="checkbox" checked={selected} onChange={() => toggleItemInSection(section, key)} />
+                          <input className="ui-focus" type="checkbox" checked={selected} onChange={() => toggleItemInSection(section, key)} />
                         </label>
                       );
                     })}
+                    <select
+                      className="ui-focus col-span-3 rounded border border-slate-200 px-2 py-1"
+                      value={config.vehicleUpcomingAuctionIds[key] ?? ""}
+                      onChange={(event) => assignVehicleToUpcomingAuction(key, event.target.value)}
+                    >
+                      <option value="">Sin remate</option>
+                      {sortedUpcomingAuctions.map((auction) => (
+                        <option key={auction.id} value={auction.id}>
+                          {auction.name} ({formatAuctionDateLabel(auction.date)})
+                        </option>
+                      ))}
+                    </select>
                     <input
-                      className="col-span-1 rounded border border-slate-200 px-2 py-1"
+                      className="ui-focus col-span-1 rounded border border-slate-200 px-2 py-1"
                       placeholder="Precio"
                       value={config.vehiclePrices[key] ?? ""}
                       onChange={(event) => setPrice(key, event.target.value)}
@@ -592,7 +826,7 @@ export function CatalogHomeClient({ feed }: Props) {
                       <button
                         type="button"
                         onClick={() => openDetailsEditor(item)}
-                        className="rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-100"
+                        className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-100"
                       >
                         Editar
                       </button>
@@ -610,7 +844,7 @@ export function CatalogHomeClient({ feed }: Props) {
                   type="button"
                   onClick={() => setEditorPage((prev) => Math.max(1, prev - 1))}
                   disabled={currentEditorPage === 1}
-                  className="rounded border border-slate-300 px-3 py-1 text-xs disabled:opacity-50"
+                  className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs transition hover:bg-slate-50 disabled:opacity-50"
                 >
                   Anterior
                 </button>
@@ -621,7 +855,7 @@ export function CatalogHomeClient({ feed }: Props) {
                   type="button"
                   onClick={() => setEditorPage((prev) => Math.min(totalEditorPages, prev + 1))}
                   disabled={currentEditorPage >= totalEditorPages}
-                  className="rounded border border-slate-300 px-3 py-1 text-xs disabled:opacity-50"
+                  className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs transition hover:bg-slate-50 disabled:opacity-50"
                 >
                   Siguiente
                 </button>
@@ -642,9 +876,9 @@ export function CatalogHomeClient({ feed }: Props) {
           <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
             Catálogo de vehículos de VEDISA REMATES
           </h1>
-          <div className="mt-4 max-w-3xl rounded-xl border border-slate-200/80 bg-white/80 p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-700 md:text-base">
-              Revisa nuestro inventario, y ofertanos en nuestra plataforma{" "}
+          <div className="glass-soft mt-4 max-w-3xl rounded-xl p-5">
+            <p className="text-base font-semibold text-slate-800 md:text-lg">
+              Inventario disponible para ofertar online en{" "}
               <a
                 className="font-semibold text-cyan-700 underline decoration-cyan-500/70 underline-offset-2"
                 href="https://vedisaremates.cl"
@@ -655,42 +889,91 @@ export function CatalogHomeClient({ feed }: Props) {
               </a>
               .
             </p>
-            <div className="mt-3 space-y-2 text-sm text-slate-600 md:text-[15px]">
-              <p>
-                <span className="font-semibold text-slate-800">Exhibición presencial:</span>{" "}
-                Arturo Prat 6457, Noviciado, Pudahuel.
-              </p>
-              <p>
-                <span className="font-semibold text-slate-800">Horario:</span> Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00 / Sab-Dom Cerrado.
-              </p>
-              <p>
-                <span className="font-semibold text-slate-800">Remates 100% Online:</span> Puede revisar las unidades pre-compra presencialmente en nuestra bodega sin necesidad de garantía.
-              </p>
-              <p>
-                <span className="font-semibold text-slate-800">Oficinas:</span> Américo Vespucio 2880, Piso 7.
-              </p>
+            <p className="mt-2 text-sm text-slate-600 md:text-base">
+              Revisa cada unidad con detalle y concreta tu participación con respaldo profesional.
+            </p>
+            <div className="mt-4 grid gap-2 text-sm text-slate-700 md:text-[15px]">
+              <div className="info-tile flex items-start gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-100 text-xs">📍</span>
+                <p><span className="font-semibold text-slate-900">Exhibición presencial:</span> Arturo Prat 6457, Noviciado, Pudahuel.</p>
+              </div>
+              <div className="info-tile flex items-start gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-100 text-xs">🕒</span>
+                <p><span className="font-semibold text-slate-900">Horario:</span> Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00 / Sáb-Dom cerrado.</p>
+              </div>
+              <div className="info-tile flex items-start gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-100 text-xs">💻</span>
+                <p><span className="font-semibold text-slate-900">Remates 100% online:</span> visita las unidades pre-compra presencialmente en nuestra bodega, sin garantía previa.</p>
+              </div>
+              <div className="info-tile flex items-start gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-100 text-xs">🏢</span>
+                <p><span className="font-semibold text-slate-900">Oficinas:</span> Américo Vespucio 2880, Piso 7.</p>
+              </div>
             </div>
           </div>
           <div className="mt-6 flex flex-wrap gap-3">
-            <a href="#catalogo" className="premium-btn-primary">Ver catalogo completo</a>
-            <a href="#proximos-remates" className="premium-btn-secondary">Explorar secciones</a>
+            <a href="#catalogo" className="premium-btn-primary ui-focus">Ver catálogo completo</a>
+            <a href="#proximos-remates" className="premium-btn-secondary ui-focus">Explorar secciones</a>
           </div>
         </div>
         <div className="grid gap-3 lg:col-span-2">
-          {stats.map((stat) => (
-            <div key={stat.label} className="premium-stat">
-              <p className="text-xs uppercase tracking-widest text-slate-500">{stat.label}</p>
-              <p className="mt-1 text-xl font-bold text-slate-900">{stat.value}</p>
-            </div>
-          ))}
+          <div className="premium-stat">
+            <p className="text-xs uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Arturo Prat 6457, Noviciado, Pudahuel</p>
+          </div>
+          <div className="premium-stat">
+            <p className="text-xs uppercase tracking-widest text-slate-500">🕒 Horario</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00</p>
+          </div>
+          <div className="premium-stat">
+            <p className="text-xs uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Inspección pre-compra presencial disponible, sin garantía previa</p>
+          </div>
+          <div className="premium-stat">
+            <p className="text-xs uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Américo Vespucio 2880, Piso 7</p>
+          </div>
         </div>
       </section>
 
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-14 px-4 pb-14 sm:px-6 lg:px-8">
         <FeaturedStrip items={visibleItems.slice(0, 8)} onOpenVehicle={setSelectedVehicle} />
-        <Section id="proximos-remates" title="Proximos remates" subtitle="Vehiculos en agenda con mayor prioridad comercial." items={proximosRemates} priceMap={config.vehiclePrices} onOpenVehicle={setSelectedVehicle} />
-        <Section id="ventas-directas" title="Ventas Directas" subtitle="Stock disponible para cierre rapido." items={ventasDirectas} priceMap={config.vehiclePrices} onOpenVehicle={setSelectedVehicle} />
-        <Section id="novedades" title="Novedades" subtitle="Ultimas unidades ingresadas al ecosistema Vedisa." items={novedades} priceMap={config.vehiclePrices} onOpenVehicle={setSelectedVehicle} />
+        {hasUpcomingAuctionCategories ? (
+          <UpcomingAuctionsSection
+            groups={upcomingAuctionGroups}
+            priceMap={config.vehiclePrices}
+            upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+            onOpenVehicle={setSelectedVehicle}
+          />
+        ) : (
+          <Section
+            id="proximos-remates"
+            title="Proximos remates"
+            subtitle="Vehiculos en agenda con mayor prioridad comercial."
+            items={proximosRemates}
+            priceMap={config.vehiclePrices}
+            upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+            onOpenVehicle={setSelectedVehicle}
+          />
+        )}
+        <Section
+          id="ventas-directas"
+          title="Ventas Directas"
+          subtitle="Stock disponible para cierre rapido."
+          items={ventasDirectas}
+          priceMap={config.vehiclePrices}
+          upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+          onOpenVehicle={setSelectedVehicle}
+        />
+        <Section
+          id="novedades"
+          title="Novedades"
+          subtitle="Ultimas unidades ingresadas al ecosistema Vedisa."
+          items={novedades}
+          priceMap={config.vehiclePrices}
+          upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+          onOpenVehicle={setSelectedVehicle}
+        />
 
         <section id="catalogo" className="section-shell scroll-mt-24">
           <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -703,8 +986,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 <button
                   key={type}
                   onClick={() => setActiveTypeTab(type)}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    activeTypeTab === type ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-700"
+                  className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold transition ${
+                    activeTypeTab === type ? "bg-cyan-600 text-white shadow-sm" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                   }`}
                 >
                   {type === "livianos" ? "Vehiculos livianos" : type === "pesados" ? "Vehiculos pesados" : type === "maquinaria" ? "Maquinaria" : "Otros"}
@@ -723,6 +1006,7 @@ export function CatalogHomeClient({ feed }: Props) {
                   key={`catalog-${item.id}`}
                   item={item}
                   priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
+                  upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
                   onOpen={() => setSelectedVehicle(item)}
                 />
               ))}
@@ -739,7 +1023,7 @@ export function CatalogHomeClient({ feed }: Props) {
                 <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
                 <p className="text-sm text-slate-500">{selectedVehicle.subtitle ?? "Vehículo en catálogo"}</p>
               </div>
-              <button className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600" onClick={() => setSelectedVehicle(null)}>
+              <button className="ui-focus rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 transition hover:bg-slate-50" onClick={() => setSelectedVehicle(null)}>
                 Cerrar
               </button>
             </div>
@@ -774,6 +1058,7 @@ export function CatalogHomeClient({ feed }: Props) {
                       ["Estado", selectedVehicle.status ?? "Disponible"],
                       ["Ubicación", selectedVehicle.location ?? (selectedVehicle.raw as Record<string, unknown>).ubicacion],
                       ["Lote", selectedVehicle.lot ?? (selectedVehicle.raw as Record<string, unknown>).stock_number],
+                      ["Remate asignado", upcomingAuctionByVehicleKey[getVehicleKey(selectedVehicle)] ?? "Sin asignar"],
                       ["Precio", formatPrice(config.vehiclePrices[getVehicleKey(selectedVehicle)]) ?? "No informado"],
                       ["Fotos", `${selectedVehicle.images.length}`],
                     ] as Array<[string, unknown]>
@@ -803,8 +1088,8 @@ export function CatalogHomeClient({ feed }: Props) {
             </div>
             {loginError ? <p className="mt-2 text-xs text-red-600">{loginError}</p> : null}
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setShowLogin(false)} className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-600">Cancelar</button>
-              <button onClick={login} className="rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white">Entrar</button>
+              <button onClick={() => setShowLogin(false)} className="ui-focus rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-50">Cancelar</button>
+              <button onClick={login} className="ui-focus rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500">Entrar</button>
             </div>
           </div>
         </div>
@@ -820,7 +1105,7 @@ export function CatalogHomeClient({ feed }: Props) {
                   {getPatent(editingItem)} · {getModel(editingItem)}
                 </p>
               </div>
-              <button type="button" onClick={cancelDetailsEditor} className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600">
+              <button type="button" onClick={cancelDetailsEditor} className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50">
                 Cerrar
               </button>
             </div>
@@ -843,10 +1128,10 @@ export function CatalogHomeClient({ feed }: Props) {
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={cancelDetailsEditor} className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700">
+              <button type="button" onClick={cancelDetailsEditor} className="ui-focus rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50">
                 Cancelar
               </button>
-              <button type="button" onClick={saveDetailsEditor} className="rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white">
+              <button type="button" onClick={saveDetailsEditor} className="ui-focus rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500">
                 Guardar detalle
               </button>
             </div>
