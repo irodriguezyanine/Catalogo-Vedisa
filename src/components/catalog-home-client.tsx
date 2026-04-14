@@ -17,6 +17,14 @@ import {
 const EDITOR_STORAGE_KEY = "vedisa_editor_config_local";
 const EDITOR_CATEGORY_SECTIONS: SectionId[] = ["ventas-directas", "novedades", "catalogo"];
 const EDITOR_PAGE_SIZE = 20;
+type AdminTabId = "vehiculos" | "categorias" | "layout";
+
+const SECTION_LABELS: Record<SectionId, string> = {
+  "proximos-remates": "Próximos remates",
+  "ventas-directas": "Ventas directas",
+  novedades: "Novedades",
+  catalogo: "Catálogo",
+};
 
 function normalizeText(value?: string): string {
   return (value ?? "")
@@ -329,10 +337,13 @@ type Props = {
 export function CatalogHomeClient({ feed }: Props) {
   const [config, setConfig] = useState<EditorConfig>(DEFAULT_EDITOR_CONFIG);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminView, setAdminView] = useState<"editor" | "home">("home");
   const [showLogin, setShowLogin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
   const [searchTerm, setSearchTerm] = useState("");
+  const [adminTab, setAdminTab] = useState<AdminTabId>("vehiculos");
+  const [auctionFilterId, setAuctionFilterId] = useState("");
   const [editorPage, setEditorPage] = useState(1);
   const [editingVehicleKey, setEditingVehicleKey] = useState<string | null>(null);
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
@@ -361,7 +372,9 @@ export function CatalogHomeClient({ feed }: Props) {
 
       const sessionRes = await fetch("/api/admin/session", { cache: "no-store" });
       const session = (await sessionRes.json()) as { loggedIn?: boolean };
-      setIsAdmin(Boolean(session.loggedIn));
+      const loggedIn = Boolean(session.loggedIn);
+      setIsAdmin(loggedIn);
+      if (loggedIn) setAdminView("editor");
 
       const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
       if (configRes.ok) {
@@ -469,10 +482,16 @@ export function CatalogHomeClient({ feed }: Props) {
   const filteredEditorItems = useMemo(() => {
     const query = normalizeText(searchTerm);
     const source = query
-      ? items.filter((item) => normalizeText(`${item.title} ${item.subtitle ?? ""}`).includes(query))
+      ? items.filter((item) =>
+          normalizeText(`${item.title} ${item.subtitle ?? ""}`).includes(query),
+        )
       : items;
-    return source;
-  }, [items, searchTerm]);
+    if (!auctionFilterId) return source;
+    return source.filter(
+      (item) =>
+        (config.vehicleUpcomingAuctionIds[getVehicleKey(item)] ?? "") === auctionFilterId,
+    );
+  }, [items, searchTerm, auctionFilterId, config.vehicleUpcomingAuctionIds]);
 
   const totalEditorPages = Math.max(1, Math.ceil(filteredEditorItems.length / EDITOR_PAGE_SIZE));
   const currentEditorPage = Math.min(editorPage, totalEditorPages);
@@ -480,6 +499,15 @@ export function CatalogHomeClient({ feed }: Props) {
     const start = (currentEditorPage - 1) * EDITOR_PAGE_SIZE;
     return filteredEditorItems.slice(start, start + EDITOR_PAGE_SIZE);
   }, [filteredEditorItems, currentEditorPage]);
+
+  const allVisibleChecked =
+    filteredEditorItems.length > 0 &&
+    filteredEditorItems.every((item) => !config.hiddenVehicleIds.includes(getVehicleKey(item)));
+  const allSectionChecked = (sectionId: SectionId) =>
+    filteredEditorItems.length > 0 &&
+    filteredEditorItems.every((item) =>
+      (config.sectionVehicleIds[sectionId] ?? []).includes(getVehicleKey(item)),
+    );
 
   const toggleItemInSection = (sectionId: SectionId, itemKey: string) => {
     setConfig((prev) => {
@@ -502,11 +530,88 @@ export function CatalogHomeClient({ feed }: Props) {
     });
   };
 
+  const toggleAllVisibleInFiltered = () => {
+    setConfig((prev) => {
+      const hiddenSet = new Set(prev.hiddenVehicleIds);
+      const keys = filteredEditorItems.map((item) => getVehicleKey(item));
+      const shouldEnableAll = keys.some((key) => hiddenSet.has(key));
+      for (const key of keys) {
+        if (shouldEnableAll) hiddenSet.delete(key);
+        else hiddenSet.add(key);
+      }
+      return { ...prev, hiddenVehicleIds: Array.from(hiddenSet) };
+    });
+  };
+
+  const toggleAllSectionInFiltered = (sectionId: SectionId) => {
+    setConfig((prev) => {
+      const current = new Set(prev.sectionVehicleIds[sectionId] ?? []);
+      const keys = filteredEditorItems.map((item) => getVehicleKey(item));
+      const shouldEnableAll = keys.some((key) => !current.has(key));
+      for (const key of keys) {
+        if (shouldEnableAll) current.add(key);
+        else current.delete(key);
+      }
+      return {
+        ...prev,
+        sectionVehicleIds: {
+          ...prev.sectionVehicleIds,
+          [sectionId]: Array.from(current),
+        },
+      };
+    });
+  };
+
   const setPrice = (itemKey: string, value: string) => {
     setConfig((prev) => ({
       ...prev,
       vehiclePrices: { ...prev.vehiclePrices, [itemKey]: value },
     }));
+  };
+
+  const setSectionText = (sectionId: SectionId, field: "title" | "subtitle", value: string) => {
+    setConfig((prev) => ({
+      ...prev,
+      sectionTexts: {
+        ...prev.sectionTexts,
+        [sectionId]: {
+          ...prev.sectionTexts[sectionId],
+          [field]: value,
+        },
+      },
+    }));
+  };
+
+  const setHomeLayout = (
+    field: keyof EditorConfig["homeLayout"],
+    value: string | boolean | SectionId[],
+  ) => {
+    setConfig((prev) => ({
+      ...prev,
+      homeLayout: {
+        ...prev.homeLayout,
+        [field]: value,
+      },
+    }));
+  };
+
+  const moveSectionOrder = (sectionId: SectionId, direction: "up" | "down") => {
+    setConfig((prev) => {
+      const order = [...prev.homeLayout.sectionOrder];
+      const index = order.indexOf(sectionId);
+      if (index < 0) return prev;
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (target < 0 || target >= order.length) return prev;
+      const [item] = order.splice(index, 1);
+      order.splice(target, 0, item);
+      return {
+        ...prev,
+        homeLayout: {
+          ...prev.homeLayout,
+          sectionOrder: order,
+        },
+      };
+    });
   };
 
   const createUpcomingAuction = () => {
@@ -622,12 +727,17 @@ export function CatalogHomeClient({ feed }: Props) {
     setShowLogin(false);
     setLoginPassword("");
     setIsAdmin(true);
+    setAdminView("editor");
   };
 
   const logout = async () => {
     await fetch("/api/admin/logout", { method: "POST" });
     setIsAdmin(false);
+    setAdminView("home");
   };
+
+  const showAdminEditor = isAdmin && adminView === "editor";
+  const showPublicHome = !isAdmin || adminView === "home";
 
   const editingItem = editingVehicleKey ? itemsByKey.get(editingVehicleKey) ?? null : null;
 
@@ -639,7 +749,16 @@ export function CatalogHomeClient({ feed }: Props) {
       <section className="sticky top-0 z-30 border-b border-cyan-100/80 bg-white/88 shadow-[0_8px_24px_rgba(87,141,167,0.08)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <Link href="/" className="inline-flex">
+            <Link
+              href="/"
+              className="inline-flex"
+              onClick={(event) => {
+                if (isAdmin && adminView === "editor") {
+                  event.preventDefault();
+                  setAdminView("home");
+                }
+              }}
+            >
               <Image
                 src="/vedisa-logo.png"
                 alt="Logo Vedisa Remates"
@@ -665,9 +784,26 @@ export function CatalogHomeClient({ feed }: Props) {
                 </a>
               </nav>
               {isAdmin ? (
-                <button className="ui-focus rounded-full bg-slate-900 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-slate-700" onClick={logout}>
-                  Salir editor
-                </button>
+                <>
+                  {adminView === "editor" ? (
+                    <button
+                      className="ui-focus rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-100"
+                      onClick={() => setAdminView("home")}
+                    >
+                      Ver home
+                    </button>
+                  ) : (
+                    <button
+                      className="ui-focus rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-xs text-cyan-700 transition hover:-translate-y-0.5 hover:bg-cyan-100"
+                      onClick={() => setAdminView("editor")}
+                    >
+                      Volver al editor
+                    </button>
+                  )}
+                  <button className="ui-focus rounded-full bg-slate-900 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-slate-700" onClick={logout}>
+                    Salir editor
+                  </button>
+                </>
               ) : (
                 <button className="ui-focus rounded-full bg-cyan-600 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-cyan-500" onClick={() => setShowLogin(true)}>
                   Login
@@ -675,30 +811,13 @@ export function CatalogHomeClient({ feed }: Props) {
               )}
             </div>
           </div>
-          <div className="pt-1">
-            <h2 className="text-xl font-bold tracking-tight text-slate-900 md:text-[1.85rem]">
-              Catálogo oficial de VEDISA REMATES
-            </h2>
-            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600 md:text-[15px]">
-              Accede a una experiencia de subasta segura y profesional. Regístrate en{" "}
-              <a
-                className="font-semibold text-cyan-700 underline decoration-cyan-500/60 underline-offset-2"
-                href="https://vehiculoschocados.cl/"
-                target="_blank"
-                rel="noreferrer"
-              >
-                https://vehiculoschocados.cl/
-              </a>{" "}
-              y activa tu garantía para comenzar a ofertar.
-            </p>
-          </div>
           {feed.warning ? (
             <p className="rounded-md border border-amber-300/60 bg-amber-100 px-3 py-2 text-sm text-amber-900">{feed.warning}</p>
           ) : null}
         </div>
       </section>
 
-      {isAdmin ? (
+      {showAdminEditor ? (
         <section className="relative z-10 mx-auto mt-6 max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="section-shell glass-soft space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -710,182 +829,315 @@ export function CatalogHomeClient({ feed }: Props) {
                 {saving ? "Guardando..." : "Guardar cambios"}
               </button>
             </div>
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-52 flex-1">
-                  <label className="mb-1 block text-xs font-semibold text-indigo-800">Nombre del remate</label>
-                  <input
-                    value={newAuctionName}
-                    onChange={(event) => setNewAuctionName(event.target.value)}
-                    placeholder="Ej: Remate Abril #2"
-                    className="ui-focus w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-indigo-800">Fecha</label>
-                  <input
-                    type="date"
-                    value={newAuctionDate}
-                    onChange={(event) => setNewAuctionDate(event.target.value)}
-                    className="ui-focus rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm"
-                  />
-                </div>
+            <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+              {([
+                ["vehiculos", "1. Vehículos"],
+                ["categorias", "2. Editar categorías"],
+                ["layout", "3. Editar layout home"],
+              ] as Array<[AdminTabId, string]>).map(([tabId, label]) => (
                 <button
+                  key={tabId}
                   type="button"
-                  onClick={createUpcomingAuction}
-                  className="ui-focus rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+                  onClick={() => setAdminTab(tabId)}
+                  className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold transition ${
+                    adminTab === tabId
+                      ? "bg-cyan-600 text-white"
+                      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
                 >
-                  Crear remate
+                  {label}
                 </button>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {sortedUpcomingAuctions.length === 0 ? (
-                  <p className="text-xs text-slate-500">Aún no hay remates creados.</p>
-                ) : (
-                  sortedUpcomingAuctions.map((auction) => {
-                    const count = Object.values(config.vehicleUpcomingAuctionIds).filter(
-                      (id) => id === auction.id,
-                    ).length;
+              ))}
+            </div>
+
+            {adminTab === "vehiculos" ? (
+              <>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    value={searchTerm}
+                    onChange={(event) => {
+                      setSearchTerm(event.target.value);
+                      setEditorPage(1);
+                    }}
+                    placeholder="Buscar vehículo para editar..."
+                    className="ui-focus w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                  />
+                  <select
+                    value={auctionFilterId}
+                    onChange={(event) => {
+                      setAuctionFilterId(event.target.value);
+                      setEditorPage(1);
+                    }}
+                    className="ui-focus rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Todos los remates</option>
+                    {sortedUpcomingAuctions.map((auction) => (
+                      <option key={auction.id} value={auction.id}>
+                        {auction.name} ({formatAuctionDateLabel(auction.date)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
+                  <div className="sticky top-0 z-10 grid grid-cols-14 items-center gap-2 border-b border-slate-200 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    <div className="col-span-2">Patente</div>
+                    <div className="col-span-3">Modelo vehículo</div>
+                    <button type="button" onClick={toggleAllVisibleInFiltered} className="col-span-1 text-center text-cyan-700 hover:underline">
+                      Visible {allVisibleChecked ? "✓" : ""}
+                    </button>
+                    <button type="button" onClick={() => toggleAllSectionInFiltered("ventas-directas")} className="col-span-1 text-center text-cyan-700 hover:underline">
+                      V. Directa {allSectionChecked("ventas-directas") ? "✓" : ""}
+                    </button>
+                    <button type="button" onClick={() => toggleAllSectionInFiltered("novedades")} className="col-span-1 text-center text-cyan-700 hover:underline">
+                      Novedad {allSectionChecked("novedades") ? "✓" : ""}
+                    </button>
+                    <button type="button" onClick={() => toggleAllSectionInFiltered("catalogo")} className="col-span-1 text-center text-cyan-700 hover:underline">
+                      Catálogo {allSectionChecked("catalogo") ? "✓" : ""}
+                    </button>
+                    <div className="col-span-3">Remate asignado</div>
+                    <div className="col-span-1">Precio</div>
+                    <div className="col-span-1 text-center">Detalle</div>
+                  </div>
+                  {paginatedEditorItems.map((item) => {
+                    const key = getVehicleKey(item);
+                    const hidden = config.hiddenVehicleIds.includes(key);
                     return (
-                      <div key={auction.id} className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs">
-                        <span className="font-semibold text-indigo-800">{auction.name}</span>
-                        <span className="text-slate-500">{formatAuctionDateLabel(auction.date)}</span>
-                        <span className="text-slate-500">({count})</span>
-                        <button
-                          type="button"
-                          onClick={() => removeUpcomingAuction(auction.id)}
-                          className="ui-focus rounded bg-rose-50 px-2 py-0.5 text-rose-700 transition hover:bg-rose-100"
+                      <div key={`editor-${key}`} className="grid grid-cols-14 items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs transition odd:bg-white even:bg-slate-50/35 hover:bg-cyan-50/60">
+                        <div className="col-span-2 font-semibold text-slate-700">{getPatent(item)}</div>
+                        <div className="col-span-3 text-slate-700">{getModel(item)}</div>
+                        <label className="col-span-1 flex items-center justify-center">
+                          <input className="ui-focus" type="checkbox" checked={!hidden} onChange={() => toggleHidden(key)} />
+                        </label>
+                        {EDITOR_CATEGORY_SECTIONS.map((section) => {
+                          const selected = (config.sectionVehicleIds[section] ?? []).includes(key);
+                          return (
+                            <label key={`${key}-${section}`} className="col-span-1 flex items-center justify-center">
+                              <input className="ui-focus" type="checkbox" checked={selected} onChange={() => toggleItemInSection(section, key)} />
+                            </label>
+                          );
+                        })}
+                        <select
+                          className="ui-focus col-span-3 rounded border border-slate-200 px-2 py-1"
+                          value={config.vehicleUpcomingAuctionIds[key] ?? ""}
+                          onChange={(event) => assignVehicleToUpcomingAuction(key, event.target.value)}
                         >
-                          Quitar
-                        </button>
+                          <option value="">Sin remate</option>
+                          {sortedUpcomingAuctions.map((auction) => (
+                            <option key={auction.id} value={auction.id}>
+                              {auction.name} ({formatAuctionDateLabel(auction.date)})
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          className="ui-focus col-span-1 rounded border border-slate-200 px-2 py-1"
+                          placeholder="Precio"
+                          value={config.vehiclePrices[key] ?? ""}
+                          onChange={(event) => setPrice(key, event.target.value)}
+                        />
+                        <div className="col-span-1 flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() => openDetailsEditor(item)}
+                            className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-100"
+                          >
+                            Editar
+                          </button>
+                        </div>
                       </div>
                     );
-                  })
-                )}
-              </div>
-            </div>
-            <input
-              value={searchTerm}
-              onChange={(event) => {
-                setSearchTerm(event.target.value);
-                setEditorPage(1);
-              }}
-              placeholder="Buscar vehículo para editar..."
-              className="ui-focus w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
-            />
-            <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
-              <div className="sticky top-0 z-10 grid grid-cols-14 items-center gap-2 border-b border-slate-200 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                <div className="col-span-2">Patente</div>
-                <div className="col-span-3">Modelo vehiculo</div>
-                <div className="col-span-1 text-center">Visible</div>
-                <div className="col-span-1 text-center">V. Directa</div>
-                <div className="col-span-1 text-center">Novedad</div>
-                <div className="col-span-1 text-center">Catálogo</div>
-                <div className="col-span-3">Remate asignado</div>
-                <div className="col-span-1">Precio</div>
-                <div className="col-span-1 text-center">Detalle</div>
-              </div>
-              {paginatedEditorItems.map((item) => {
-                const key = getVehicleKey(item);
-                const hidden = config.hiddenVehicleIds.includes(key);
-                return (
-                  <div key={`editor-${key}`} className="grid grid-cols-14 items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs transition odd:bg-white even:bg-slate-50/35 hover:bg-cyan-50/60">
-                    <div className="col-span-2 font-semibold text-slate-700">{getPatent(item)}</div>
-                    <div className="col-span-3 text-slate-700">{getModel(item)}</div>
-                    <label className="col-span-1 flex items-center justify-center">
-                      <input className="ui-focus" type="checkbox" checked={!hidden} onChange={() => toggleHidden(key)} />
-                    </label>
-                    {EDITOR_CATEGORY_SECTIONS.map((section) => {
-                      const selected = (config.sectionVehicleIds[section] ?? []).includes(key);
-                      return (
-                        <label key={`${key}-${section}`} className="col-span-1 flex items-center justify-center">
-                          <input className="ui-focus" type="checkbox" checked={selected} onChange={() => toggleItemInSection(section, key)} />
-                        </label>
-                      );
-                    })}
-                    <select
-                      className="ui-focus col-span-3 rounded border border-slate-200 px-2 py-1"
-                      value={config.vehicleUpcomingAuctionIds[key] ?? ""}
-                      onChange={(event) => assignVehicleToUpcomingAuction(key, event.target.value)}
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-xs text-slate-600">
+                    Mostrando {paginatedEditorItems.length} de {filteredEditorItems.length} resultados.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditorPage((prev) => Math.max(1, prev - 1))}
+                      disabled={currentEditorPage === 1}
+                      className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs transition hover:bg-slate-50 disabled:opacity-50"
                     >
-                      <option value="">Sin remate</option>
-                      {sortedUpcomingAuctions.map((auction) => (
-                        <option key={auction.id} value={auction.id}>
-                          {auction.name} ({formatAuctionDateLabel(auction.date)})
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="ui-focus col-span-1 rounded border border-slate-200 px-2 py-1"
-                      placeholder="Precio"
-                      value={config.vehiclePrices[key] ?? ""}
-                      onChange={(event) => setPrice(key, event.target.value)}
-                    />
-                    <div className="col-span-1 flex justify-center">
-                      <button
-                        type="button"
-                        onClick={() => openDetailsEditor(item)}
-                        className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-100"
-                      >
-                        Editar
-                      </button>
-                    </div>
+                      Anterior
+                    </button>
+                    <span className="text-xs font-semibold text-slate-700">
+                      Pagina {currentEditorPage} / {totalEditorPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditorPage((prev) => Math.min(totalEditorPages, prev + 1))}
+                      disabled={currentEditorPage >= totalEditorPages}
+                      className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs transition hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Siguiente
+                    </button>
                   </div>
-                );
-              })}
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
-              <p className="text-xs text-slate-600">
-                Mostrando {paginatedEditorItems.length} de {filteredEditorItems.length} resultados.
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditorPage((prev) => Math.max(1, prev - 1))}
-                  disabled={currentEditorPage === 1}
-                  className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Anterior
-                </button>
-                <span className="text-xs font-semibold text-slate-700">
-                  Pagina {currentEditorPage} / {totalEditorPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setEditorPage((prev) => Math.min(totalEditorPages, prev + 1))}
-                  disabled={currentEditorPage >= totalEditorPages}
-                  className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Siguiente
-                </button>
+                </div>
+              </>
+            ) : null}
+
+            {adminTab === "categorias" ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-52 flex-1">
+                      <label className="mb-1 block text-xs font-semibold text-indigo-800">Nombre del remate</label>
+                      <input
+                        value={newAuctionName}
+                        onChange={(event) => setNewAuctionName(event.target.value)}
+                        placeholder="Ej: Remate Abril #2"
+                        className="ui-focus w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-indigo-800">Fecha</label>
+                      <input
+                        type="date"
+                        value={newAuctionDate}
+                        onChange={(event) => setNewAuctionDate(event.target.value)}
+                        className="ui-focus rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={createUpcomingAuction}
+                      className="ui-focus rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+                    >
+                      Crear remate
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {sortedUpcomingAuctions.length === 0 ? (
+                      <p className="text-xs text-slate-500">Aún no hay remates creados.</p>
+                    ) : (
+                      sortedUpcomingAuctions.map((auction) => {
+                        const count = Object.values(config.vehicleUpcomingAuctionIds).filter(
+                          (id) => id === auction.id,
+                        ).length;
+                        return (
+                          <div key={auction.id} className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs">
+                            <span className="font-semibold text-indigo-800">{auction.name}</span>
+                            <span className="text-slate-500">{formatAuctionDateLabel(auction.date)}</span>
+                            <span className="text-slate-500">({count} asignados)</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAuctionFilterId(auction.id);
+                                setAdminTab("vehiculos");
+                              }}
+                              className="ui-focus rounded bg-cyan-50 px-2 py-0.5 text-cyan-700"
+                            >
+                              Ver vehículos
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeUpcomingAuction(auction.id)}
+                              className="ui-focus rounded bg-rose-50 px-2 py-0.5 text-rose-700 transition hover:bg-rose-100"
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => (
+                    <div key={sectionId} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{SECTION_LABELS[sectionId]}</p>
+                      <input
+                        value={config.sectionTexts[sectionId]?.title ?? ""}
+                        onChange={(event) => setSectionText(sectionId, "title", event.target.value)}
+                        placeholder="Título sección"
+                        className="ui-focus mb-2 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={config.sectionTexts[sectionId]?.subtitle ?? ""}
+                        onChange={(event) => setSectionText(sectionId, "subtitle", event.target.value)}
+                        placeholder="Subtítulo sección"
+                        className="ui-focus w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-            <p className="text-xs text-slate-500">
-              Edicion masiva dinamica: marca/desmarca categorias por fila, visibilidad y precio. Ahora con paginacion de 20 vehiculos por pagina.
-            </p>
+            ) : null}
+
+            {adminTab === "layout" ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Textos hero</p>
+                  <div className="grid gap-2">
+                    <input
+                      value={config.homeLayout.heroKicker}
+                      onChange={(event) => setHomeLayout("heroKicker", event.target.value)}
+                      placeholder="Kicker"
+                      className="ui-focus rounded-md border border-slate-200 px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={config.homeLayout.heroTitle}
+                      onChange={(event) => setHomeLayout("heroTitle", event.target.value)}
+                      placeholder="Título principal"
+                      className="ui-focus rounded-md border border-slate-200 px-3 py-2 text-sm"
+                    />
+                    <textarea
+                      value={config.homeLayout.heroDescription}
+                      onChange={(event) => setHomeLayout("heroDescription", event.target.value)}
+                      placeholder="Descripción hero"
+                      className="ui-focus min-h-24 rounded-md border border-slate-200 px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Bloques home</p>
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.homeLayout.showFeaturedStrip}
+                        onChange={(event) => setHomeLayout("showFeaturedStrip", event.target.checked)}
+                      />
+                      Mostrar vitrina destacada
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.homeLayout.showCommercialPanel}
+                        onChange={(event) => setHomeLayout("showCommercialPanel", event.target.checked)}
+                      />
+                      Mostrar panel comercial derecho
+                    </label>
+                  </div>
+                  <p className="mt-3 mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Orden de secciones</p>
+                  <div className="space-y-2">
+                    {config.homeLayout.sectionOrder.map((sectionId) => (
+                      <div key={sectionId} className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm">
+                        <span>{SECTION_LABELS[sectionId]}</span>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => moveSectionOrder(sectionId, "up")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs">Subir</button>
+                          <button type="button" onClick={() => moveSectionOrder(sectionId, "down")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs">Bajar</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </section>
       ) : null}
 
-      {!isAdmin ? (
+      {showPublicHome ? (
         <>
       <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-12 lg:px-8">
-        <div className="premium-panel premium-panel-hero lg:col-span-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Portal de subastas</p>
+        <div className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero`}>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Catálogo oficial de VEDISA REMATES</p>
           <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
-            Inventario de vehículos para remate y venta directa
+            {config.homeLayout.heroTitle}
           </h1>
           <p className="mt-5 max-w-2xl text-sm leading-relaxed text-slate-600 md:text-[15px]">
-            Plataforma oficial de ofertas online en{" "}
-            <a
-              className="font-semibold text-cyan-700 underline decoration-cyan-500/70 underline-offset-2"
-              href="https://vedisaremates.cl"
-              target="_blank"
-              rel="noreferrer"
-            >
-              vedisaremates.cl
-            </a>
-            . Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza.
+            {config.homeLayout.heroDescription}
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Visor 3D</span>
@@ -897,6 +1149,7 @@ export function CatalogHomeClient({ feed }: Props) {
             <a href="#proximos-remates" className="premium-btn-secondary ui-focus">Explorar secciones</a>
           </div>
         </div>
+        {config.homeLayout.showCommercialPanel ? (
         <div className="premium-panel lg:col-span-4">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Información comercial</p>
           <div className="mt-4 space-y-3">
@@ -918,85 +1171,106 @@ export function CatalogHomeClient({ feed }: Props) {
             </div>
           </div>
         </div>
+        ) : null}
       </section>
 
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-14 px-4 pb-14 sm:px-6 lg:px-8">
-        <FeaturedStrip items={visibleItems.slice(0, 8)} onOpenVehicle={setSelectedVehicle} />
-        {hasUpcomingAuctionCategories ? (
-          <UpcomingAuctionsSection
-            groups={upcomingAuctionGroups}
-            priceMap={config.vehiclePrices}
-            upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-            onOpenVehicle={setSelectedVehicle}
-          />
-        ) : (
-          <Section
-            id="proximos-remates"
-            title="Proximos remates"
-            subtitle="Vehiculos en agenda con mayor prioridad comercial."
-            items={proximosRemates}
-            priceMap={config.vehiclePrices}
-            upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-            onOpenVehicle={setSelectedVehicle}
-          />
-        )}
-        <Section
-          id="ventas-directas"
-          title="Ventas Directas"
-          subtitle="Stock disponible para cierre rapido."
-          items={ventasDirectas}
-          priceMap={config.vehiclePrices}
-          upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-          onOpenVehicle={setSelectedVehicle}
-        />
-        <Section
-          id="novedades"
-          title="Novedades"
-          subtitle="Ultimas unidades ingresadas al ecosistema Vedisa."
-          items={novedades}
-          priceMap={config.vehiclePrices}
-          upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-          onOpenVehicle={setSelectedVehicle}
-        />
-
-        <section id="catalogo" className="section-shell scroll-mt-24">
-          <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="premium-kicker">Catalogo</p>
-              <h2 className="text-2xl font-bold text-slate-900">Inventario por tipo de vehiculo</h2>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {(["livianos", "pesados", "maquinaria", "otros"] as VehicleTypeId[]).map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setActiveTypeTab(type)}
-                  className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold transition ${
-                    activeTypeTab === type ? "bg-cyan-600 text-white shadow-sm" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
-                >
-                  {type === "livianos" ? "Vehiculos livianos" : type === "pesados" ? "Vehiculos pesados" : type === "maquinaria" ? "Maquinaria" : "Otros"}
-                </button>
-              ))}
-            </div>
-          </header>
-          {filteredCatalogItems.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-              No hay vehículos para esta pestaña.
-            </div>
-          ) : (
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {filteredCatalogItems.map((item) => (
-                <CatalogCard
-                  key={`catalog-${item.id}`}
-                  item={item}
-                  priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
-                  upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
-                  onOpen={() => setSelectedVehicle(item)}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+        {config.homeLayout.showFeaturedStrip ? (
+          <FeaturedStrip items={visibleItems.slice(0, 8)} onOpenVehicle={setSelectedVehicle} />
+        ) : null}
+        {config.homeLayout.sectionOrder.map((sectionId) => {
+          if (sectionId === "proximos-remates") {
+            return hasUpcomingAuctionCategories ? (
+              <UpcomingAuctionsSection
+                key="public-proximos-auctions"
+                groups={upcomingAuctionGroups}
+                priceMap={config.vehiclePrices}
+                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                onOpenVehicle={setSelectedVehicle}
+              />
+            ) : (
+              <Section
+                key="public-proximos-fallback"
+                id="proximos-remates"
+                title={config.sectionTexts["proximos-remates"].title}
+                subtitle={config.sectionTexts["proximos-remates"].subtitle}
+                items={proximosRemates}
+                priceMap={config.vehiclePrices}
+                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                onOpenVehicle={setSelectedVehicle}
+              />
+            );
+          }
+          if (sectionId === "ventas-directas") {
+            return (
+              <Section
+                key="public-ventas-directas"
+                id="ventas-directas"
+                title={config.sectionTexts["ventas-directas"].title}
+                subtitle={config.sectionTexts["ventas-directas"].subtitle}
+                items={ventasDirectas}
+                priceMap={config.vehiclePrices}
+                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                onOpenVehicle={setSelectedVehicle}
+              />
+            );
+          }
+          if (sectionId === "novedades") {
+            return (
+              <Section
+                key="public-novedades"
+                id="novedades"
+                title={config.sectionTexts.novedades.title}
+                subtitle={config.sectionTexts.novedades.subtitle}
+                items={novedades}
+                priceMap={config.vehiclePrices}
+                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                onOpenVehicle={setSelectedVehicle}
+              />
+            );
+          }
+          return (
+            <section key="public-catalogo" id="catalogo" className="section-shell scroll-mt-24">
+              <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="premium-kicker">Catálogo</p>
+                  <h2 className="text-2xl font-bold text-slate-900">{config.sectionTexts.catalogo.title}</h2>
+                  <p className="mt-1 text-sm text-slate-600">{config.sectionTexts.catalogo.subtitle}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {(["livianos", "pesados", "maquinaria", "otros"] as VehicleTypeId[]).map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => setActiveTypeTab(type)}
+                      className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold transition ${
+                        activeTypeTab === type ? "bg-cyan-600 text-white shadow-sm" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      {type === "livianos" ? "Vehiculos livianos" : type === "pesados" ? "Vehiculos pesados" : type === "maquinaria" ? "Maquinaria" : "Otros"}
+                    </button>
+                  ))}
+                </div>
+              </header>
+              {filteredCatalogItems.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+                  No hay vehículos para esta pestaña.
+                </div>
+              ) : (
+                <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                  {filteredCatalogItems.map((item) => (
+                    <CatalogCard
+                      key={`catalog-${item.id}`}
+                      item={item}
+                      priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
+                      upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                      onOpen={() => setSelectedVehicle(item)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
       </div>
 
       {selectedVehicle ? (

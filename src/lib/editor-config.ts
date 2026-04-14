@@ -14,18 +14,42 @@ function getServerSupabase() {
 }
 
 function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
+  const defaults = DEFAULT_EDITOR_CONFIG;
   return {
     sectionVehicleIds: {
-      "proximos-remates": config?.sectionVehicleIds?.["proximos-remates"] ?? [],
-      "ventas-directas": config?.sectionVehicleIds?.["ventas-directas"] ?? [],
-      novedades: config?.sectionVehicleIds?.novedades ?? [],
-      catalogo: config?.sectionVehicleIds?.catalogo ?? [],
+      "proximos-remates":
+        config?.sectionVehicleIds?.["proximos-remates"] ??
+        defaults.sectionVehicleIds["proximos-remates"],
+      "ventas-directas":
+        config?.sectionVehicleIds?.["ventas-directas"] ??
+        defaults.sectionVehicleIds["ventas-directas"],
+      novedades: config?.sectionVehicleIds?.novedades ?? defaults.sectionVehicleIds.novedades,
+      catalogo: config?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
     },
-    hiddenVehicleIds: config?.hiddenVehicleIds ?? [],
-    vehiclePrices: config?.vehiclePrices ?? {},
-    vehicleDetails: config?.vehicleDetails ?? {},
-    upcomingAuctions: config?.upcomingAuctions ?? [],
-    vehicleUpcomingAuctionIds: config?.vehicleUpcomingAuctionIds ?? {},
+    hiddenVehicleIds: config?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
+    vehiclePrices: config?.vehiclePrices ?? defaults.vehiclePrices,
+    vehicleDetails: config?.vehicleDetails ?? defaults.vehicleDetails,
+    upcomingAuctions: config?.upcomingAuctions ?? defaults.upcomingAuctions,
+    vehicleUpcomingAuctionIds:
+      config?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
+    sectionTexts: {
+      "proximos-remates":
+        config?.sectionTexts?.["proximos-remates"] ?? defaults.sectionTexts["proximos-remates"],
+      "ventas-directas":
+        config?.sectionTexts?.["ventas-directas"] ?? defaults.sectionTexts["ventas-directas"],
+      novedades: config?.sectionTexts?.novedades ?? defaults.sectionTexts.novedades,
+      catalogo: config?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
+    },
+    homeLayout: {
+      heroKicker: config?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
+      heroTitle: config?.homeLayout?.heroTitle ?? defaults.homeLayout.heroTitle,
+      heroDescription: config?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription,
+      showFeaturedStrip:
+        config?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
+      showCommercialPanel:
+        config?.homeLayout?.showCommercialPanel ?? defaults.homeLayout.showCommercialPanel,
+      sectionOrder: config?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
+    },
   };
 }
 
