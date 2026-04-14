@@ -3,6 +3,7 @@ import type { CatalogItem } from "@/types/catalog";
 type CatalogCardProps = {
   item: CatalogItem;
   priceLabel?: string | null;
+  onOpen?: () => void;
 };
 
 function formatDate(date?: string): string {
@@ -22,13 +23,17 @@ function shortText(value?: string, max = 90): string | undefined {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
-export function CatalogCard({ item, priceLabel }: CatalogCardProps) {
+export function CatalogCard({ item, priceLabel, onOpen }: CatalogCardProps) {
   const cover = item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg";
   const thumbs = item.images.slice(0, 8);
   const formattedDate = formatDate(item.auctionDate);
 
   return (
-    <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-md transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg"
+    >
       <div className="relative h-56 w-full bg-slate-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -95,19 +100,14 @@ export function CatalogCard({ item, priceLabel }: CatalogCardProps) {
             </span>
           </div>
           {item.view3dUrl ? (
-            <a
-              href={item.view3dUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-cyan-700"
-            >
-              Ver 3D
-            </a>
+            <span className="rounded-md bg-cyan-100 px-3 py-1.5 text-xs font-medium text-cyan-800">
+              Ver detalle 3D
+            </span>
           ) : (
-            <span className="text-xs text-slate-400">Sin visor 3D</span>
+            <span className="text-xs text-slate-400">Ver detalle</span>
           )}
         </div>
       </div>
-    </article>
+    </button>
   );
 }

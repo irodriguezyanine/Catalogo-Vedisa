@@ -7,12 +7,7 @@ import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig, type SectionId, type VehicleTypeId } from "@/types/editor";
 
 const EDITOR_STORAGE_KEY = "vedisa_editor_config_local";
-const SECTION_LABELS: Record<SectionId, string> = {
-  "proximos-remates": "Proximos remates",
-  "ventas-directas": "Ventas directas",
-  novedades: "Novedades",
-  catalogo: "Catalogo",
-};
+const EDITOR_SECTIONS: SectionId[] = ["proximos-remates", "ventas-directas", "novedades", "catalogo"];
 
 function normalizeText(value?: string): string {
   return (value ?? "")
@@ -27,6 +22,20 @@ function getVehicleKey(item: CatalogItem): string {
     .find((value) => typeof value === "string" && value.trim().length > 0) as string | undefined;
   if (patent) return patent.toUpperCase().replace(/\s+/g, "").replace(/-/g, "");
   return item.id;
+}
+
+function getPatent(item: CatalogItem): string {
+  const raw = item.raw as Record<string, unknown>;
+  const patent = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number]
+    .find((value) => typeof value === "string" && value.trim().length > 0) as string | undefined;
+  return patent?.toUpperCase().replace(/\s+/g, "").replace(/-/g, "") ?? "—";
+}
+
+function getModel(item: CatalogItem): string {
+  const raw = item.raw as Record<string, unknown>;
+  const model = [raw.modelo, raw.model, item.title]
+    .find((value) => typeof value === "string" && value.trim().length > 0) as string | undefined;
+  return model?.trim() ?? item.title;
 }
 
 function inferVehicleType(item: CatalogItem): VehicleTypeId {
@@ -58,9 +67,10 @@ function sectionFallback(items: CatalogItem[], start: number, count: number): Ca
 
 type FeaturedStripProps = {
   items: CatalogItem[];
+  onOpenVehicle: (item: CatalogItem) => void;
 };
 
-function FeaturedStrip({ items }: FeaturedStripProps) {
+function FeaturedStrip({ items, onOpenVehicle }: FeaturedStripProps) {
   if (items.length === 0) return null;
 
   return (
@@ -74,7 +84,12 @@ function FeaturedStrip({ items }: FeaturedStripProps) {
       </div>
       <div className="featured-strip">
         {items.map((item) => (
-          <article key={`featured-${item.id}`} className="featured-item">
+          <button
+            key={`featured-${item.id}`}
+            type="button"
+            className="featured-item text-left"
+            onClick={() => onOpenVehicle(item)}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
@@ -92,7 +107,7 @@ function FeaturedStrip({ items }: FeaturedStripProps) {
                 {item.subtitle ? <span className="featured-chip">{item.subtitle}</span> : null}
               </div>
             </div>
-          </article>
+          </button>
         ))}
       </div>
     </section>
@@ -105,9 +120,10 @@ type SectionProps = {
   subtitle: string;
   items: CatalogItem[];
   priceMap: Record<string, string>;
+  onOpenVehicle: (item: CatalogItem) => void;
 };
 
-function Section({ id, title, subtitle, items, priceMap }: SectionProps) {
+function Section({ id, title, subtitle, items, priceMap, onOpenVehicle }: SectionProps) {
   return (
     <section id={id} className="section-shell scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -128,7 +144,12 @@ function Section({ id, title, subtitle, items, priceMap }: SectionProps) {
       ) : (
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           {items.map((item) => (
-            <CatalogCard key={`${id}-${item.id}`} item={item} priceLabel={formatPrice(priceMap[getVehicleKey(item)])} />
+            <CatalogCard
+              key={`${id}-${item.id}`}
+              item={item}
+              priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
+              onOpen={() => onOpenVehicle(item)}
+            />
           ))}
         </div>
       )}
@@ -145,13 +166,21 @@ export function CatalogHomeClient({ feed }: Props) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeEditorSection, setActiveEditorSection] = useState<SectionId>("proximos-remates");
   const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
   const [searchTerm, setSearchTerm] = useState("");
   const [loginEmail, setLoginEmail] = useState("jpmontero@vedisaremates.cl");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [selectedVehicle, setSelectedVehicle] = useState<CatalogItem | null>(null);
   const items = feed.items;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedVehicle(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -330,13 +359,27 @@ export function CatalogHomeClient({ feed }: Props) {
                 </button>
               ) : (
                 <button className="rounded-full bg-cyan-600 px-3 py-1 text-xs text-white" onClick={() => setShowLogin(true)}>
-                  Modo editor
+                  Login
                 </button>
               )}
             </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-slate-600">Plataforma de exhibicion de remates e inventario con integración automatica.</p>
+            <div className="space-y-1 text-sm text-slate-600">
+              <p>Bienvenidos al catálogo de vehículos del portal líder en subastas de vehículos siniestrados.</p>
+              <p>
+                Participa fácilmente: regístrate en{" "}
+                <a
+                  className="font-semibold text-cyan-700 underline"
+                  href="https://vehiculoschocados.cl/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  https://vehiculoschocados.cl/
+                </a>{" "}
+                y asegura tu garantía para comenzar a ofertar.
+              </p>
+            </div>
             <span className="rounded-full bg-cyan-600 px-3 py-1 text-xs font-semibold text-white">{visibleItems.length} vehiculos</span>
           </div>
           {feed.warning ? (
@@ -354,43 +397,43 @@ export function CatalogHomeClient({ feed }: Props) {
                 {saving ? "Guardando..." : "Guardar cambios"}
               </button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {(Object.keys(SECTION_LABELS) as SectionId[]).map((section) => (
-                <button
-                  key={section}
-                  onClick={() => setActiveEditorSection(section)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium ${
-                    section === activeEditorSection ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-700"
-                  }`}
-                >
-                  {SECTION_LABELS[section]}
-                </button>
-              ))}
-            </div>
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Buscar vehículo para editar..."
               className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
             />
-            <div className="max-h-96 overflow-auto rounded-lg border border-slate-200">
+            <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
+              <div className="sticky top-0 z-10 grid grid-cols-12 items-center gap-2 border-b border-slate-200 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                <div className="col-span-2">Patente</div>
+                <div className="col-span-3">Modelo vehículo</div>
+                <div className="col-span-1 text-center">Visible</div>
+                <div className="col-span-1 text-center">Próx.</div>
+                <div className="col-span-1 text-center">V. Directa</div>
+                <div className="col-span-1 text-center">Novedad</div>
+                <div className="col-span-1 text-center">Catálogo</div>
+                <div className="col-span-2">Precio</div>
+              </div>
               {filteredEditorItems.map((item) => {
                 const key = getVehicleKey(item);
-                const selected = (config.sectionVehicleIds[activeEditorSection] ?? []).includes(key);
                 const hidden = config.hiddenVehicleIds.includes(key);
                 return (
                   <div key={`editor-${key}`} className="grid grid-cols-12 items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs">
-                    <div className="col-span-4 font-medium text-slate-700">{item.title}</div>
-                    <label className="col-span-2 flex items-center gap-1">
-                      <input type="checkbox" checked={selected} onChange={() => toggleItemInSection(activeEditorSection, key)} />
-                      Mostrar en seccion
-                    </label>
-                    <label className="col-span-2 flex items-center gap-1">
+                    <div className="col-span-2 font-semibold text-slate-700">{getPatent(item)}</div>
+                    <div className="col-span-3 text-slate-700">{getModel(item)}</div>
+                    <label className="col-span-1 flex items-center justify-center">
                       <input type="checkbox" checked={!hidden} onChange={() => toggleHidden(key)} />
-                      Visible
                     </label>
+                    {EDITOR_SECTIONS.map((section) => {
+                      const selected = (config.sectionVehicleIds[section] ?? []).includes(key);
+                      return (
+                        <label key={`${key}-${section}`} className="col-span-1 flex items-center justify-center">
+                          <input type="checkbox" checked={selected} onChange={() => toggleItemInSection(section, key)} />
+                        </label>
+                      );
+                    })}
                     <input
-                      className="col-span-4 rounded border border-slate-200 px-2 py-1"
+                      className="col-span-2 rounded border border-slate-200 px-2 py-1"
                       placeholder="Precio CLP (opcional)"
                       value={config.vehiclePrices[key] ?? ""}
                       onChange={(event) => setPrice(key, event.target.value)}
@@ -399,20 +442,36 @@ export function CatalogHomeClient({ feed }: Props) {
                 );
               })}
             </div>
-            <p className="text-xs text-slate-500">Se muestran 120 resultados por búsqueda para edición rápida.</p>
+            <p className="text-xs text-slate-500">
+              Edición masiva dinámica: marca/desmarca categorías por fila, visibilidad y precio. Se muestran 120 resultados por búsqueda.
+            </p>
           </div>
         </section>
       ) : null}
 
+      {!isAdmin ? (
+        <>
       <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-5 lg:px-8">
         <div className="premium-panel premium-panel-hero lg:col-span-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Landing Premium</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">VEDISA REMATES</p>
           <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
-            Plataforma corporativa para exhibir remates y ventas de alto impacto.
+            Catálogo de vehículos de VEDISA REMATES
           </h1>
-          <p className="mt-4 max-w-2xl text-sm text-slate-600 md:text-base">
-            Vedisaremates conecta inventario, fotografias y visores 3D para una vitrina digital moderna, confiable y enfocada en conversion.
-          </p>
+          <div className="mt-4 max-w-3xl space-y-2 text-sm text-slate-600 md:text-base">
+            <p>
+              Revisa nuestro inventario, y ofertanos en nuestra plataforma{" "}
+              <a className="font-semibold text-cyan-700 underline" href="https://vedisaremates.cl" target="_blank" rel="noreferrer">
+                vedisaremates.cl
+              </a>
+              .
+            </p>
+            <p>Puedes revisar la exhibición presencial en Arturo Prat 6457, Noviciado, Pudahuel.</p>
+            <p>Horario: Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00 / Sab-Dom Cerrado.</p>
+            <p>
+              Remates 100% Online: Puede revisar las unidades pre-compra presencialmente en nuestra bodega sin necesidad de garantía.
+            </p>
+            <p>Oficinas: Américo Vespucio 2880, Piso 7.</p>
+          </div>
           <div className="mt-6 flex flex-wrap gap-3">
             <a href="#catalogo" className="premium-btn-primary">Ver catalogo completo</a>
             <a href="#proximos-remates" className="premium-btn-secondary">Explorar secciones</a>
@@ -429,10 +488,10 @@ export function CatalogHomeClient({ feed }: Props) {
       </section>
 
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-14 px-4 pb-14 sm:px-6 lg:px-8">
-        <FeaturedStrip items={visibleItems.slice(0, 8)} />
-        <Section id="proximos-remates" title="Proximos remates" subtitle="Vehiculos en agenda con mayor prioridad comercial." items={proximosRemates} priceMap={config.vehiclePrices} />
-        <Section id="ventas-directas" title="Ventas Directas" subtitle="Stock disponible para cierre rapido." items={ventasDirectas} priceMap={config.vehiclePrices} />
-        <Section id="novedades" title="Novedades" subtitle="Ultimas unidades ingresadas al ecosistema Vedisa." items={novedades} priceMap={config.vehiclePrices} />
+        <FeaturedStrip items={visibleItems.slice(0, 8)} onOpenVehicle={setSelectedVehicle} />
+        <Section id="proximos-remates" title="Proximos remates" subtitle="Vehiculos en agenda con mayor prioridad comercial." items={proximosRemates} priceMap={config.vehiclePrices} onOpenVehicle={setSelectedVehicle} />
+        <Section id="ventas-directas" title="Ventas Directas" subtitle="Stock disponible para cierre rapido." items={ventasDirectas} priceMap={config.vehiclePrices} onOpenVehicle={setSelectedVehicle} />
+        <Section id="novedades" title="Novedades" subtitle="Ultimas unidades ingresadas al ecosistema Vedisa." items={novedades} priceMap={config.vehiclePrices} onOpenVehicle={setSelectedVehicle} />
 
         <section id="catalogo" className="section-shell scroll-mt-24">
           <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -461,17 +520,83 @@ export function CatalogHomeClient({ feed }: Props) {
           ) : (
             <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
               {filteredCatalogItems.map((item) => (
-                <CatalogCard key={`catalog-${item.id}`} item={item} priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])} />
+                <CatalogCard
+                  key={`catalog-${item.id}`}
+                  item={item}
+                  priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
+                  onOpen={() => setSelectedVehicle(item)}
+                />
               ))}
             </div>
           )}
         </section>
       </div>
 
+      {selectedVehicle ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4" onClick={() => setSelectedVehicle(null)}>
+          <div className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-4 shadow-2xl md:p-6" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
+                <p className="text-sm text-slate-500">{selectedVehicle.subtitle ?? "Vehículo en catálogo"}</p>
+              </div>
+              <button className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600" onClick={() => setSelectedVehicle(null)}>
+                Cerrar
+              </button>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                {selectedVehicle.view3dUrl ? (
+                  <iframe
+                    src={selectedVehicle.view3dUrl}
+                    title={`Visor 3D ${selectedVehicle.title}`}
+                    className="h-[420px] w-full border-0"
+                    allow="fullscreen; autoplay"
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={selectedVehicle.thumbnail ?? selectedVehicle.images[0] ?? "/placeholder-car.svg"}
+                    alt={selectedVehicle.title}
+                    className="h-[420px] w-full object-cover"
+                  />
+                )}
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <h4 className="mb-3 text-base font-semibold text-slate-900">Resumen del vehículo</h4>
+                <dl className="grid grid-cols-2 gap-2 text-sm">
+                  {(
+                    [
+                      ["Patente", (selectedVehicle.raw as Record<string, unknown>).patente ?? (selectedVehicle.raw as Record<string, unknown>).PPU],
+                      ["Marca", (selectedVehicle.raw as Record<string, unknown>).marca ?? (selectedVehicle.raw as Record<string, unknown>).brand],
+                      ["Modelo", (selectedVehicle.raw as Record<string, unknown>).modelo ?? (selectedVehicle.raw as Record<string, unknown>).model],
+                      ["Año", (selectedVehicle.raw as Record<string, unknown>).ano ?? (selectedVehicle.raw as Record<string, unknown>).anio ?? (selectedVehicle.raw as Record<string, unknown>).year],
+                      ["Categoría", (selectedVehicle.raw as Record<string, unknown>).categoria ?? inferVehicleType(selectedVehicle)],
+                      ["Estado", selectedVehicle.status ?? "Disponible"],
+                      ["Ubicación", selectedVehicle.location ?? (selectedVehicle.raw as Record<string, unknown>).ubicacion],
+                      ["Lote", selectedVehicle.lot ?? (selectedVehicle.raw as Record<string, unknown>).stock_number],
+                      ["Precio", formatPrice(config.vehiclePrices[getVehicleKey(selectedVehicle)]) ?? "No informado"],
+                      ["Fotos", `${selectedVehicle.images.length}`],
+                    ] as Array<[string, unknown]>
+                  ).map(([label, value]) => (
+                    <div key={label} className="rounded-md bg-white p-2">
+                      <dt className="text-xs uppercase text-slate-500">{label}</dt>
+                      <dd className="font-medium text-slate-800">{String(value ?? "—")}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+        </>
+      ) : null}
+
       {showLogin ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-semibold text-slate-900">Ingresar a modo editor</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Login</h3>
             <p className="mt-1 text-sm text-slate-500">Solo administradores pueden editar categorías y vehículos.</p>
             <div className="mt-4 space-y-2">
               <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Correo" />
