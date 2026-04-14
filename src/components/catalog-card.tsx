@@ -27,17 +27,18 @@ export function CatalogCard({ item }: CatalogCardProps) {
   const formattedDate = formatDate(item.auctionDate);
 
   return (
-    <article className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:shadow-md">
-      <div className="relative h-56 w-full bg-zinc-100">
+    <article className="group overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/70 shadow-xl shadow-black/30 backdrop-blur transition duration-300 hover:-translate-y-1 hover:border-cyan-400/60">
+      <div className="relative h-56 w-full bg-zinc-950">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={cover}
           alt={item.title}
-          className="h-full w-full object-cover"
+          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
           loading="lazy"
         />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
         {item.status ? (
-          <span className="absolute right-3 top-3 rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white">
+          <span className="absolute right-3 top-3 rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-white">
             {item.status}
           </span>
         ) : null}
@@ -45,25 +46,25 @@ export function CatalogCard({ item }: CatalogCardProps) {
 
       <div className="space-y-3 p-4">
         <div>
-          <h3 className="line-clamp-1 text-base font-semibold text-zinc-900">
+          <h3 className="line-clamp-1 text-base font-semibold text-zinc-100">
             {item.title}
           </h3>
           {item.subtitle ? (
-            <p className="mt-1 text-sm text-zinc-600">{shortText(item.subtitle)}</p>
+            <p className="mt-1 text-sm text-zinc-400">{shortText(item.subtitle)}</p>
           ) : null}
         </div>
 
-        <div className="flex flex-wrap gap-2 text-xs text-zinc-600">
+        <div className="flex flex-wrap gap-2 text-xs text-zinc-300">
           {item.lot ? (
-            <span className="rounded-full bg-zinc-100 px-2 py-1">Lote {item.lot}</span>
+            <span className="rounded-full bg-zinc-800 px-2 py-1">Lote {item.lot}</span>
           ) : null}
           {formattedDate ? (
-            <span className="rounded-full bg-zinc-100 px-2 py-1">
+            <span className="rounded-full bg-zinc-800 px-2 py-1">
               Remate {formattedDate}
             </span>
           ) : null}
           {item.location ? (
-            <span className="rounded-full bg-zinc-100 px-2 py-1">
+            <span className="rounded-full bg-zinc-800 px-2 py-1">
               {shortText(item.location, 35)}
             </span>
           ) : null}
@@ -72,7 +73,7 @@ export function CatalogCard({ item }: CatalogCardProps) {
         {thumbs.length > 1 ? (
           <div className="grid grid-cols-6 gap-1">
             {thumbs.map((thumb) => (
-              <div key={thumb} className="h-10 overflow-hidden rounded bg-zinc-100">
+              <div key={thumb} className="h-10 overflow-hidden rounded bg-zinc-800">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={thumb}
@@ -85,8 +86,8 @@ export function CatalogCard({ item }: CatalogCardProps) {
           </div>
         ) : null}
 
-        <div className="flex items-center justify-between border-t border-zinc-200 pt-3">
-          <span className="text-xs text-zinc-500">
+        <div className="flex items-center justify-between border-t border-zinc-700 pt-3">
+          <span className="text-xs text-zinc-400">
             {item.images.length} foto{item.images.length === 1 ? "" : "s"}
           </span>
           {item.view3dUrl ? (
@@ -94,12 +95,12 @@ export function CatalogCard({ item }: CatalogCardProps) {
               href={item.view3dUrl}
               target="_blank"
               rel="noreferrer"
-              className="rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-cyan-700"
+              className="rounded-md bg-cyan-500 px-3 py-1.5 text-xs font-medium text-black transition hover:bg-cyan-400"
             >
               Ver 3D
             </a>
           ) : (
-            <span className="text-xs text-zinc-400">Sin visor 3D</span>
+            <span className="text-xs text-zinc-500">Sin visor 3D</span>
           )}
         </div>
       </div>
