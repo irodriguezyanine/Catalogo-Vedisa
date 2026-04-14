@@ -8,6 +8,9 @@ type CatalogCardProps = {
   onOpen?: () => void;
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
+  isCompared?: boolean;
+  onToggleCompare?: () => void;
+  onWhatsappClick?: () => void;
 };
 
 const WHATSAPP_BASE_URL = "https://api.whatsapp.com/send/?phone=56989323397";
@@ -63,6 +66,9 @@ export function CatalogCard({
   onOpen,
   isFavorite,
   onToggleFavorite,
+  isCompared,
+  onToggleCompare,
+  onWhatsappClick,
 }: CatalogCardProps) {
   const coverCandidate = item.thumbnail ?? item.images[0];
   const cover = isLikelyImageUrl(coverCandidate) ? (coverCandidate as string) : "/placeholder-car.svg";
@@ -180,31 +186,48 @@ export function CatalogCard({
         </div>
       </button>
 
-      <div className="flex items-center justify-between border-t border-slate-100 px-4 pb-4 pt-3">
-        <button
-          type="button"
-          onClick={onToggleFavorite}
-          className={`ui-focus inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-            isFavorite
-              ? "border-amber-300 bg-amber-50 text-amber-700"
-              : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-          }`}
-        >
-          <span aria-hidden="true">{isFavorite ? "★" : "☆"}</span>
-          {isFavorite ? "Guardado" : "Guardar"}
-        </button>
-        <a
-          href={whatsappUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="ui-focus inline-flex items-center gap-2 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-95"
-          aria-label={`Contactar por WhatsApp por ${item.title}`}
-        >
-          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-            <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.45 1.32 4.95L2 22l5.33-1.4a9.83 9.83 0 0 0 4.7 1.2h.01c5.45 0 9.88-4.43 9.88-9.89A9.86 9.86 0 0 0 12.04 2zm0 17.96h-.01a8.08 8.08 0 0 1-4.11-1.12l-.3-.18-3.16.83.84-3.09-.2-.32a8.03 8.03 0 0 1-1.24-4.2 8.2 8.2 0 1 1 8.19 8.08zm4.49-6.14c-.25-.12-1.48-.73-1.71-.81-.23-.09-.4-.12-.56.12-.16.24-.65.8-.79.97-.15.17-.3.19-.55.07-.25-.12-1.07-.4-2.03-1.28-.75-.66-1.25-1.48-1.4-1.73-.15-.24-.01-.37.11-.49.11-.11.25-.29.37-.43.12-.14.16-.24.24-.4.08-.17.04-.31-.02-.43-.06-.12-.56-1.36-.77-1.87-.2-.48-.41-.41-.56-.42h-.48c-.17 0-.43.06-.65.3-.22.24-.85.83-.85 2.03s.87 2.35.99 2.51c.12.17 1.7 2.6 4.12 3.64.58.25 1.03.4 1.38.51.58.18 1.1.15 1.52.09.46-.07 1.48-.6 1.68-1.17.21-.58.21-1.07.15-1.17-.06-.1-.22-.16-.47-.28z" />
-          </svg>
-          WhatsApp
-        </a>
+      <div className="space-y-2 border-t border-slate-100 px-4 pb-4 pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={onToggleFavorite}
+            className={`ui-focus inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+              isFavorite
+                ? "border-amber-300 bg-amber-50 text-amber-700"
+                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <span aria-hidden="true">{isFavorite ? "★" : "☆"}</span>
+            {isFavorite ? "Guardado" : "Guardar"}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleCompare}
+            className={`ui-focus inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+              isCompared
+                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <span aria-hidden="true">{isCompared ? "✓" : "+"}</span>
+            {isCompared ? "Comparando" : "Comparar"}
+          </button>
+        </div>
+        <div className="flex justify-end">
+          <a
+            href={whatsappUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={onWhatsappClick}
+            className="ui-focus inline-flex items-center gap-2 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-95"
+            aria-label={`Contactar por WhatsApp por ${item.title}`}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+              <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.45 1.32 4.95L2 22l5.33-1.4a9.83 9.83 0 0 0 4.7 1.2h.01c5.45 0 9.88-4.43 9.88-9.89A9.86 9.86 0 0 0 12.04 2zm0 17.96h-.01a8.08 8.08 0 0 1-4.11-1.12l-.3-.18-3.16.83.84-3.09-.2-.32a8.03 8.03 0 0 1-1.24-4.2 8.2 8.2 0 1 1 8.19 8.08zm4.49-6.14c-.25-.12-1.48-.73-1.71-.81-.23-.09-.4-.12-.56.12-.16.24-.65.8-.79.97-.15.17-.3.19-.55.07-.25-.12-1.07-.4-2.03-1.28-.75-.66-1.25-1.48-1.4-1.73-.15-.24-.01-.37.11-.49.11-.11.25-.29.37-.43.12-.14.16-.24.24-.4.08-.17.04-.31-.02-.43-.06-.12-.56-1.36-.77-1.87-.2-.48-.41-.41-.56-.42h-.48c-.17 0-.43.06-.65.3-.22.24-.85.83-.85 2.03s.87 2.35.99 2.51c.12.17 1.7 2.6 4.12 3.64.58.25 1.03.4 1.38.51.58.18 1.1.15 1.52.09.46-.07 1.48-.6 1.68-1.17.21-.58.21-1.07.15-1.17-.06-.1-.22-.16-.47-.28z" />
+            </svg>
+            WhatsApp
+          </a>
+        </div>
       </div>
     </article>
   );

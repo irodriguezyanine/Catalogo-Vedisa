@@ -22,6 +22,11 @@ const EDITOR_PAGE_SIZE = 20;
 type AdminTabId = "vehiculos" | "categorias" | "layout";
 type SortOption = "relevancia" | "fecha-remate" | "precio-asc" | "precio-desc" | "titulo";
 type QuickFilterId = "livianos" | "pesados" | "con3d" | "conPrecio" | "recientes" | "manuales";
+type ClientLeadForm = {
+  name: string;
+  phone: string;
+  interest: string;
+};
 
 const QUICK_FILTER_LABELS: Record<QuickFilterId, string> = {
   livianos: "Livianos",
@@ -34,6 +39,8 @@ const QUICK_FILTER_LABELS: Record<QuickFilterId, string> = {
 
 const WHATSAPP_CTA_URL =
   "https://api.whatsapp.com/send/?phone=56989323397&text=Hola%2C+quiero+asesor%C3%ADa+para+ofertar+en+VEDISA&type=phone_number&app_absent=0";
+const MAX_COMPARE_ITEMS = 4;
+const ANALYTICS_STORAGE_KEY = "vedisa_analytics_events";
 
 const SECTION_LABELS: Record<SectionId, string> = {
   "proximos-remates": "Próximos remates",
@@ -217,6 +224,29 @@ function getPriceAmount(value?: string): number {
   return Number.isFinite(amount) && amount > 0 ? amount : Number.POSITIVE_INFINITY;
 }
 
+function trackEvent(eventName: string, payload?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  const eventPayload = {
+    event: eventName,
+    timestamp: new Date().toISOString(),
+    ...(payload ?? {}),
+  };
+  try {
+    const gtag = (window as Window & { gtag?: (...args: unknown[]) => void }).gtag;
+    if (typeof gtag === "function") {
+      gtag("event", eventName, payload ?? {});
+    }
+    const dataLayer = (window as Window & { dataLayer?: unknown[] }).dataLayer;
+    if (Array.isArray(dataLayer)) dataLayer.push(eventPayload);
+    const raw = window.localStorage.getItem(ANALYTICS_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Array<Record<string, unknown>>) : [];
+    const next = [eventPayload, ...parsed].slice(0, 120);
+    window.localStorage.setItem(ANALYTICS_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // avoid breaking UX if analytics fails
+  }
+}
+
 function cleanOptional(value?: string): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -386,6 +416,8 @@ type SectionProps = {
   upcomingAuctionByVehicleKey?: Record<string, string>;
   favoriteKeys: string[];
   onToggleFavorite: (itemKey: string) => void;
+  compareKeys: string[];
+  onToggleCompare: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
 };
 
@@ -398,6 +430,8 @@ function Section({
   upcomingAuctionByVehicleKey,
   favoriteKeys,
   onToggleFavorite,
+  compareKeys,
+  onToggleCompare,
   onOpenVehicle,
 }: SectionProps) {
   return (
@@ -428,6 +462,14 @@ function Section({
               onOpen={() => onOpenVehicle(item)}
               isFavorite={favoriteKeys.includes(getVehicleKey(item))}
               onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
+              isCompared={compareKeys.includes(getVehicleKey(item))}
+              onToggleCompare={() => onToggleCompare(getVehicleKey(item))}
+              onWhatsappClick={() =>
+                trackEvent("whatsapp_click_card", {
+                  section: id,
+                  itemKey: getVehicleKey(item),
+                })
+              }
             />
           ))}
         </div>
@@ -442,6 +484,8 @@ type UpcomingAuctionsSectionProps = {
   upcomingAuctionByVehicleKey: Record<string, string>;
   favoriteKeys: string[];
   onToggleFavorite: (itemKey: string) => void;
+  compareKeys: string[];
+  onToggleCompare: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
 };
 
@@ -451,6 +495,8 @@ function UpcomingAuctionsSection({
   upcomingAuctionByVehicleKey,
   favoriteKeys,
   onToggleFavorite,
+  compareKeys,
+  onToggleCompare,
   onOpenVehicle,
 }: UpcomingAuctionsSectionProps) {
   return (
@@ -486,6 +532,15 @@ function UpcomingAuctionsSection({
                     onOpen={() => onOpenVehicle(item)}
                     isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                     onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
+                    isCompared={compareKeys.includes(getVehicleKey(item))}
+                    onToggleCompare={() => onToggleCompare(getVehicleKey(item))}
+                    onWhatsappClick={() =>
+                      trackEvent("whatsapp_click_card", {
+                        section: "proximos-remates",
+                        auctionId: auction.id,
+                        itemKey: getVehicleKey(item),
+                      })
+                    }
                   />
                 ))}
               </div>
@@ -523,6 +578,14 @@ export function CatalogHomeClient({ feed }: Props) {
       return [];
     }
   });
+  const [compareKeys, setCompareKeys] = useState<string[]>([]);
+  const [showComparePanel, setShowComparePanel] = useState(false);
+  const [leadForm, setLeadForm] = useState<ClientLeadForm>({
+    name: "",
+    phone: "",
+    interest: "",
+  });
+  const [leadMessage, setLeadMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [adminTab, setAdminTab] = useState<AdminTabId>("vehiculos");
   const [auctionFilterId, setAuctionFilterId] = useState("");
@@ -796,6 +859,7 @@ export function CatalogHomeClient({ feed }: Props) {
   }, [sortedUpcomingAuctions]);
 
   const toggleQuickFilter = (filterId: QuickFilterId) => {
+    trackEvent("quick_filter_toggle", { filterId });
     setQuickFilters((prev) => {
       const set = new Set(prev);
       if (set.has(filterId)) set.delete(filterId);
@@ -805,6 +869,7 @@ export function CatalogHomeClient({ feed }: Props) {
   };
 
   const toggleFavorite = (itemKey: string) => {
+    trackEvent("favorite_toggle", { itemKey });
     setFavoriteKeys((prev) => {
       const set = new Set(prev);
       if (set.has(itemKey)) set.delete(itemKey);
@@ -812,6 +877,76 @@ export function CatalogHomeClient({ feed }: Props) {
       return Array.from(set);
     });
   };
+
+  const toggleCompare = (itemKey: string) => {
+    trackEvent("compare_toggle", { itemKey });
+    setCompareKeys((prev) => {
+      const set = new Set(prev);
+      if (set.has(itemKey)) {
+        set.delete(itemKey);
+        return Array.from(set);
+      }
+      if (set.size >= MAX_COMPARE_ITEMS) return prev;
+      set.add(itemKey);
+      return Array.from(set);
+    });
+  };
+
+  const compareItems = useMemo(
+    () => homeVisibleItems.filter((item) => compareKeys.includes(getVehicleKey(item))),
+    [homeVisibleItems, compareKeys],
+  );
+
+  const leadWhatsappUrl = useMemo(() => {
+    const base = "https://api.whatsapp.com/send/?phone=56989323397";
+    const text = `Hola, soy ${leadForm.name || "cliente"} y me interesa ${leadForm.interest || "recibir asesoría para ofertar"}. Mi contacto: ${leadForm.phone || "sin teléfono"}.`;
+    return `${base}&text=${encodeURIComponent(text)}&type=phone_number&app_absent=0`;
+  }, [leadForm]);
+
+  const submitLeadForm = () => {
+    if (!leadForm.name.trim() || !leadForm.phone.trim()) {
+      setLeadMessage("Completa nombre y teléfono para continuar.");
+      trackEvent("lead_form_invalid");
+      return;
+    }
+    trackEvent("lead_form_submit", { name: leadForm.name, phone: leadForm.phone, interest: leadForm.interest });
+    setLeadMessage("Perfecto. Te estamos redirigiendo a WhatsApp para contacto inmediato.");
+    window.open(leadWhatsappUrl, "_blank", "noreferrer");
+  };
+
+  const organizationSchema = useMemo(
+    () => ({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "VEDISA REMATES",
+      url: "https://vedisaremates.vercel.app",
+      logo: "https://vedisaremates.vercel.app/vedisa-logo.png",
+      contactPoint: {
+        "@type": "ContactPoint",
+        telephone: "+56-9-8932-3397",
+        contactType: "customer service",
+        areaServed: "CL",
+        availableLanguage: "es",
+      },
+      sameAs: ["https://vehiculoschocados.cl/"],
+    }),
+    [],
+  );
+
+  const websiteSchema = useMemo(
+    () => ({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Catálogo VEDISA REMATES",
+      url: "https://vedisaremates.vercel.app",
+      potentialAction: {
+        "@type": "SearchAction",
+        target: "https://vedisaremates.vercel.app/?q={search_term_string}",
+        "query-input": "required name=search_term_string",
+      },
+    }),
+    [],
+  );
 
   const filteredEditorItems = useMemo(() => {
     const query = normalizeText(searchTerm);
@@ -1160,6 +1295,7 @@ export function CatalogHomeClient({ feed }: Props) {
   };
 
   const login = async () => {
+    trackEvent("admin_login_attempt");
     setLoginError("");
     const response = await fetch("/api/admin/login", {
       method: "POST",
@@ -1169,6 +1305,7 @@ export function CatalogHomeClient({ feed }: Props) {
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({ error: "No se pudo iniciar sesión." }))) as { error?: string };
       setLoginError(payload.error ?? "No se pudo iniciar sesión.");
+      trackEvent("admin_login_failed");
       return;
     }
     setShowLogin(false);
@@ -1176,6 +1313,7 @@ export function CatalogHomeClient({ feed }: Props) {
     setIsAdmin(true);
     setAdminView("editor");
     setMobileMenuOpen(false);
+    trackEvent("admin_login_success");
   };
 
   const logout = async () => {
@@ -1183,10 +1321,12 @@ export function CatalogHomeClient({ feed }: Props) {
     setIsAdmin(false);
     setAdminView("home");
     setMobileMenuOpen(false);
+    trackEvent("admin_logout");
   };
 
   const showAdminEditor = isAdmin && adminView === "editor";
   const showPublicHome = !isAdmin || adminView === "home";
+  const hasActiveSearch = homeSearchTerm.trim().length > 0;
 
   const editingItem = editingVehicleKey ? itemsByKey.get(editingVehicleKey) ?? null : null;
 
@@ -1194,6 +1334,16 @@ export function CatalogHomeClient({ feed }: Props) {
     <main className="premium-bg min-h-screen text-slate-900">
       <div className="premium-glow premium-glow-cyan" />
       <div className="premium-glow premium-glow-gold" />
+      <script
+        type="application/ld+json"
+        suppressHydrationWarning
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
+      />
+      <script
+        type="application/ld+json"
+        suppressHydrationWarning
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteSchema) }}
+      />
 
       <section className="sticky top-0 z-30 border-b border-cyan-100/80 bg-white/88 shadow-[0_8px_24px_rgba(87,141,167,0.08)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 md:py-4 lg:px-8">
@@ -1223,6 +1373,8 @@ export function CatalogHomeClient({ feed }: Props) {
               onClick={() => setMobileMenuOpen((prev) => !prev)}
               className="ui-focus inline-flex items-center justify-center self-end rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 md:hidden"
               aria-label="Abrir menú"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-main-menu"
             >
               <span className="text-lg leading-none">{mobileMenuOpen ? "×" : "☰"}</span>
             </button>
@@ -1263,14 +1415,14 @@ export function CatalogHomeClient({ feed }: Props) {
                   </button>
                 </>
               ) : (
-                <button className="ui-focus rounded-full bg-cyan-600 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-cyan-500" onClick={() => setShowLogin(true)}>
+                <button className="ui-focus rounded-full bg-cyan-600 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-cyan-500" onClick={() => { setShowLogin(true); trackEvent("login_modal_open"); }}>
                   Login
                 </button>
               )}
             </div>
           </div>
           {mobileMenuOpen ? (
-            <div className="rounded-lg border border-slate-200 bg-white p-3 md:hidden">
+            <div id="mobile-main-menu" className="rounded-lg border border-slate-200 bg-white p-3 md:hidden">
               <nav className="flex flex-col gap-2 text-sm">
                 <a href="#proximos-remates" className="premium-link-pill ui-focus text-center" onClick={() => setMobileMenuOpen(false)}>
                   Proximos remates
@@ -1314,7 +1466,7 @@ export function CatalogHomeClient({ feed }: Props) {
                     </button>
                   </>
                 ) : (
-                  <button className="ui-focus w-full rounded-full bg-cyan-600 px-3 py-1 text-xs text-white" onClick={() => { setShowLogin(true); setMobileMenuOpen(false); }}>
+                  <button className="ui-focus w-full rounded-full bg-cyan-600 px-3 py-1 text-xs text-white" onClick={() => { setShowLogin(true); setMobileMenuOpen(false); trackEvent("login_modal_open"); }}>
                     Login
                   </button>
                 )}
@@ -1799,9 +1951,13 @@ export function CatalogHomeClient({ feed }: Props) {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <input
               value={homeSearchTerm}
-              onChange={(event) => setHomeSearchTerm(event.target.value)}
+              onChange={(event) => {
+                setHomeSearchTerm(event.target.value);
+                trackEvent("home_search_change", { query: event.target.value });
+              }}
               placeholder="Buscar por patente, marca, modelo o categoría..."
               className="ui-focus w-full rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm sm:max-w-xl"
+              aria-label="Buscar vehículos por patente, marca, modelo o categoría"
             />
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-slate-600">
@@ -1810,7 +1966,10 @@ export function CatalogHomeClient({ feed }: Props) {
               {homeSearchTerm ? (
                 <button
                   type="button"
-                  onClick={() => setHomeSearchTerm("")}
+                  onClick={() => {
+                    setHomeSearchTerm("");
+                    trackEvent("home_search_clear");
+                  }}
                   className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
                 >
                   Limpiar
@@ -1835,8 +1994,12 @@ export function CatalogHomeClient({ feed }: Props) {
             ))}
             <select
               value={homeSort}
-              onChange={(event) => setHomeSort(event.target.value as SortOption)}
+              onChange={(event) => {
+                setHomeSort(event.target.value as SortOption);
+                trackEvent("home_sort_change", { sort: event.target.value });
+              }}
               className="ui-focus ml-auto rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+              aria-label="Ordenar resultados del catálogo"
             >
               <option value="relevancia">Orden: Relevancia</option>
               <option value="fecha-remate">Orden: Fecha remate</option>
@@ -1847,60 +2010,74 @@ export function CatalogHomeClient({ feed }: Props) {
           </div>
         </div>
       </section>
-      <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-12 lg:px-8">
-        <div className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero`}>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">{config.homeLayout.heroKicker}</p>
-          <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
-            {config.homeLayout.heroTitle}
-          </h1>
-          <p className="mt-5 max-w-2xl text-sm leading-relaxed text-slate-600 md:text-[15px]">
-            {config.homeLayout.heroDescription}
-          </p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Visor 3D</span>
-            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Agenda por remate</span>
-            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Contacto inmediato</span>
-          </div>
-          <div className="mt-6 flex flex-wrap gap-3 border-t border-cyan-100 pt-5">
-            <a href="#catalogo" className="premium-btn-primary ui-focus">Ver catálogo completo</a>
-            <a href="#proximos-remates" className="premium-btn-secondary ui-focus">Explorar secciones</a>
-          </div>
-          {nextAuction ? (
-            <div className="mt-5 inline-flex w-fit items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-800">
-              <span>Próximo remate:</span>
-              <span>{nextAuction.auction.name}</span>
-              <span>·</span>
-              <span>{formatAuctionDateLabel(nextAuction.auction.date)}</span>
+      <div
+        className={`transition-all duration-500 ease-out ${
+          hasActiveSearch
+            ? "pointer-events-none max-h-0 -translate-y-2 overflow-hidden opacity-0"
+            : "max-h-[1200px] translate-y-0 opacity-100"
+        }`}
+      >
+        <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-12 lg:px-8">
+          <div className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero`}>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">{config.homeLayout.heroKicker}</p>
+            <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
+              {config.homeLayout.heroTitle}
+            </h1>
+            <p className="mt-5 max-w-2xl text-sm leading-relaxed text-slate-600 md:text-[15px]">
+              {config.homeLayout.heroDescription}
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Visor 3D</span>
+              <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Agenda por remate</span>
+              <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Contacto inmediato</span>
             </div>
+            <div className="mt-6 flex flex-wrap gap-3 border-t border-cyan-100 pt-5">
+              <a href="#catalogo" className="premium-btn-primary ui-focus">Ver catálogo completo</a>
+              <a href="#proximos-remates" className="premium-btn-secondary ui-focus">Explorar secciones</a>
+            </div>
+            {nextAuction ? (
+              <div className="mt-5 inline-flex w-fit items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-800">
+                <span>Próximo remate:</span>
+                <span>{nextAuction.auction.name}</span>
+                <span>·</span>
+                <span>{formatAuctionDateLabel(nextAuction.auction.date)}</span>
+              </div>
+            ) : null}
+          </div>
+          {config.homeLayout.showCommercialPanel ? (
+          <div className="premium-panel lg:col-span-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Información comercial</p>
+            <div className="mt-4 space-y-3">
+              <div className="info-tile">
+                <p className="text-[11px] uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">Arturo Prat 6457, Noviciado, Pudahuel</p>
+              </div>
+              <div className="info-tile">
+                <p className="text-[11px] uppercase tracking-widest text-slate-500">🕒 Horario</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00</p>
+              </div>
+              <div className="info-tile">
+                <p className="text-[11px] uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">Inspección pre-compra presencial disponible, sin garantía previa</p>
+              </div>
+              <div className="info-tile">
+                <p className="text-[11px] uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">Américo Vespucio 2880, Piso 7</p>
+              </div>
+            </div>
+          </div>
           ) : null}
-        </div>
-        {config.homeLayout.showCommercialPanel ? (
-        <div className="premium-panel lg:col-span-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Información comercial</p>
-          <div className="mt-4 space-y-3">
-            <div className="info-tile">
-              <p className="text-[11px] uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">Arturo Prat 6457, Noviciado, Pudahuel</p>
-            </div>
-            <div className="info-tile">
-              <p className="text-[11px] uppercase tracking-widest text-slate-500">🕒 Horario</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00</p>
-            </div>
-            <div className="info-tile">
-              <p className="text-[11px] uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">Inspección pre-compra presencial disponible, sin garantía previa</p>
-            </div>
-            <div className="info-tile">
-              <p className="text-[11px] uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">Américo Vespucio 2880, Piso 7</p>
-            </div>
-          </div>
-        </div>
-        ) : null}
-      </section>
+        </section>
+      </div>
 
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-14 px-4 pb-14 sm:px-6 lg:px-8">
-        <section className="section-shell">
+        <section
+          className={`section-shell transition-all duration-500 ease-out ${
+            hasActiveSearch
+              ? "pointer-events-none max-h-0 -translate-y-2 overflow-hidden opacity-0"
+              : "max-h-[480px] translate-y-0 opacity-100"
+          }`}
+        >
           <div className="mb-4">
             <p className="premium-kicker">Cómo participar</p>
             <h2 className="text-2xl font-bold text-slate-900">Compra en 3 pasos</h2>
@@ -1943,6 +2120,14 @@ export function CatalogHomeClient({ feed }: Props) {
                   onOpen={() => setSelectedVehicle(item)}
                   isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                   onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
+                  isCompared={compareKeys.includes(getVehicleKey(item))}
+                  onToggleCompare={() => toggleCompare(getVehicleKey(item))}
+                  onWhatsappClick={() =>
+                    trackEvent("whatsapp_click_card", {
+                      section: "favoritos",
+                      itemKey: getVehicleKey(item),
+                    })
+                  }
                 />
               ))}
             </div>
@@ -1964,6 +2149,14 @@ export function CatalogHomeClient({ feed }: Props) {
                   onOpen={() => setSelectedVehicle(item)}
                   isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                   onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
+                  isCompared={compareKeys.includes(getVehicleKey(item))}
+                  onToggleCompare={() => toggleCompare(getVehicleKey(item))}
+                  onWhatsappClick={() =>
+                    trackEvent("whatsapp_click_card", {
+                      section: "recien-publicados",
+                      itemKey: getVehicleKey(item),
+                    })
+                  }
                 />
               ))}
             </div>
@@ -1979,6 +2172,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 favoriteKeys={favoriteKeys}
                 onToggleFavorite={toggleFavorite}
+                compareKeys={compareKeys}
+                onToggleCompare={toggleCompare}
                 onOpenVehicle={setSelectedVehicle}
               />
             ) : (
@@ -1992,6 +2187,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 favoriteKeys={favoriteKeys}
                 onToggleFavorite={toggleFavorite}
+                compareKeys={compareKeys}
+                onToggleCompare={toggleCompare}
                 onOpenVehicle={setSelectedVehicle}
               />
             );
@@ -2008,6 +2205,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 favoriteKeys={favoriteKeys}
                 onToggleFavorite={toggleFavorite}
+                compareKeys={compareKeys}
+                onToggleCompare={toggleCompare}
                 onOpenVehicle={setSelectedVehicle}
               />
             );
@@ -2024,6 +2223,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 favoriteKeys={favoriteKeys}
                 onToggleFavorite={toggleFavorite}
+                compareKeys={compareKeys}
+                onToggleCompare={toggleCompare}
                 onOpenVehicle={setSelectedVehicle}
               />
             );
@@ -2065,6 +2266,14 @@ export function CatalogHomeClient({ feed }: Props) {
                       onOpen={() => setSelectedVehicle(item)}
                       isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                       onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
+                      isCompared={compareKeys.includes(getVehicleKey(item))}
+                      onToggleCompare={() => toggleCompare(getVehicleKey(item))}
+                      onWhatsappClick={() =>
+                        trackEvent("whatsapp_click_card", {
+                          section: "catalogo",
+                          itemKey: getVehicleKey(item),
+                        })
+                      }
                     />
                   ))}
                 </div>
@@ -2109,10 +2318,56 @@ export function CatalogHomeClient({ feed }: Props) {
           </div>
         </div>
       </section>
+      <section className="relative z-10 mx-auto mb-14 max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="section-shell">
+          <p className="premium-kicker">Asesoría personalizada</p>
+          <h2 className="text-2xl font-bold text-slate-900">Te ayudamos a encontrar tu próxima unidad</h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Déjanos tus datos y te contactamos por WhatsApp para guiarte en el proceso de oferta.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <input
+              value={leadForm.name}
+              onChange={(event) =>
+                setLeadForm((prev) => ({ ...prev, name: event.target.value }))
+              }
+              className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              placeholder="Nombre"
+              aria-label="Nombre de contacto"
+            />
+            <input
+              value={leadForm.phone}
+              onChange={(event) =>
+                setLeadForm((prev) => ({ ...prev, phone: event.target.value }))
+              }
+              className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              placeholder="Teléfono"
+              aria-label="Teléfono de contacto"
+            />
+            <input
+              value={leadForm.interest}
+              onChange={(event) =>
+                setLeadForm((prev) => ({ ...prev, interest: event.target.value }))
+              }
+              className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              placeholder="¿Qué vehículo buscas?"
+              aria-label="Interés de vehículo"
+            />
+            <button
+              type="button"
+              onClick={submitLeadForm}
+              className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
+            >
+              Solicitar asesoría
+            </button>
+          </div>
+          {leadMessage ? <p className="mt-2 text-xs font-semibold text-cyan-700">{leadMessage}</p> : null}
+        </div>
+      </section>
 
       {selectedVehicle ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4" onClick={() => setSelectedVehicle(null)}>
-          <div className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-4 shadow-2xl md:p-6" onClick={(event) => event.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-label={`Detalle de ${selectedVehicle.title}`} className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-4 shadow-2xl md:p-6" onClick={(event) => event.stopPropagation()}>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
@@ -2195,14 +2450,99 @@ export function CatalogHomeClient({ feed }: Props) {
         </>
       ) : null}
 
+      {showPublicHome && compareItems.length > 0 ? (
+        <div className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-2 shadow-lg">
+          <span className="text-xs font-semibold text-indigo-700">
+            Comparador: {compareItems.length}/{MAX_COMPARE_ITEMS}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setShowComparePanel(true);
+              trackEvent("compare_panel_open", { count: compareItems.length });
+            }}
+            className="ui-focus rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white"
+          >
+            Ver comparación
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCompareKeys([]);
+              trackEvent("compare_clear");
+            }}
+            className="ui-focus rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-600"
+          >
+            Limpiar
+          </button>
+        </div>
+      ) : null}
+
+      {showComparePanel ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/70 p-4" onClick={() => setShowComparePanel(false)}>
+          <div role="dialog" aria-modal="true" aria-label="Comparador de vehículos" className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-4 shadow-2xl md:p-6" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="text-lg font-bold text-slate-900">Comparador de vehículos</h3>
+              <button
+                type="button"
+                className="ui-focus rounded-md border border-slate-300 px-3 py-1 text-xs text-slate-600"
+                onClick={() => setShowComparePanel(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+            {compareItems.length === 0 ? (
+              <p className="text-sm text-slate-600">No hay vehículos seleccionados para comparar.</p>
+            ) : (
+              <div className="overflow-auto rounded-xl border border-slate-200">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-slate-100">
+                    <tr>
+                      <th className="px-3 py-2 text-xs font-semibold uppercase text-slate-500">Campo</th>
+                      {compareItems.map((item) => (
+                        <th key={`cmp-head-${item.id}`} className="px-3 py-2 text-xs font-semibold uppercase text-slate-700">
+                          {item.title}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ["Patente", (item: CatalogItem) => getPatent(item)],
+                      ["Marca", (item: CatalogItem) => String((item.raw as Record<string, unknown>).marca ?? (item.raw as Record<string, unknown>).brand ?? "—")],
+                      ["Modelo", (item: CatalogItem) => getModel(item)],
+                      ["Año", (item: CatalogItem) => String((item.raw as Record<string, unknown>).ano ?? (item.raw as Record<string, unknown>).anio ?? (item.raw as Record<string, unknown>).year ?? "—")],
+                      ["Estado", (item: CatalogItem) => item.status ?? "Disponible"],
+                      ["Ubicación", (item: CatalogItem) => item.location ?? "—"],
+                      ["Remate", (item: CatalogItem) => upcomingAuctionByVehicleKey[getVehicleKey(item)] ?? "Sin asignar"],
+                      ["Precio", (item: CatalogItem) => formatPrice(config.vehiclePrices[getVehicleKey(item)]) ?? "No informado"],
+                      ["Tiene 3D", (item: CatalogItem) => (item.view3dUrl ? "Sí" : "No")],
+                    ].map(([label, resolver]) => (
+                      <tr key={String(label)} className="border-t border-slate-200">
+                        <td className="px-3 py-2 font-semibold text-slate-700">{String(label)}</td>
+                        {compareItems.map((item) => (
+                          <td key={`cmp-${label}-${item.id}`} className="px-3 py-2 text-slate-600">
+                            {(resolver as (value: CatalogItem) => string)(item)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
       {showLogin ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl">
+          <div role="dialog" aria-modal="true" aria-label="Inicio de sesión administrador" className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl">
             <h3 className="text-lg font-semibold text-slate-900">Login</h3>
             <p className="mt-1 text-sm text-slate-500">Solo administradores pueden editar categorías y vehículos.</p>
             <div className="mt-4 space-y-2">
-              <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Correo" />
-              <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Contraseña" />
+              <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Correo" aria-label="Correo de administrador" />
+              <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Contraseña" aria-label="Contraseña de administrador" />
             </div>
             {loginError ? <p className="mt-2 text-xs text-red-600">{loginError}</p> : null}
             <div className="mt-4 flex justify-end gap-2">
@@ -2217,6 +2557,7 @@ export function CatalogHomeClient({ feed }: Props) {
           href={WHATSAPP_CTA_URL}
           target="_blank"
           rel="noreferrer"
+          onClick={() => trackEvent("whatsapp_click_floating")}
           className="ui-focus fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#25D366] px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden"
         >
           <span>WhatsApp</span>
@@ -2225,7 +2566,7 @@ export function CatalogHomeClient({ feed }: Props) {
 
       {isAdmin && editingVehicleKey && editingDetails && editingItem ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/70 p-4" onClick={cancelDetailsEditor}>
-          <div className="max-h-[92vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-label="Editar detalle manual" className="max-h-[92vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-bold text-slate-900">Editar detalle manual</h3>

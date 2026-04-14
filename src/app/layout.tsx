@@ -13,11 +13,41 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vedisa Remates | Catalogo",
-  description: "Plataforma profesional de remates, ventas directas, novedades y catalogo dinamico.",
+  metadataBase: new URL("https://vedisaremates.vercel.app"),
+  title: "Catálogo Oficial VEDISA REMATES | Subastas de Vehículos",
+  description:
+    "Explora vehículos para remate y venta directa en VEDISA REMATES. Revisa unidades con fotos, visor 3D y acompañamiento comercial para ofertar con confianza.",
   icons: {
-    icon: "/vedisa-logo.png",
-    apple: "/vedisa-logo.png",
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+      { url: "/favicon.ico", type: "image/x-icon" },
+    ],
+    shortcut: "/icon.png",
+    apple: "/icon.png",
+  },
+  openGraph: {
+    type: "website",
+    locale: "es_CL",
+    url: "https://vedisaremates.vercel.app",
+    siteName: "VEDISA REMATES",
+    title: "Catálogo Oficial VEDISA REMATES | Remates y Venta Directa",
+    description:
+      "Inventario actualizado de vehículos para remate y venta directa. Cotiza, compara y oférta con respaldo comercial VEDISA.",
+    images: [
+      {
+        url: "/vedisa-logo.png",
+        width: 1200,
+        height: 630,
+        alt: "Catálogo Oficial VEDISA REMATES",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Catálogo Oficial VEDISA REMATES",
+    description:
+      "Revisa vehículos para remate y venta directa con respaldo comercial VEDISA.",
+    images: ["/vedisa-logo.png"],
   },
 };
 
