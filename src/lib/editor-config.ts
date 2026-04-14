@@ -29,9 +29,14 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
   };
 }
 
-export async function getEditorConfig(): Promise<EditorConfig> {
+export type EditorConfigLoadResult = {
+  config: EditorConfig;
+  persisted: boolean;
+};
+
+export async function getEditorConfig(): Promise<EditorConfigLoadResult> {
   const supabase = getServerSupabase();
-  if (!supabase) return DEFAULT_EDITOR_CONFIG;
+  if (!supabase) return { config: DEFAULT_EDITOR_CONFIG, persisted: false };
 
   const { data, error } = await supabase
     .from(EDITOR_TABLE)
@@ -39,8 +44,11 @@ export async function getEditorConfig(): Promise<EditorConfig> {
     .eq("id", EDITOR_ROW_ID)
     .maybeSingle();
 
-  if (error || !data) return DEFAULT_EDITOR_CONFIG;
-  return normalizeConfig((data as { config?: Partial<EditorConfig> }).config ?? null);
+  if (error || !data) return { config: DEFAULT_EDITOR_CONFIG, persisted: false };
+  return {
+    config: normalizeConfig((data as { config?: Partial<EditorConfig> }).config ?? null),
+    persisted: true,
+  };
 }
 
 export async function saveEditorConfig(config: EditorConfig, updatedBy: string): Promise<{ ok: boolean; error?: string }> {
@@ -49,20 +57,29 @@ export async function saveEditorConfig(config: EditorConfig, updatedBy: string):
     return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY o URL para guardar configuración." };
   }
 
-  const payload = {
+  const normalizedConfig = normalizeConfig(config);
+  const payloadWithAudit = {
     id: EDITOR_ROW_ID,
-    config: normalizeConfig(config),
+    config: normalizedConfig,
     updated_by: updatedBy,
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase.from(EDITOR_TABLE).upsert(payload, { onConflict: "id" });
-  if (!error) return { ok: true };
+  const fullSave = await supabase.from(EDITOR_TABLE).upsert(payloadWithAudit, { onConflict: "id" });
+  if (!fullSave.error) return { ok: true };
+
+  // Compatibilidad: algunas instalaciones antiguas tienen solo (id, config).
+  const payloadMinimal = {
+    id: EDITOR_ROW_ID,
+    config: normalizedConfig,
+  };
+  const fallbackSave = await supabase.from(EDITOR_TABLE).upsert(payloadMinimal, { onConflict: "id" });
+  if (!fallbackSave.error) return { ok: true };
 
   return {
     ok: false,
     error:
       `No se pudo guardar la configuración en la tabla '${EDITOR_TABLE}'. ` +
-      "Crea la tabla en Supabase (id text pk, config jsonb, updated_by text, updated_at timestamptz).",
+      "Verifica que exista la tabla y al menos las columnas: id (pk) y config (jsonb).",
   };
 }

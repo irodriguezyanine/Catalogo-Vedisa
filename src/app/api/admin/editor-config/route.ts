@@ -4,8 +4,8 @@ import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
 
 export async function GET() {
-  const config = await getEditorConfig();
-  return Response.json({ ok: true, config });
+  const result = await getEditorConfig();
+  return Response.json({ ok: true, config: result.config, persisted: result.persisted });
 }
 
 export async function PUT(req: Request) {

@@ -354,21 +354,24 @@ export function CatalogHomeClient({ feed }: Props) {
 
   useEffect(() => {
     void (async () => {
+      const local = localStorage.getItem(EDITOR_STORAGE_KEY);
+      if (local) {
+        setConfig(JSON.parse(local) as EditorConfig);
+      }
+
       const sessionRes = await fetch("/api/admin/session", { cache: "no-store" });
       const session = (await sessionRes.json()) as { loggedIn?: boolean };
       setIsAdmin(Boolean(session.loggedIn));
+
       const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
       if (configRes.ok) {
-        const payload = (await configRes.json()) as { config?: EditorConfig };
-        if (payload.config) {
+        const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
+        const shouldUseServerConfig = Boolean(payload.persisted) || !local;
+        if (payload.config && shouldUseServerConfig) {
           setConfig(payload.config);
           localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(payload.config));
           return;
         }
-      }
-      const local = localStorage.getItem(EDITOR_STORAGE_KEY);
-      if (local) {
-        setConfig(JSON.parse(local) as EditorConfig);
       }
     })();
   }, []);
@@ -598,8 +601,7 @@ export function CatalogHomeClient({ feed }: Props) {
     });
     setSaving(false);
     if (!response.ok) {
-      const payload = (await response.json().catch(() => ({ error: "No se pudo guardar." }))) as { error?: string };
-      alert(payload.error ?? "No se pudo guardar en servidor. Se dejó guardado localmente.");
+      alert("Cambios guardados en este navegador. El guardado central en servidor está temporalmente no disponible.");
       return;
     }
     alert("Configuración guardada.");
@@ -674,10 +676,10 @@ export function CatalogHomeClient({ feed }: Props) {
             </div>
           </div>
           <div className="pt-1">
-            <h2 className="text-xl font-bold tracking-tight text-slate-900 md:text-2xl">
+            <h2 className="text-xl font-bold tracking-tight text-slate-900 md:text-[1.85rem]">
               Catálogo oficial de VEDISA REMATES
             </h2>
-            <p className="mt-1 max-w-4xl text-sm leading-relaxed text-slate-600 md:text-[15px]">
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600 md:text-[15px]">
               Accede a una experiencia de subasta segura y profesional. Regístrate en{" "}
               <a
                 className="font-semibold text-cyan-700 underline decoration-cyan-500/60 underline-offset-2"
@@ -868,12 +870,12 @@ export function CatalogHomeClient({ feed }: Props) {
       {!isAdmin ? (
         <>
       <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-12 lg:px-8">
-        <div className="premium-panel premium-panel-hero lg:col-span-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">VEDISA REMATES</p>
+        <div className="premium-panel premium-panel-hero lg:col-span-7">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Portal de subastas</p>
           <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
             Inventario de vehículos para remate y venta directa
           </h1>
-          <div className="glass-soft mt-4 max-w-3xl rounded-xl p-5">
+          <div className="glass-soft mt-5 max-w-3xl rounded-xl p-5">
             <p className="text-base font-semibold text-slate-800 md:text-lg">
               Plataforma oficial de ofertas online en{" "}
               <a
@@ -900,22 +902,25 @@ export function CatalogHomeClient({ feed }: Props) {
             <a href="#proximos-remates" className="premium-btn-secondary ui-focus">Explorar secciones</a>
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:col-span-4 lg:grid-cols-1 xl:grid-cols-2">
-          <div className="premium-stat">
-            <p className="text-xs uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">Arturo Prat 6457, Noviciado, Pudahuel</p>
-          </div>
-          <div className="premium-stat">
-            <p className="text-xs uppercase tracking-widest text-slate-500">🕒 Horario</p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00</p>
-          </div>
-          <div className="premium-stat">
-            <p className="text-xs uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">Inspección pre-compra presencial disponible, sin garantía previa</p>
-          </div>
-          <div className="premium-stat">
-            <p className="text-xs uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">Américo Vespucio 2880, Piso 7</p>
+        <div className="premium-panel lg:col-span-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Información comercial</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="premium-stat min-h-28">
+              <p className="text-xs uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">Arturo Prat 6457, Noviciado, Pudahuel</p>
+            </div>
+            <div className="premium-stat min-h-28">
+              <p className="text-xs uppercase tracking-widest text-slate-500">🕒 Horario</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00</p>
+            </div>
+            <div className="premium-stat min-h-28">
+              <p className="text-xs uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">Inspección pre-compra presencial disponible, sin garantía previa</p>
+            </div>
+            <div className="premium-stat min-h-28">
+              <p className="text-xs uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">Américo Vespucio 2880, Piso 7</p>
+            </div>
           </div>
         </div>
       </section>
