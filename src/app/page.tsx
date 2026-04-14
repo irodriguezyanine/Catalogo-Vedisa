@@ -13,6 +13,10 @@ type SectionProps = {
   badgeClassName: string;
 };
 
+type FeaturedStripProps = {
+  items: CatalogItem[];
+};
+
 function normalizeText(value?: string): string {
   return (value ?? "")
     .toLowerCase()
@@ -33,12 +37,62 @@ function sectionFallback(items: CatalogItem[], start: number, count: number): Ca
   return items.slice(start, start + count);
 }
 
+function formatDate(date?: string): string | undefined {
+  if (!date) return undefined;
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString("es-CL", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function FeaturedStrip({ items }: FeaturedStripProps) {
+  if (items.length === 0) return null;
+
+  return (
+    <section className="section-shell">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <p className="premium-kicker">Selecciones premium</p>
+          <h2 className="text-2xl font-bold text-white">Vitrina destacada</h2>
+        </div>
+        <p className="text-xs text-zinc-400">Desliza horizontalmente</p>
+      </div>
+      <div className="featured-strip">
+        {items.map((item) => {
+          const image = item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg";
+          const date = formatDate(item.auctionDate);
+          return (
+            <article key={`featured-${item.id}`} className="featured-item">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image} alt={item.title} className="featured-image" loading="lazy" />
+              <div className="featured-overlay" />
+              <div className="featured-content">
+                <p className="line-clamp-1 text-sm font-semibold uppercase tracking-wide text-cyan-300">
+                  {item.status ?? "Unidad disponible"}
+                </p>
+                <h3 className="line-clamp-2 text-xl font-bold text-white">{item.title}</h3>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-200">
+                  {item.subtitle ? <span className="featured-chip">{item.subtitle}</span> : null}
+                  {date ? <span className="featured-chip">Remate {date}</span> : null}
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function Section({ id, title, subtitle, items, badgeClassName }: SectionProps) {
   return (
-    <section id={id} className="scroll-mt-24">
+    <section id={id} className="section-shell scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
+          <p className="premium-kicker">
             Seccion destacada
           </p>
           <h2 className="text-2xl font-bold text-white">{title}</h2>
@@ -77,6 +131,7 @@ export default async function Home() {
   const novedades =
     novedadesByKeyword.length > 0 ? novedadesByKeyword.slice(0, 6) : sectionFallback(items, 4, 6);
   const catalogo = items.slice(0, 12);
+  const premiumPicks = items.slice(0, 8);
   const stats = [
     { label: "Publicaciones activas", value: String(items.length) },
     { label: "Fuente de datos", value: sourceLabel(feed.source) },
@@ -89,7 +144,7 @@ export default async function Home() {
       <div className="premium-glow premium-glow-cyan" />
       <div className="premium-glow premium-glow-gold" />
 
-      <section className="relative border-b border-white/10 bg-black/40 backdrop-blur-xl">
+      <section className="relative z-10 border-b border-white/10 bg-black/40 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <Image
@@ -148,8 +203,8 @@ export default async function Home() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-5 lg:px-8">
-        <div className="premium-panel lg:col-span-3">
+      <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-5 lg:px-8">
+        <div className="premium-panel premium-panel-hero lg:col-span-3">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
             Landing Premium
           </p>
@@ -163,13 +218,13 @@ export default async function Home() {
           <div className="mt-6 flex flex-wrap gap-3">
             <a
               href="#catalogo"
-              className="rounded-full bg-cyan-500 px-5 py-2 text-sm font-semibold text-black transition hover:bg-cyan-400"
+              className="premium-btn-primary"
             >
               Ver catalogo completo
             </a>
             <a
               href="#proximos-remates"
-              className="rounded-full border border-zinc-600 px-5 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-400"
+              className="premium-btn-secondary"
             >
               Explorar secciones
             </a>
@@ -185,7 +240,35 @@ export default async function Home() {
         </div>
       </section>
 
-      <div className="mx-auto flex max-w-7xl flex-col gap-14 px-4 pb-14 sm:px-6 lg:px-8">
+      <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-14 px-4 pb-14 sm:px-6 lg:px-8">
+        <FeaturedStrip items={premiumPicks} />
+
+        <section className="section-shell">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="premium-stat">
+              <p className="premium-kicker">Experiencia</p>
+              <h3 className="mt-1 text-lg font-bold text-white">Navegacion fluida</h3>
+              <p className="mt-2 text-sm text-zinc-300">
+                Arquitectura optimizada para mostrar mas inventario con carga veloz.
+              </p>
+            </div>
+            <div className="premium-stat">
+              <p className="premium-kicker">Confianza</p>
+              <h3 className="mt-1 text-lg font-bold text-white">Data centralizada</h3>
+              <p className="mt-2 text-sm text-zinc-300">
+                Integracion directa a Supabase para evitar desfases entre sistemas.
+              </p>
+            </div>
+            <div className="premium-stat">
+              <p className="premium-kicker">Escalabilidad</p>
+              <h3 className="mt-1 text-lg font-bold text-white">Listo para crecer</h3>
+              <p className="mt-2 text-sm text-zinc-300">
+                Base preparada para agregar buscador avanzado, filtros y portal de clientes.
+              </p>
+            </div>
+          </div>
+        </section>
+
         <Section
           id="proximos-remates"
           title="Proximos remates"
@@ -214,6 +297,27 @@ export default async function Home() {
           items={catalogo}
           badgeClassName="bg-zinc-200 text-zinc-900"
         />
+
+        <section className="section-shell">
+          <div className="premium-panel">
+            <p className="premium-kicker">Call to action</p>
+            <h2 className="mt-2 text-2xl font-bold text-white md:text-3xl">
+              Potencia tu vitrina digital con una experiencia de remates de nivel corporativo.
+            </h2>
+            <p className="mt-3 max-w-2xl text-sm text-zinc-300">
+              Este landing ya esta listo para integrar filtros inteligentes, formularios de contacto y automatizaciones
+              comerciales para cerrar mas oportunidades.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <a href="#catalogo" className="premium-btn-primary">
+                Ir al catalogo
+              </a>
+              <a href="#ventas-directas" className="premium-btn-secondary">
+                Ver ventas directas
+              </a>
+            </div>
+          </div>
+        </section>
       </div>
 
       <footer className="border-t border-white/10 bg-black/50">
