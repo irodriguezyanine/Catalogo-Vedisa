@@ -22,6 +22,29 @@ export type HomeLayoutConfig = {
   sectionOrder: SectionId[];
 };
 
+export type ManualPublication = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  status?: string;
+  location?: string;
+  lot?: string;
+  auctionDate?: string;
+  description?: string;
+  patente?: string;
+  brand?: string;
+  model?: string;
+  year?: string;
+  category?: string;
+  images: string[];
+  thumbnail?: string;
+  view3dUrl?: string;
+  sectionIds: SectionId[];
+  upcomingAuctionId?: string;
+  visible: boolean;
+  price?: string;
+};
+
 export type EditorVehicleDetails = {
   title?: string;
   subtitle?: string;
@@ -48,6 +71,7 @@ export type EditorConfig = {
   vehicleUpcomingAuctionIds: Record<string, string>;
   sectionTexts: Record<SectionId, SectionTextConfig>;
   homeLayout: HomeLayoutConfig;
+  manualPublications: ManualPublication[];
 };
 
 export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
@@ -81,7 +105,7 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
     },
   },
   homeLayout: {
-    heroKicker: "Portal de subastas",
+    heroKicker: "Catálogo oficial de VEDISA REMATES",
     heroTitle: "Inventario de vehículos para remate y venta directa",
     heroDescription:
       "Plataforma oficial de ofertas online en vedisaremates.cl. Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza.",
@@ -89,4 +113,5 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
     showCommercialPanel: true,
     sectionOrder: ["proximos-remates", "ventas-directas", "novedades", "catalogo"],
   },
+  manualPublications: [],
 };

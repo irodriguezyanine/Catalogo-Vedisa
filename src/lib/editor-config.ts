@@ -50,6 +50,7 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
         config?.homeLayout?.showCommercialPanel ?? defaults.homeLayout.showCommercialPanel,
       sectionOrder: config?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
     },
+    manualPublications: config?.manualPublications ?? defaults.manualPublications,
   };
 }
 

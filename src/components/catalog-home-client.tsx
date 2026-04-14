@@ -9,6 +9,7 @@ import {
   DEFAULT_EDITOR_CONFIG,
   type EditorConfig,
   type EditorVehicleDetails,
+  type ManualPublication,
   type UpcomingAuction,
   type SectionId,
   type VehicleTypeId,
@@ -24,6 +25,97 @@ const SECTION_LABELS: Record<SectionId, string> = {
   "ventas-directas": "Ventas directas",
   novedades: "Novedades",
   catalogo: "Catálogo",
+};
+
+function normalizeEditorConfigClient(
+  value?: Partial<EditorConfig> | null,
+): EditorConfig {
+  const defaults = DEFAULT_EDITOR_CONFIG;
+  return {
+    sectionVehicleIds: {
+      "proximos-remates":
+        value?.sectionVehicleIds?.["proximos-remates"] ??
+        defaults.sectionVehicleIds["proximos-remates"],
+      "ventas-directas":
+        value?.sectionVehicleIds?.["ventas-directas"] ??
+        defaults.sectionVehicleIds["ventas-directas"],
+      novedades:
+        value?.sectionVehicleIds?.novedades ?? defaults.sectionVehicleIds.novedades,
+      catalogo: value?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
+    },
+    hiddenVehicleIds: value?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
+    vehiclePrices: value?.vehiclePrices ?? defaults.vehiclePrices,
+    vehicleDetails: value?.vehicleDetails ?? defaults.vehicleDetails,
+    upcomingAuctions: value?.upcomingAuctions ?? defaults.upcomingAuctions,
+    vehicleUpcomingAuctionIds:
+      value?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
+    sectionTexts: {
+      "proximos-remates":
+        value?.sectionTexts?.["proximos-remates"] ??
+        defaults.sectionTexts["proximos-remates"],
+      "ventas-directas":
+        value?.sectionTexts?.["ventas-directas"] ??
+        defaults.sectionTexts["ventas-directas"],
+      novedades: value?.sectionTexts?.novedades ?? defaults.sectionTexts.novedades,
+      catalogo: value?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
+    },
+    homeLayout: {
+      heroKicker: value?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
+      heroTitle: value?.homeLayout?.heroTitle ?? defaults.homeLayout.heroTitle,
+      heroDescription:
+        value?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription,
+      showFeaturedStrip:
+        value?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
+      showCommercialPanel:
+        value?.homeLayout?.showCommercialPanel ?? defaults.homeLayout.showCommercialPanel,
+      sectionOrder: value?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
+    },
+    manualPublications: value?.manualPublications ?? defaults.manualPublications,
+  };
+}
+
+type ManualPublicationDraft = {
+  title: string;
+  subtitle: string;
+  status: string;
+  location: string;
+  lot: string;
+  auctionDate: string;
+  description: string;
+  patente: string;
+  brand: string;
+  model: string;
+  year: string;
+  category: string;
+  imagesCsv: string;
+  thumbnail: string;
+  view3dUrl: string;
+  price: string;
+  upcomingAuctionId: string;
+  visible: boolean;
+  sectionIds: SectionId[];
+};
+
+const EMPTY_MANUAL_PUBLICATION_DRAFT: ManualPublicationDraft = {
+  title: "",
+  subtitle: "",
+  status: "Disponible",
+  location: "",
+  lot: "",
+  auctionDate: "",
+  description: "",
+  patente: "",
+  brand: "",
+  model: "",
+  year: "",
+  category: "",
+  imagesCsv: "",
+  thumbnail: "",
+  view3dUrl: "",
+  price: "",
+  upcomingAuctionId: "",
+  visible: true,
+  sectionIds: ["catalogo"],
 };
 
 function normalizeText(value?: string): string {
@@ -103,6 +195,37 @@ function parseImagesCsv(value?: string): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry.startsWith("http"));
+}
+
+function normalizeCloudinaryImages(value?: string): string[] {
+  return parseImagesCsv(value).filter((url) => /cloudinary\.com|res\.cloudinary\.com/i.test(url));
+}
+
+function mapManualPublicationToCatalogItem(entry: ManualPublication): CatalogItem {
+  const images = (entry.images ?? []).filter((url) => url.startsWith("http"));
+  const thumbnail = entry.thumbnail ?? images[0];
+  return {
+    id: `manual-${entry.id}`,
+    title: entry.title,
+    subtitle: entry.subtitle,
+    status: entry.status,
+    location: entry.location,
+    lot: entry.lot,
+    auctionDate: entry.auctionDate,
+    images,
+    thumbnail,
+    view3dUrl: entry.view3dUrl,
+    raw: {
+      source: "manual",
+      patente: entry.patente,
+      marca: entry.brand,
+      modelo: entry.model,
+      ano: entry.year,
+      categoria: entry.category,
+      descripcion: entry.description,
+      manual_id: entry.id,
+    },
+  };
 }
 
 function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): EditorVehicleDetails {
@@ -349,6 +472,9 @@ export function CatalogHomeClient({ feed }: Props) {
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
   const [newAuctionName, setNewAuctionName] = useState("");
   const [newAuctionDate, setNewAuctionDate] = useState("");
+  const [manualDraft, setManualDraft] = useState<ManualPublicationDraft>(
+    EMPTY_MANUAL_PUBLICATION_DRAFT,
+  );
   const [loginEmail, setLoginEmail] = useState("jpmontero@vedisaremates.cl");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -367,7 +493,8 @@ export function CatalogHomeClient({ feed }: Props) {
     void (async () => {
       const local = localStorage.getItem(EDITOR_STORAGE_KEY);
       if (local) {
-        setConfig(JSON.parse(local) as EditorConfig);
+        const parsed = JSON.parse(local) as Partial<EditorConfig>;
+        setConfig(normalizeEditorConfigClient(parsed));
       }
 
       const sessionRes = await fetch("/api/admin/session", { cache: "no-store" });
@@ -381,20 +508,26 @@ export function CatalogHomeClient({ feed }: Props) {
         const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
         const shouldUseServerConfig = Boolean(payload.persisted) || !local;
         if (payload.config && shouldUseServerConfig) {
-          setConfig(payload.config);
-          localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(payload.config));
+          const normalized = normalizeEditorConfigClient(payload.config);
+          setConfig(normalized);
+          localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
           return;
         }
       }
     })();
   }, []);
 
+  const manualItems = useMemo(
+    () => (config.manualPublications ?? []).map(mapManualPublicationToCatalogItem),
+    [config.manualPublications],
+  );
+
   const items = useMemo(
     () =>
-      rawItems.map((item) =>
+      [...rawItems, ...manualItems].map((item) =>
         applyDetailsOverride(item, config.vehicleDetails[getVehicleKey(item)]),
       ),
-    [rawItems, config.vehicleDetails],
+    [rawItems, manualItems, config.vehicleDetails],
   );
 
   const itemsByKey = useMemo(() => {
@@ -405,9 +538,17 @@ export function CatalogHomeClient({ feed }: Props) {
     return map;
   }, [items]);
 
+  const mergedHiddenVehicleIds = useMemo(() => {
+    const set = new Set(config.hiddenVehicleIds);
+    for (const manual of config.manualPublications ?? []) {
+      if (!manual.visible) set.add(`manual-${manual.id}`);
+    }
+    return set;
+  }, [config.hiddenVehicleIds, config.manualPublications]);
+
   const visibleItems = useMemo(
-    () => items.filter((item) => !config.hiddenVehicleIds.includes(getVehicleKey(item))),
-    [items, config.hiddenVehicleIds],
+    () => items.filter((item) => !mergedHiddenVehicleIds.has(getVehicleKey(item))),
+    [items, mergedHiddenVehicleIds],
   );
 
   const getSectionItems = (sectionId: SectionId, fallback: CatalogItem[]): CatalogItem[] => {
@@ -502,7 +643,7 @@ export function CatalogHomeClient({ feed }: Props) {
 
   const allVisibleChecked =
     filteredEditorItems.length > 0 &&
-    filteredEditorItems.every((item) => !config.hiddenVehicleIds.includes(getVehicleKey(item)));
+    filteredEditorItems.every((item) => !mergedHiddenVehicleIds.has(getVehicleKey(item)));
   const allSectionChecked = (sectionId: SectionId) =>
     filteredEditorItems.length > 0 &&
     filteredEditorItems.every((item) =>
@@ -526,7 +667,11 @@ export function CatalogHomeClient({ feed }: Props) {
       const set = new Set(prev.hiddenVehicleIds);
       if (set.has(itemKey)) set.delete(itemKey);
       else set.add(itemKey);
-      return { ...prev, hiddenVehicleIds: Array.from(set) };
+      const manualPublications = (prev.manualPublications ?? []).map((entry) => {
+        if (`manual-${entry.id}` !== itemKey) return entry;
+        return { ...entry, visible: set.has(itemKey) ? false : true };
+      });
+      return { ...prev, hiddenVehicleIds: Array.from(set), manualPublications };
     });
   };
 
@@ -539,7 +684,16 @@ export function CatalogHomeClient({ feed }: Props) {
         if (shouldEnableAll) hiddenSet.delete(key);
         else hiddenSet.add(key);
       }
-      return { ...prev, hiddenVehicleIds: Array.from(hiddenSet) };
+      const manualPublications = (prev.manualPublications ?? []).map((entry) => {
+        const key = `manual-${entry.id}`;
+        if (!keys.includes(key)) return entry;
+        return { ...entry, visible: shouldEnableAll };
+      });
+      return {
+        ...prev,
+        hiddenVehicleIds: Array.from(hiddenSet),
+        manualPublications,
+      };
     });
   };
 
@@ -628,6 +782,106 @@ export function CatalogHomeClient({ feed }: Props) {
     }));
     setNewAuctionName("");
     setNewAuctionDate("");
+  };
+
+  const toggleManualDraftSection = (sectionId: SectionId) => {
+    setManualDraft((prev) => {
+      const set = new Set(prev.sectionIds);
+      if (set.has(sectionId)) set.delete(sectionId);
+      else set.add(sectionId);
+      return { ...prev, sectionIds: Array.from(set) as SectionId[] };
+    });
+  };
+
+  const createManualPublication = () => {
+    const title = manualDraft.title.trim();
+    if (!title) {
+      alert("La publicación manual necesita al menos un título.");
+      return;
+    }
+    const cloudinaryImages = normalizeCloudinaryImages(manualDraft.imagesCsv);
+    if (cloudinaryImages.length === 0) {
+      alert("Debes ingresar al menos una URL de imagen de Cloudinary.");
+      return;
+    }
+    const id = crypto.randomUUID();
+    const sectionIds: SectionId[] =
+      manualDraft.sectionIds.length > 0 ? manualDraft.sectionIds : ["catalogo"];
+    const manual: ManualPublication = {
+      id,
+      title,
+      subtitle: cleanOptional(manualDraft.subtitle),
+      status: cleanOptional(manualDraft.status),
+      location: cleanOptional(manualDraft.location),
+      lot: cleanOptional(manualDraft.lot),
+      auctionDate: cleanOptional(manualDraft.auctionDate),
+      description: cleanOptional(manualDraft.description),
+      patente: cleanOptional(manualDraft.patente),
+      brand: cleanOptional(manualDraft.brand),
+      model: cleanOptional(manualDraft.model),
+      year: cleanOptional(manualDraft.year),
+      category: cleanOptional(manualDraft.category),
+      images: cloudinaryImages,
+      thumbnail: cleanOptional(manualDraft.thumbnail) ?? cloudinaryImages[0],
+      view3dUrl: cleanOptional(manualDraft.view3dUrl),
+      sectionIds,
+      upcomingAuctionId: cleanOptional(manualDraft.upcomingAuctionId),
+      visible: manualDraft.visible,
+      price: cleanOptional(manualDraft.price),
+    };
+
+    setConfig((prev) => {
+      const nextSectionVehicleIds = { ...prev.sectionVehicleIds };
+      const itemKey = `manual-${id}`;
+      for (const sectionId of sectionIds) {
+        const set = new Set(nextSectionVehicleIds[sectionId] ?? []);
+        set.add(itemKey);
+        nextSectionVehicleIds[sectionId] = Array.from(set);
+      }
+      const nextHidden = new Set(prev.hiddenVehicleIds);
+      if (!manual.visible) nextHidden.add(itemKey);
+      const nextVehiclePrices = { ...prev.vehiclePrices };
+      if (manual.price) nextVehiclePrices[itemKey] = manual.price;
+      const nextVehicleUpcomingAuctionIds = { ...prev.vehicleUpcomingAuctionIds };
+      if (manual.upcomingAuctionId) nextVehicleUpcomingAuctionIds[itemKey] = manual.upcomingAuctionId;
+
+      return {
+        ...prev,
+        sectionVehicleIds: nextSectionVehicleIds,
+        hiddenVehicleIds: Array.from(nextHidden),
+        vehiclePrices: nextVehiclePrices,
+        vehicleUpcomingAuctionIds: nextVehicleUpcomingAuctionIds,
+        manualPublications: [...(prev.manualPublications ?? []), manual],
+      };
+    });
+
+    setManualDraft(EMPTY_MANUAL_PUBLICATION_DRAFT);
+  };
+
+  const deleteManualPublication = (manualId: string) => {
+    const key = `manual-${manualId}`;
+    setConfig((prev) => {
+      const nextSectionVehicleIds: Record<SectionId, string[]> = {
+        "proximos-remates": (prev.sectionVehicleIds["proximos-remates"] ?? []).filter((id) => id !== key),
+        "ventas-directas": (prev.sectionVehicleIds["ventas-directas"] ?? []).filter((id) => id !== key),
+        novedades: (prev.sectionVehicleIds.novedades ?? []).filter((id) => id !== key),
+        catalogo: (prev.sectionVehicleIds.catalogo ?? []).filter((id) => id !== key),
+      };
+      const nextHidden = prev.hiddenVehicleIds.filter((id) => id !== key);
+      const nextPrices = { ...prev.vehiclePrices };
+      delete nextPrices[key];
+      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      delete nextAssignments[key];
+
+      return {
+        ...prev,
+        manualPublications: (prev.manualPublications ?? []).filter((entry) => entry.id !== manualId),
+        sectionVehicleIds: nextSectionVehicleIds,
+        hiddenVehicleIds: nextHidden,
+        vehiclePrices: nextPrices,
+        vehicleUpcomingAuctionIds: nextAssignments,
+      };
+    });
   };
 
   const removeUpcomingAuction = (auctionId: string) => {
@@ -900,7 +1154,7 @@ export function CatalogHomeClient({ feed }: Props) {
                   </div>
                   {paginatedEditorItems.map((item) => {
                     const key = getVehicleKey(item);
-                    const hidden = config.hiddenVehicleIds.includes(key);
+                      const hidden = mergedHiddenVehicleIds.has(key);
                     return (
                       <div key={`editor-${key}`} className="grid grid-cols-14 items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs transition odd:bg-white even:bg-slate-50/35 hover:bg-cyan-50/60">
                         <div className="col-span-2 font-semibold text-slate-700">{getPatent(item)}</div>
@@ -1042,6 +1296,160 @@ export function CatalogHomeClient({ feed }: Props) {
                     )}
                   </div>
                 </div>
+                <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-800">
+                    Crear publicación manual (Cloudinary)
+                  </p>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <input
+                      value={manualDraft.title}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, title: event.target.value }))}
+                      placeholder="Título publicación"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.subtitle}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, subtitle: event.target.value }))}
+                      placeholder="Subtítulo"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.patente}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, patente: event.target.value }))}
+                      placeholder="Patente"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.brand}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, brand: event.target.value }))}
+                      placeholder="Marca"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.model}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, model: event.target.value }))}
+                      placeholder="Modelo"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.year}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, year: event.target.value }))}
+                      placeholder="Año"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.price}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, price: event.target.value }))}
+                      placeholder="Precio CLP"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.auctionDate}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, auctionDate: event.target.value }))}
+                      placeholder="Fecha (YYYY-MM-DD)"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={manualDraft.location}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, location: event.target.value }))}
+                      placeholder="Ubicación"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                    />
+                    <textarea
+                      value={manualDraft.description}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, description: event.target.value }))}
+                      placeholder="Descripción personalizada"
+                      className="ui-focus min-h-20 rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                    />
+                    <textarea
+                      value={manualDraft.imagesCsv}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, imagesCsv: event.target.value }))}
+                      placeholder="URLs de Cloudinary separadas por coma (https://res.cloudinary.com/...)"
+                      className="ui-focus min-h-20 rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                    />
+                    <input
+                      value={manualDraft.thumbnail}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, thumbnail: event.target.value }))}
+                      placeholder="URL portada Cloudinary (opcional)"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                    />
+                    <input
+                      value={manualDraft.view3dUrl}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, view3dUrl: event.target.value }))}
+                      placeholder="URL visor 3D (opcional)"
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                    />
+                    <select
+                      value={manualDraft.upcomingAuctionId}
+                      onChange={(event) => setManualDraft((prev) => ({ ...prev, upcomingAuctionId: event.target.value }))}
+                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="">Sin remate</option>
+                      {sortedUpcomingAuctions.map((auction) => (
+                        <option key={auction.id} value={auction.id}>
+                          {auction.name} ({formatAuctionDateLabel(auction.date)})
+                        </option>
+                      ))}
+                    </select>
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={manualDraft.visible}
+                        onChange={(event) => setManualDraft((prev) => ({ ...prev, visible: event.target.checked }))}
+                      />
+                      Visible
+                    </label>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => (
+                      <label key={`manual-section-${sectionId}`} className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs text-cyan-800">
+                        <input
+                          type="checkbox"
+                          checked={manualDraft.sectionIds.includes(sectionId)}
+                          onChange={() => toggleManualDraftSection(sectionId)}
+                        />
+                        {SECTION_LABELS[sectionId]}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={createManualPublication}
+                      className="ui-focus rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
+                    >
+                      Crear publicación manual
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Publicaciones manuales creadas
+                  </p>
+                  {config.manualPublications.length === 0 ? (
+                    <p className="text-sm text-slate-500">No hay publicaciones manuales aún.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {config.manualPublications.map((manual) => (
+                        <div key={manual.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm">
+                          <div>
+                            <p className="font-semibold text-slate-900">{manual.title}</p>
+                            <p className="text-xs text-slate-500">
+                              {manual.patente ?? "Sin patente"} · {manual.images.length} foto(s) · {manual.visible ? "Visible" : "Oculto"}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => deleteManualPublication(manual.id)}
+                            className="ui-focus rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => (
                     <div key={sectionId} className="rounded-xl border border-slate-200 bg-white p-3">
@@ -1132,7 +1540,7 @@ export function CatalogHomeClient({ feed }: Props) {
         <>
       <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-12 lg:px-8">
         <div className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero`}>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Catálogo oficial de VEDISA REMATES</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">{config.homeLayout.heroKicker}</p>
           <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
             {config.homeLayout.heroTitle}
           </h1>
