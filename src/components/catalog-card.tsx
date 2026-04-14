@@ -6,6 +6,8 @@ type CatalogCardProps = {
   priceLabel?: string | null;
   upcomingAuctionLabel?: string;
   onOpen?: () => void;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
 };
 
 const WHATSAPP_BASE_URL = "https://api.whatsapp.com/send/?phone=56989323397";
@@ -54,7 +56,14 @@ function getBrandModel(item: CatalogItem): string {
   return `${brand ?? ""} ${model ?? ""}`.trim() || item.title;
 }
 
-export function CatalogCard({ item, priceLabel, upcomingAuctionLabel, onOpen }: CatalogCardProps) {
+export function CatalogCard({
+  item,
+  priceLabel,
+  upcomingAuctionLabel,
+  onOpen,
+  isFavorite,
+  onToggleFavorite,
+}: CatalogCardProps) {
   const coverCandidate = item.thumbnail ?? item.images[0];
   const cover = isLikelyImageUrl(coverCandidate) ? (coverCandidate as string) : "/placeholder-car.svg";
   const [coverSrc, setCoverSrc] = useState(cover);
@@ -88,6 +97,14 @@ export function CatalogCard({ item, priceLabel, upcomingAuctionLabel, onOpen }: 
             onError={() => setCoverSrc("/placeholder-car.svg")}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/5 to-transparent" />
+          <div className="absolute left-3 top-3 flex flex-wrap gap-1">
+            {item.view3dUrl ? (
+              <span className="rounded-full bg-cyan-500 px-2 py-1 text-[10px] font-semibold text-white">3D</span>
+            ) : null}
+            {priceLabel ? (
+              <span className="rounded-full bg-amber-500 px-2 py-1 text-[10px] font-semibold text-white">Precio</span>
+            ) : null}
+          </div>
           {item.status ? (
             <span className="absolute right-3 top-3 rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-white">
               {item.status}
@@ -163,7 +180,19 @@ export function CatalogCard({ item, priceLabel, upcomingAuctionLabel, onOpen }: 
         </div>
       </button>
 
-      <div className="flex justify-end border-t border-slate-100 px-4 pb-4 pt-3">
+      <div className="flex items-center justify-between border-t border-slate-100 px-4 pb-4 pt-3">
+        <button
+          type="button"
+          onClick={onToggleFavorite}
+          className={`ui-focus inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+            isFavorite
+              ? "border-amber-300 bg-amber-50 text-amber-700"
+              : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <span aria-hidden="true">{isFavorite ? "★" : "☆"}</span>
+          {isFavorite ? "Guardado" : "Guardar"}
+        </button>
         <a
           href={whatsappUrl}
           target="_blank"

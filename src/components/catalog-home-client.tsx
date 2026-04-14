@@ -16,9 +16,24 @@ import {
 } from "@/types/editor";
 
 const EDITOR_STORAGE_KEY = "vedisa_editor_config_local";
+const FAVORITES_STORAGE_KEY = "vedisa_client_favorites";
 const EDITOR_CATEGORY_SECTIONS: SectionId[] = ["ventas-directas", "novedades", "catalogo"];
 const EDITOR_PAGE_SIZE = 20;
 type AdminTabId = "vehiculos" | "categorias" | "layout";
+type SortOption = "relevancia" | "fecha-remate" | "precio-asc" | "precio-desc" | "titulo";
+type QuickFilterId = "livianos" | "pesados" | "con3d" | "conPrecio" | "recientes" | "manuales";
+
+const QUICK_FILTER_LABELS: Record<QuickFilterId, string> = {
+  livianos: "Livianos",
+  pesados: "Pesados",
+  con3d: "Con 3D",
+  conPrecio: "Con precio",
+  recientes: "Recientes",
+  manuales: "Manuales",
+};
+
+const WHATSAPP_CTA_URL =
+  "https://api.whatsapp.com/send/?phone=56989323397&text=Hola%2C+quiero+asesor%C3%ADa+para+ofertar+en+VEDISA&type=phone_number&app_absent=0";
 
 const SECTION_LABELS: Record<SectionId, string> = {
   "proximos-remates": "Próximos remates",
@@ -183,6 +198,23 @@ function formatAuctionDateLabel(value?: string): string {
     month: "2-digit",
     year: "numeric",
   });
+}
+
+function isRecentAuctionDate(value?: string): boolean {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  const diff = Math.abs(now.getTime() - date.getTime());
+  const days = diff / (1000 * 60 * 60 * 24);
+  return days <= 45;
+}
+
+function getPriceAmount(value?: string): number {
+  if (!value?.trim()) return Number.POSITIVE_INFINITY;
+  const clean = value.replace(/[^\d]/g, "");
+  const amount = Number(clean);
+  return Number.isFinite(amount) && amount > 0 ? amount : Number.POSITIVE_INFINITY;
 }
 
 function cleanOptional(value?: string): string | undefined {
@@ -352,6 +384,8 @@ type SectionProps = {
   items: CatalogItem[];
   priceMap: Record<string, string>;
   upcomingAuctionByVehicleKey?: Record<string, string>;
+  favoriteKeys: string[];
+  onToggleFavorite: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
 };
 
@@ -362,6 +396,8 @@ function Section({
   items,
   priceMap,
   upcomingAuctionByVehicleKey,
+  favoriteKeys,
+  onToggleFavorite,
   onOpenVehicle,
 }: SectionProps) {
   return (
@@ -390,6 +426,8 @@ function Section({
               priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
               upcomingAuctionLabel={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
               onOpen={() => onOpenVehicle(item)}
+              isFavorite={favoriteKeys.includes(getVehicleKey(item))}
+              onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
             />
           ))}
         </div>
@@ -402,6 +440,8 @@ type UpcomingAuctionsSectionProps = {
   groups: Array<{ auction: UpcomingAuction; items: CatalogItem[] }>;
   priceMap: Record<string, string>;
   upcomingAuctionByVehicleKey: Record<string, string>;
+  favoriteKeys: string[];
+  onToggleFavorite: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
 };
 
@@ -409,6 +449,8 @@ function UpcomingAuctionsSection({
   groups,
   priceMap,
   upcomingAuctionByVehicleKey,
+  favoriteKeys,
+  onToggleFavorite,
   onOpenVehicle,
 }: UpcomingAuctionsSectionProps) {
   return (
@@ -442,6 +484,8 @@ function UpcomingAuctionsSection({
                     priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
                     upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
                     onOpen={() => onOpenVehicle(item)}
+                    isFavorite={favoriteKeys.includes(getVehicleKey(item))}
+                    onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
                   />
                 ))}
               </div>
@@ -461,9 +505,24 @@ export function CatalogHomeClient({ feed }: Props) {
   const [config, setConfig] = useState<EditorConfig>(DEFAULT_EDITOR_CONFIG);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminView, setAdminView] = useState<"editor" | "home">("home");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
+  const [homeSearchTerm, setHomeSearchTerm] = useState("");
+  const [homeSort, setHomeSort] = useState<SortOption>("relevancia");
+  const [quickFilters, setQuickFilters] = useState<QuickFilterId[]>([]);
+  const [favoriteKeys, setFavoriteKeys] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    const saved = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved) as string[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
   const [searchTerm, setSearchTerm] = useState("");
   const [adminTab, setAdminTab] = useState<AdminTabId>("vehiculos");
   const [auctionFilterId, setAuctionFilterId] = useState("");
@@ -517,6 +576,10 @@ export function CatalogHomeClient({ feed }: Props) {
     })();
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteKeys));
+  }, [favoriteKeys]);
+
   const manualItems = useMemo(
     () => (config.manualPublications ?? []).map(mapManualPublicationToCatalogItem),
     [config.manualPublications],
@@ -551,19 +614,99 @@ export function CatalogHomeClient({ feed }: Props) {
     [items, mergedHiddenVehicleIds],
   );
 
+  const homeFilteredItems = useMemo(() => {
+    const query = normalizeText(homeSearchTerm);
+    if (!query) return visibleItems;
+    return visibleItems.filter((item) => {
+      const raw = item.raw as Record<string, unknown>;
+      const source = [
+        item.title,
+        item.subtitle,
+        item.status,
+        item.location,
+        item.lot,
+        raw.patente,
+        raw.PATENTE,
+        raw.PPU,
+        raw.stock_number,
+        raw.marca,
+        raw.brand,
+        raw.modelo,
+        raw.model,
+        raw.categoria,
+        raw.tipo_vehiculo,
+        inferVehicleType(item),
+      ]
+        .filter((value) => typeof value === "string" || typeof value === "number")
+        .join(" ");
+      return normalizeText(source).includes(query);
+    });
+  }, [visibleItems, homeSearchTerm]);
+
+  const homeQuickFilteredItems = useMemo(() => {
+    if (quickFilters.length === 0) return homeFilteredItems;
+    return homeFilteredItems.filter((item) => {
+      const key = getVehicleKey(item);
+      const vehicleType = inferVehicleType(item);
+      const isManual = String((item.raw as Record<string, unknown>).source ?? "") === "manual";
+      for (const filter of quickFilters) {
+        if (filter === "livianos" && vehicleType !== "livianos") return false;
+        if (filter === "pesados" && vehicleType !== "pesados") return false;
+        if (filter === "con3d" && !item.view3dUrl) return false;
+        if (filter === "conPrecio" && !formatPrice(config.vehiclePrices[key])) return false;
+        if (filter === "recientes" && !isRecentAuctionDate(item.auctionDate)) return false;
+        if (filter === "manuales" && !isManual) return false;
+      }
+      return true;
+    });
+  }, [homeFilteredItems, quickFilters, config.vehiclePrices]);
+
+  const homeVisibleItems = useMemo(() => {
+    const sorted = [...homeQuickFilteredItems];
+    if (homeSort === "fecha-remate") {
+      sorted.sort(
+        (a, b) =>
+          new Date(b.auctionDate ?? "1900-01-01").getTime() -
+          new Date(a.auctionDate ?? "1900-01-01").getTime(),
+      );
+      return sorted;
+    }
+    if (homeSort === "precio-asc") {
+      sorted.sort(
+        (a, b) =>
+          getPriceAmount(config.vehiclePrices[getVehicleKey(a)]) -
+          getPriceAmount(config.vehiclePrices[getVehicleKey(b)]),
+      );
+      return sorted;
+    }
+    if (homeSort === "precio-desc") {
+      sorted.sort(
+        (a, b) =>
+          getPriceAmount(config.vehiclePrices[getVehicleKey(b)]) -
+          getPriceAmount(config.vehiclePrices[getVehicleKey(a)]),
+      );
+      return sorted;
+    }
+    if (homeSort === "titulo") {
+      sorted.sort((a, b) => a.title.localeCompare(b.title, "es"));
+      return sorted;
+    }
+    return sorted;
+  }, [homeQuickFilteredItems, homeSort, config.vehiclePrices]);
+
   const getSectionItems = (sectionId: SectionId, fallback: CatalogItem[]): CatalogItem[] => {
     const selected = config.sectionVehicleIds[sectionId] ?? [];
     if (selected.length === 0) return fallback;
     return selected.map((id) => itemsByKey.get(id)).filter((item): item is CatalogItem => !!item);
   };
 
-  const proximosByKeyword = visibleItems.filter((item) =>
+  const proximosByKeyword = homeVisibleItems.filter((item) =>
     normalizeText([item.status, item.subtitle, item.title, item.location].filter(Boolean).join(" ")).includes("proxim"),
   );
-  const ventasByKeyword = visibleItems.filter((item) =>
+  const ventasByKeyword = homeVisibleItems.filter((item) =>
     normalizeText([item.status, item.subtitle, item.title].filter(Boolean).join(" ")).includes("venta directa"),
   );
-  const novedadesByKeyword = visibleItems.filter((item) =>
+  const novedadesByKeyword = homeVisibleItems.filter((item) =>
     normalizeText([item.status, item.subtitle, item.title].filter(Boolean).join(" ")).includes("novedad"),
   );
 
@@ -593,12 +736,12 @@ export function CatalogHomeClient({ feed }: Props) {
     () =>
       sortedUpcomingAuctions.map((auction) => ({
         auction,
-        items: visibleItems.filter(
+        items: homeVisibleItems.filter(
           (item) =>
             (config.vehicleUpcomingAuctionIds[getVehicleKey(item)] ?? "") === auction.id,
         ),
       })),
-    [sortedUpcomingAuctions, visibleItems, config.vehicleUpcomingAuctionIds],
+    [sortedUpcomingAuctions, homeVisibleItems, config.vehicleUpcomingAuctionIds],
   );
 
   const hasUpcomingAuctionCategories =
@@ -607,18 +750,68 @@ export function CatalogHomeClient({ feed }: Props) {
 
   const proximosRemates = getSectionItems(
     "proximos-remates",
-    proximosByKeyword.length > 0 ? proximosByKeyword.slice(0, 12) : sectionFallback(visibleItems, 0, 12),
+    proximosByKeyword.length > 0
+      ? proximosByKeyword.slice(0, 12)
+      : sectionFallback(homeVisibleItems, 0, 12),
   );
   const ventasDirectas = getSectionItems(
     "ventas-directas",
-    ventasByKeyword.length > 0 ? ventasByKeyword.slice(0, 12) : sectionFallback(visibleItems, 10, 12),
+    ventasByKeyword.length > 0
+      ? ventasByKeyword.slice(0, 12)
+      : sectionFallback(homeVisibleItems, 10, 12),
   );
   const novedades = getSectionItems(
     "novedades",
-    novedadesByKeyword.length > 0 ? novedadesByKeyword.slice(0, 12) : sectionFallback(visibleItems, 20, 12),
+    novedadesByKeyword.length > 0
+      ? novedadesByKeyword.slice(0, 12)
+      : sectionFallback(homeVisibleItems, 20, 12),
   );
-  const catalogoItems = getSectionItems("catalogo", visibleItems);
+  const catalogoItems = getSectionItems("catalogo", homeVisibleItems);
   const filteredCatalogItems = catalogoItems.filter((item) => inferVehicleType(item) === activeTypeTab);
+
+  const favoritesItems = useMemo(
+    () => homeVisibleItems.filter((item) => favoriteKeys.includes(getVehicleKey(item))).slice(0, 12),
+    [homeVisibleItems, favoriteKeys],
+  );
+
+  const latestItems = useMemo(
+    () =>
+      [...homeVisibleItems]
+        .sort(
+          (a, b) =>
+            new Date(b.auctionDate ?? "1900-01-01").getTime() -
+            new Date(a.auctionDate ?? "1900-01-01").getTime(),
+        )
+        .slice(0, 6),
+    [homeVisibleItems],
+  );
+
+  const nextAuction = useMemo(() => {
+    const today = new Date();
+    const upcoming = sortedUpcomingAuctions
+      .map((auction) => ({ auction, date: new Date(auction.date) }))
+      .filter((entry) => !Number.isNaN(entry.date.getTime()) && entry.date.getTime() >= today.getTime())
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+    return upcoming[0] ?? null;
+  }, [sortedUpcomingAuctions]);
+
+  const toggleQuickFilter = (filterId: QuickFilterId) => {
+    setQuickFilters((prev) => {
+      const set = new Set(prev);
+      if (set.has(filterId)) set.delete(filterId);
+      else set.add(filterId);
+      return Array.from(set) as QuickFilterId[];
+    });
+  };
+
+  const toggleFavorite = (itemKey: string) => {
+    setFavoriteKeys((prev) => {
+      const set = new Set(prev);
+      if (set.has(itemKey)) set.delete(itemKey);
+      else set.add(itemKey);
+      return Array.from(set);
+    });
+  };
 
   const filteredEditorItems = useMemo(() => {
     const query = normalizeText(searchTerm);
@@ -982,12 +1175,14 @@ export function CatalogHomeClient({ feed }: Props) {
     setLoginPassword("");
     setIsAdmin(true);
     setAdminView("editor");
+    setMobileMenuOpen(false);
   };
 
   const logout = async () => {
     await fetch("/api/admin/logout", { method: "POST" });
     setIsAdmin(false);
     setAdminView("home");
+    setMobileMenuOpen(false);
   };
 
   const showAdminEditor = isAdmin && adminView === "editor";
@@ -1001,7 +1196,7 @@ export function CatalogHomeClient({ feed }: Props) {
       <div className="premium-glow premium-glow-gold" />
 
       <section className="sticky top-0 z-30 border-b border-cyan-100/80 bg-white/88 shadow-[0_8px_24px_rgba(87,141,167,0.08)] backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 md:py-4 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <Link
               href="/"
@@ -1011,18 +1206,27 @@ export function CatalogHomeClient({ feed }: Props) {
                   event.preventDefault();
                   setAdminView("home");
                 }
+                setMobileMenuOpen(false);
               }}
             >
               <Image
                 src="/vedisa-logo.png"
                 alt="Logo Vedisa Remates"
-                width={352}
-                height={72}
+                width={260}
+                height={54}
                 priority
-                className="h-auto w-full max-w-[352px]"
+                className="h-auto w-full max-w-[240px] sm:max-w-[260px] md:max-w-[280px]"
               />
             </Link>
-            <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((prev) => !prev)}
+              className="ui-focus inline-flex items-center justify-center self-end rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 md:hidden"
+              aria-label="Abrir menú"
+            >
+              <span className="text-lg leading-none">{mobileMenuOpen ? "×" : "☰"}</span>
+            </button>
+            <div className="hidden items-center gap-2 md:flex">
               <nav className="flex flex-wrap gap-2 text-sm">
                 <a href="#proximos-remates" className="premium-link-pill ui-focus">
                   Proximos remates
@@ -1065,6 +1269,58 @@ export function CatalogHomeClient({ feed }: Props) {
               )}
             </div>
           </div>
+          {mobileMenuOpen ? (
+            <div className="rounded-lg border border-slate-200 bg-white p-3 md:hidden">
+              <nav className="flex flex-col gap-2 text-sm">
+                <a href="#proximos-remates" className="premium-link-pill ui-focus text-center" onClick={() => setMobileMenuOpen(false)}>
+                  Proximos remates
+                </a>
+                <a href="#ventas-directas" className="premium-link-pill ui-focus text-center" onClick={() => setMobileMenuOpen(false)}>
+                  Ventas directas
+                </a>
+                <a href="#novedades" className="premium-link-pill ui-focus text-center" onClick={() => setMobileMenuOpen(false)}>
+                  Novedades
+                </a>
+                <a href="#catalogo" className="premium-link-pill ui-focus text-center" onClick={() => setMobileMenuOpen(false)}>
+                  Catalogo
+                </a>
+              </nav>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {isAdmin ? (
+                  <>
+                    {adminView === "editor" ? (
+                      <button
+                        className="ui-focus flex-1 rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700"
+                        onClick={() => {
+                          setAdminView("home");
+                          setMobileMenuOpen(false);
+                        }}
+                      >
+                        Ver home
+                      </button>
+                    ) : (
+                      <button
+                        className="ui-focus flex-1 rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-xs text-cyan-700"
+                        onClick={() => {
+                          setAdminView("editor");
+                          setMobileMenuOpen(false);
+                        }}
+                      >
+                        Volver al editor
+                      </button>
+                    )}
+                    <button className="ui-focus flex-1 rounded-full bg-slate-900 px-3 py-1 text-xs text-white" onClick={logout}>
+                      Salir editor
+                    </button>
+                  </>
+                ) : (
+                  <button className="ui-focus w-full rounded-full bg-cyan-600 px-3 py-1 text-xs text-white" onClick={() => { setShowLogin(true); setMobileMenuOpen(false); }}>
+                    Login
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null}
           {feed.warning ? (
             <p className="rounded-md border border-amber-300/60 bg-amber-100 px-3 py-2 text-sm text-amber-900">{feed.warning}</p>
           ) : null}
@@ -1538,6 +1794,59 @@ export function CatalogHomeClient({ feed }: Props) {
 
       {showPublicHome ? (
         <>
+      <section className="relative z-10 mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+        <div className="glass-soft rounded-xl p-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <input
+              value={homeSearchTerm}
+              onChange={(event) => setHomeSearchTerm(event.target.value)}
+              placeholder="Buscar por patente, marca, modelo o categoría..."
+              className="ui-focus w-full rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm sm:max-w-xl"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600">
+                {homeVisibleItems.length} resultado(s)
+              </span>
+              {homeSearchTerm ? (
+                <button
+                  type="button"
+                  onClick={() => setHomeSearchTerm("")}
+                  className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
+                >
+                  Limpiar
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {Object.entries(QUICK_FILTER_LABELS).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => toggleQuickFilter(id as QuickFilterId)}
+                className={`ui-focus rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                  quickFilters.includes(id as QuickFilterId)
+                    ? "border-cyan-500 bg-cyan-600 text-white"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <select
+              value={homeSort}
+              onChange={(event) => setHomeSort(event.target.value as SortOption)}
+              className="ui-focus ml-auto rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+            >
+              <option value="relevancia">Orden: Relevancia</option>
+              <option value="fecha-remate">Orden: Fecha remate</option>
+              <option value="precio-asc">Orden: Precio menor</option>
+              <option value="precio-desc">Orden: Precio mayor</option>
+              <option value="titulo">Orden: Título A-Z</option>
+            </select>
+          </div>
+        </div>
+      </section>
       <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-12 lg:px-8">
         <div className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero`}>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">{config.homeLayout.heroKicker}</p>
@@ -1556,6 +1865,14 @@ export function CatalogHomeClient({ feed }: Props) {
             <a href="#catalogo" className="premium-btn-primary ui-focus">Ver catálogo completo</a>
             <a href="#proximos-remates" className="premium-btn-secondary ui-focus">Explorar secciones</a>
           </div>
+          {nextAuction ? (
+            <div className="mt-5 inline-flex w-fit items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-800">
+              <span>Próximo remate:</span>
+              <span>{nextAuction.auction.name}</span>
+              <span>·</span>
+              <span>{formatAuctionDateLabel(nextAuction.auction.date)}</span>
+            </div>
+          ) : null}
         </div>
         {config.homeLayout.showCommercialPanel ? (
         <div className="premium-panel lg:col-span-4">
@@ -1583,8 +1900,74 @@ export function CatalogHomeClient({ feed }: Props) {
       </section>
 
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-14 px-4 pb-14 sm:px-6 lg:px-8">
+        <section className="section-shell">
+          <div className="mb-4">
+            <p className="premium-kicker">Cómo participar</p>
+            <h2 className="text-2xl font-bold text-slate-900">Compra en 3 pasos</h2>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {[
+              ["1", "Regístrate", "Crea tu cuenta en vehiculoschocados.cl en pocos minutos."],
+              ["2", "Activa garantía", "Gestiona tu garantía para habilitar ofertas seguras."],
+              ["3", "Oferta y adjudica", "Participa online con seguimiento comercial de VEDISA."],
+            ].map(([step, title, description]) => (
+              <div key={step} className="rounded-xl border border-cyan-100 bg-white p-4">
+                <p className="text-xs font-bold text-cyan-700">Paso {step}</p>
+                <h3 className="mt-1 text-base font-semibold text-slate-900">{title}</h3>
+                <p className="mt-1 text-sm text-slate-600">{description}</p>
+              </div>
+            ))}
+          </div>
+        </section>
         {config.homeLayout.showFeaturedStrip ? (
-          <FeaturedStrip items={visibleItems.slice(0, 8)} onOpenVehicle={setSelectedVehicle} />
+          <FeaturedStrip items={homeVisibleItems.slice(0, 8)} onOpenVehicle={setSelectedVehicle} />
+        ) : null}
+        {favoritesItems.length > 0 ? (
+          <section className="section-shell">
+            <header className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="premium-kicker">Guardados</p>
+                <h2 className="text-2xl font-bold text-slate-900">Tus favoritos</h2>
+              </div>
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                {favoritesItems.length} guardados
+              </span>
+            </header>
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {favoritesItems.map((item) => (
+                <CatalogCard
+                  key={`favorite-${item.id}`}
+                  item={item}
+                  priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
+                  upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                  onOpen={() => setSelectedVehicle(item)}
+                  isFavorite={favoriteKeys.includes(getVehicleKey(item))}
+                  onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {latestItems.length > 0 ? (
+          <section className="section-shell">
+            <header className="mb-4">
+              <p className="premium-kicker">Nuevas publicaciones</p>
+              <h2 className="text-2xl font-bold text-slate-900">Recién publicados</h2>
+            </header>
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {latestItems.map((item) => (
+                <CatalogCard
+                  key={`latest-${item.id}`}
+                  item={item}
+                  priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
+                  upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                  onOpen={() => setSelectedVehicle(item)}
+                  isFavorite={favoriteKeys.includes(getVehicleKey(item))}
+                  onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
+                />
+              ))}
+            </div>
+          </section>
         ) : null}
         {config.homeLayout.sectionOrder.map((sectionId) => {
           if (sectionId === "proximos-remates") {
@@ -1594,6 +1977,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 groups={upcomingAuctionGroups}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={toggleFavorite}
                 onOpenVehicle={setSelectedVehicle}
               />
             ) : (
@@ -1605,6 +1990,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 items={proximosRemates}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={toggleFavorite}
                 onOpenVehicle={setSelectedVehicle}
               />
             );
@@ -1619,6 +2006,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 items={ventasDirectas}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={toggleFavorite}
                 onOpenVehicle={setSelectedVehicle}
               />
             );
@@ -1633,6 +2022,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 items={novedades}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={toggleFavorite}
                 onOpenVehicle={setSelectedVehicle}
               />
             );
@@ -1672,6 +2063,8 @@ export function CatalogHomeClient({ feed }: Props) {
                       priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
                       upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
                       onOpen={() => setSelectedVehicle(item)}
+                      isFavorite={favoriteKeys.includes(getVehicleKey(item))}
+                      onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
                     />
                   ))}
                 </div>
@@ -1680,6 +2073,42 @@ export function CatalogHomeClient({ feed }: Props) {
           );
         })}
       </div>
+      <section className="relative z-10 mx-auto mb-14 grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-2 lg:px-8">
+        <div className="section-shell">
+          <p className="premium-kicker">Confianza VEDISA</p>
+          <h2 className="text-2xl font-bold text-slate-900">Experiencia respaldada</h2>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {[
+              ["Atención comercial", "Acompañamiento en cada etapa de oferta."],
+              ["Remates online", "Plataforma activa y monitoreada en tiempo real."],
+              ["Exhibición presencial", "Revisión física de unidades pre-compra."],
+              ["Soporte post-venta", "Coordinación para documentación y retiro."],
+            ].map(([title, text]) => (
+              <div key={title} className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+                <p className="mt-1 text-sm text-slate-600">{text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="section-shell">
+          <p className="premium-kicker">Preguntas frecuentes</p>
+          <h2 className="text-2xl font-bold text-slate-900">Resuelve dudas rápidas</h2>
+          <div className="mt-4 space-y-2">
+            {[
+              ["¿Cómo oferto en un remate?", "Regístrate, activa garantía y participa online en la fecha de remate."],
+              ["¿Puedo revisar vehículos antes?", "Sí. Puedes visitar la exhibición presencial para inspección pre-compra."],
+              ["¿Todos los vehículos tienen visor 3D?", "No todos, pero los que lo tienen aparecen marcados como 3D."],
+              ["¿Dónde recibo apoyo comercial?", "Nuestro equipo responde por WhatsApp y canales oficiales de VEDISA."],
+            ].map(([question, answer]) => (
+              <details key={question} className="rounded-lg border border-slate-200 bg-white p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-900">{question}</summary>
+                <p className="mt-2 text-sm text-slate-600">{answer}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {selectedVehicle ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4" onClick={() => setSelectedVehicle(null)}>
@@ -1737,6 +2166,29 @@ export function CatalogHomeClient({ feed }: Props) {
                 </dl>
               </div>
             </div>
+            <div className="mt-4">
+              <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Vehículos similares</h4>
+              <div className="grid gap-3 md:grid-cols-3">
+                {homeVisibleItems
+                  .filter(
+                    (item) =>
+                      getVehicleKey(item) !== getVehicleKey(selectedVehicle) &&
+                      inferVehicleType(item) === inferVehicleType(selectedVehicle),
+                  )
+                  .slice(0, 3)
+                  .map((item) => (
+                    <button
+                      key={`similar-${item.id}`}
+                      type="button"
+                      onClick={() => setSelectedVehicle(item)}
+                      className="ui-focus rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-cyan-300 hover:bg-cyan-50/30"
+                    >
+                      <p className="line-clamp-1 text-sm font-semibold text-slate-900">{item.title}</p>
+                      <p className="line-clamp-1 text-xs text-slate-600">{item.subtitle ?? "Vehículo relacionado"}</p>
+                    </button>
+                  ))}
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
@@ -1759,6 +2211,16 @@ export function CatalogHomeClient({ feed }: Props) {
             </div>
           </div>
         </div>
+      ) : null}
+      {showPublicHome ? (
+        <a
+          href={WHATSAPP_CTA_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="ui-focus fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#25D366] px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden"
+        >
+          <span>WhatsApp</span>
+        </a>
       ) : null}
 
       {isAdmin && editingVehicleKey && editingDetails && editingItem ? (
