@@ -13,10 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://vedisaremates.vercel.app"),
+  metadataBase: new URL("https://catalogo.vedisaremates.cl"),
   title: "Catálogo Oficial VEDISA REMATES | Subastas de Vehículos",
   description:
     "Explora vehículos para remate y venta directa en VEDISA REMATES. Revisa unidades con fotos, visor 3D y acompañamiento comercial para ofertar con confianza.",
+  alternates: {
+    canonical: "https://catalogo.vedisaremates.cl",
+  },
   icons: {
     icon: [
       { url: "/icon.png", type: "image/png" },
@@ -28,7 +31,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "es_CL",
-    url: "https://vedisaremates.vercel.app",
+    url: "https://catalogo.vedisaremates.cl",
     siteName: "VEDISA REMATES",
     title: "Catálogo Oficial VEDISA REMATES | Remates y Venta Directa",
     description:
