@@ -870,55 +870,50 @@ export function CatalogHomeClient({ feed }: Props) {
       {!isAdmin ? (
         <>
       <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-12 lg:px-8">
-        <div className="premium-panel premium-panel-hero lg:col-span-7">
+        <div className="premium-panel premium-panel-hero lg:col-span-8">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Portal de subastas</p>
           <h1 className="mt-3 text-3xl font-black leading-tight text-slate-900 md:text-5xl">
             Inventario de vehículos para remate y venta directa
           </h1>
-          <div className="glass-soft mt-5 max-w-3xl rounded-xl p-5">
-            <p className="text-base font-semibold text-slate-800 md:text-lg">
-              Plataforma oficial de ofertas online en{" "}
-              <a
-                className="font-semibold text-cyan-700 underline decoration-cyan-500/70 underline-offset-2"
-                href="https://vedisaremates.cl"
-                target="_blank"
-                rel="noreferrer"
-              >
-                vedisaremates.cl
-              </a>
-              .
-            </p>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600 md:text-[15px]">
-              Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Visor 3D</span>
-              <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Agenda por remate</span>
-              <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Contacto inmediato</span>
-            </div>
+          <p className="mt-5 max-w-2xl text-sm leading-relaxed text-slate-600 md:text-[15px]">
+            Plataforma oficial de ofertas online en{" "}
+            <a
+              className="font-semibold text-cyan-700 underline decoration-cyan-500/70 underline-offset-2"
+              href="https://vedisaremates.cl"
+              target="_blank"
+              rel="noreferrer"
+            >
+              vedisaremates.cl
+            </a>
+            . Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Visor 3D</span>
+            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Agenda por remate</span>
+            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">Contacto inmediato</span>
           </div>
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-6 flex flex-wrap gap-3 border-t border-cyan-100 pt-5">
             <a href="#catalogo" className="premium-btn-primary ui-focus">Ver catálogo completo</a>
             <a href="#proximos-remates" className="premium-btn-secondary ui-focus">Explorar secciones</a>
           </div>
         </div>
-        <div className="premium-panel lg:col-span-5">
+        <div className="premium-panel lg:col-span-4">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Información comercial</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div className="premium-stat min-h-28">
-              <p className="text-xs uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
+          <div className="mt-4 space-y-3">
+            <div className="info-tile">
+              <p className="text-[11px] uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">Arturo Prat 6457, Noviciado, Pudahuel</p>
             </div>
-            <div className="premium-stat min-h-28">
-              <p className="text-xs uppercase tracking-widest text-slate-500">🕒 Horario</p>
+            <div className="info-tile">
+              <p className="text-[11px] uppercase tracking-widest text-slate-500">🕒 Horario</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00</p>
             </div>
-            <div className="premium-stat min-h-28">
-              <p className="text-xs uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
+            <div className="info-tile">
+              <p className="text-[11px] uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">Inspección pre-compra presencial disponible, sin garantía previa</p>
             </div>
-            <div className="premium-stat min-h-28">
-              <p className="text-xs uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
+            <div className="info-tile">
+              <p className="text-[11px] uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">Américo Vespucio 2880, Piso 7</p>
             </div>
           </div>
