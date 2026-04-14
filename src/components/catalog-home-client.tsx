@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { CatalogCard } from "@/components/catalog-card";
@@ -26,6 +26,12 @@ type ClientLeadForm = {
   name: string;
   phone: string;
   interest: string;
+};
+type SystemNotice = {
+  id: number;
+  tone: "success" | "error" | "info";
+  title: string;
+  message: string;
 };
 
 const QUICK_FILTER_LABELS: Record<QuickFilterId, string> = {
@@ -586,6 +592,7 @@ export function CatalogHomeClient({ feed }: Props) {
     interest: "",
   });
   const [leadMessage, setLeadMessage] = useState("");
+  const [systemNotice, setSystemNotice] = useState<SystemNotice | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [adminTab, setAdminTab] = useState<AdminTabId>("vehiculos");
   const [auctionFilterId, setAuctionFilterId] = useState("");
@@ -597,6 +604,12 @@ export function CatalogHomeClient({ feed }: Props) {
   const [manualDraft, setManualDraft] = useState<ManualPublicationDraft>(
     EMPTY_MANUAL_PUBLICATION_DRAFT,
   );
+  const [showManualCreateModal, setShowManualCreateModal] = useState(false);
+  const [manualUploadedImages, setManualUploadedImages] = useState<string[]>([]);
+  const [manualUploading, setManualUploading] = useState(false);
+  const [manualDropActive, setManualDropActive] = useState(false);
+  const [draggedImageIndex, setDraggedImageIndex] = useState<number | null>(null);
+  const manualFileInputRef = useRef<HTMLInputElement | null>(null);
   const [loginEmail, setLoginEmail] = useState("jpmontero@vedisaremates.cl");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -642,6 +655,20 @@ export function CatalogHomeClient({ feed }: Props) {
   useEffect(() => {
     localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteKeys));
   }, [favoriteKeys]);
+
+  useEffect(() => {
+    if (!systemNotice) return;
+    const timeout = window.setTimeout(() => setSystemNotice(null), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [systemNotice]);
+
+  const showSystemNotice = (
+    tone: SystemNotice["tone"],
+    title: string,
+    message: string,
+  ) => {
+    setSystemNotice({ id: Date.now(), tone, title, message });
+  };
 
   const manualItems = useMemo(
     () => (config.manualPublications ?? []).map(mapManualPublicationToCatalogItem),
@@ -1100,7 +1127,7 @@ export function CatalogHomeClient({ feed }: Props) {
     const name = newAuctionName.trim();
     const date = newAuctionDate.trim();
     if (!name || !date) {
-      alert("Debes completar nombre y fecha del remate.");
+      showSystemNotice("error", "Datos incompletos", "Debes completar nombre y fecha del remate.");
       return;
     }
     const id = `remate-${crypto.randomUUID()}`;
@@ -1121,15 +1148,86 @@ export function CatalogHomeClient({ feed }: Props) {
     });
   };
 
+  const uploadManualFiles = async (files: File[]) => {
+    const validFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (validFiles.length === 0) {
+      showSystemNotice("error", "Archivos inválidos", "Selecciona archivos de imagen válidos.");
+      return;
+    }
+    setManualUploading(true);
+    try {
+      const payload = new FormData();
+      for (const file of validFiles) {
+        payload.append("files", file);
+      }
+      const response = await fetch("/api/admin/cloudinary-upload", {
+        method: "POST",
+        body: payload,
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        urls?: string[];
+        error?: string;
+      };
+      if (!response.ok || !body.ok) {
+        showSystemNotice(
+          "error",
+          "Error subiendo imágenes",
+          body.error ?? "No fue posible subir imágenes a Cloudinary.",
+        );
+        return;
+      }
+      const urls = body.urls ?? [];
+      setManualUploadedImages((prev) => Array.from(new Set([...prev, ...urls])));
+      showSystemNotice("success", "Imágenes cargadas", `${urls.length} imagen(es) subida(s) correctamente.`);
+    } finally {
+      setManualUploading(false);
+      if (manualFileInputRef.current) manualFileInputRef.current.value = "";
+    }
+  };
+
+  const handleManualDropFiles = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setManualDropActive(false);
+    const dropped = Array.from(event.dataTransfer.files ?? []);
+    if (dropped.length === 0) return;
+    await uploadManualFiles(dropped);
+  };
+
+  const reorderManualImage = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+    setManualUploadedImages((prev) => {
+      const list = [...prev];
+      if (fromIndex >= list.length || toIndex >= list.length) return prev;
+      const [moved] = list.splice(fromIndex, 1);
+      list.splice(toIndex, 0, moved);
+      return list;
+    });
+  };
+
+  const resetManualCreation = () => {
+    setManualDraft(EMPTY_MANUAL_PUBLICATION_DRAFT);
+    setManualUploadedImages([]);
+    setManualDropActive(false);
+    setDraggedImageIndex(null);
+    setShowManualCreateModal(false);
+  };
+
   const createManualPublication = () => {
     const title = manualDraft.title.trim();
     if (!title) {
-      alert("La publicación manual necesita al menos un título.");
+      showSystemNotice("error", "Publicación manual", "La publicación manual necesita al menos un título.");
       return;
     }
-    const cloudinaryImages = normalizeCloudinaryImages(manualDraft.imagesCsv);
+    const cloudinaryImages = Array.from(
+      new Set([...manualUploadedImages, ...normalizeCloudinaryImages(manualDraft.imagesCsv)]),
+    );
     if (cloudinaryImages.length === 0) {
-      alert("Debes ingresar al menos una URL de imagen de Cloudinary.");
+      showSystemNotice(
+        "error",
+        "Imágenes requeridas",
+        "Debes ingresar al menos una URL de imagen de Cloudinary.",
+      );
       return;
     }
     const id = crypto.randomUUID();
@@ -1183,7 +1281,8 @@ export function CatalogHomeClient({ feed }: Props) {
       };
     });
 
-    setManualDraft(EMPTY_MANUAL_PUBLICATION_DRAFT);
+    resetManualCreation();
+    showSystemNotice("success", "Unidad creada", "La nueva unidad se agregó correctamente al inventario.");
   };
 
   const deleteManualPublication = (manualId: string) => {
@@ -1288,10 +1387,14 @@ export function CatalogHomeClient({ feed }: Props) {
     });
     setSaving(false);
     if (!response.ok) {
-      alert("Cambios guardados en este navegador. El guardado central en servidor está temporalmente no disponible.");
+      showSystemNotice(
+        "info",
+        "Guardado local activo",
+        "Los cambios se guardaron en este navegador. El guardado central en servidor está temporalmente no disponible.",
+      );
       return;
     }
-    alert("Configuración guardada.");
+    showSystemNotice("success", "Configuración guardada", "Tus cambios se aplicaron correctamente.");
   };
 
   const login = async () => {
@@ -1493,7 +1596,7 @@ export function CatalogHomeClient({ feed }: Props) {
             </div>
             <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
               {([
-                ["vehiculos", "1. Vehículos"],
+                ["vehiculos", "1. Inventario"],
                 ["categorias", "2. Editar categorías"],
                 ["layout", "3. Editar layout home"],
               ] as Array<[AdminTabId, string]>).map(([tabId, label]) => (
@@ -1514,7 +1617,7 @@ export function CatalogHomeClient({ feed }: Props) {
 
             {adminTab === "vehiculos" ? (
               <>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 sm:grid-cols-3">
                   <input
                     value={searchTerm}
                     onChange={(event) => {
@@ -1539,6 +1642,14 @@ export function CatalogHomeClient({ feed }: Props) {
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowManualCreateModal(true)}
+                    className="ui-focus inline-flex items-center justify-center gap-2 rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-700 transition hover:bg-cyan-100"
+                  >
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-cyan-600 text-xs text-white">+</span>
+                    Agregar nueva unidad
+                  </button>
                 </div>
                 <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
                   <div className="sticky top-0 z-10 grid grid-cols-14 items-center gap-2 border-b border-slate-200 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
@@ -1597,13 +1708,24 @@ export function CatalogHomeClient({ feed }: Props) {
                           onChange={(event) => setPrice(key, event.target.value)}
                         />
                         <div className="col-span-1 flex justify-center">
-                          <button
-                            type="button"
-                            onClick={() => openDetailsEditor(item)}
-                            className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-100"
-                          >
-                            Editar
-                          </button>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openDetailsEditor(item)}
+                              className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-100"
+                            >
+                              Editar
+                            </button>
+                            {key.startsWith("manual-") ? (
+                              <button
+                                type="button"
+                                onClick={() => deleteManualPublication(key.replace("manual-", ""))}
+                                className="ui-focus rounded border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100"
+                              >
+                                Borrar
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     );
@@ -1703,160 +1825,6 @@ export function CatalogHomeClient({ feed }: Props) {
                       })
                     )}
                   </div>
-                </div>
-                <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 p-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-800">
-                    Crear publicación manual (Cloudinary)
-                  </p>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <input
-                      value={manualDraft.title}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, title: event.target.value }))}
-                      placeholder="Título publicación"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.subtitle}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, subtitle: event.target.value }))}
-                      placeholder="Subtítulo"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.patente}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, patente: event.target.value }))}
-                      placeholder="Patente"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.brand}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, brand: event.target.value }))}
-                      placeholder="Marca"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.model}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, model: event.target.value }))}
-                      placeholder="Modelo"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.year}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, year: event.target.value }))}
-                      placeholder="Año"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.price}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, price: event.target.value }))}
-                      placeholder="Precio CLP"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.auctionDate}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, auctionDate: event.target.value }))}
-                      placeholder="Fecha (YYYY-MM-DD)"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={manualDraft.location}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, location: event.target.value }))}
-                      placeholder="Ubicación"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
-                    />
-                    <textarea
-                      value={manualDraft.description}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, description: event.target.value }))}
-                      placeholder="Descripción personalizada"
-                      className="ui-focus min-h-20 rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
-                    />
-                    <textarea
-                      value={manualDraft.imagesCsv}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, imagesCsv: event.target.value }))}
-                      placeholder="URLs de Cloudinary separadas por coma (https://res.cloudinary.com/...)"
-                      className="ui-focus min-h-20 rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
-                    />
-                    <input
-                      value={manualDraft.thumbnail}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, thumbnail: event.target.value }))}
-                      placeholder="URL portada Cloudinary (opcional)"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
-                    />
-                    <input
-                      value={manualDraft.view3dUrl}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, view3dUrl: event.target.value }))}
-                      placeholder="URL visor 3D (opcional)"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
-                    />
-                    <select
-                      value={manualDraft.upcomingAuctionId}
-                      onChange={(event) => setManualDraft((prev) => ({ ...prev, upcomingAuctionId: event.target.value }))}
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
-                    >
-                      <option value="">Sin remate</option>
-                      {sortedUpcomingAuctions.map((auction) => (
-                        <option key={auction.id} value={auction.id}>
-                          {auction.name} ({formatAuctionDateLabel(auction.date)})
-                        </option>
-                      ))}
-                    </select>
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={manualDraft.visible}
-                        onChange={(event) => setManualDraft((prev) => ({ ...prev, visible: event.target.checked }))}
-                      />
-                      Visible
-                    </label>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => (
-                      <label key={`manual-section-${sectionId}`} className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs text-cyan-800">
-                        <input
-                          type="checkbox"
-                          checked={manualDraft.sectionIds.includes(sectionId)}
-                          onChange={() => toggleManualDraftSection(sectionId)}
-                        />
-                        {SECTION_LABELS[sectionId]}
-                      </label>
-                    ))}
-                  </div>
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={createManualPublication}
-                      className="ui-focus rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
-                    >
-                      Crear publicación manual
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Publicaciones manuales creadas
-                  </p>
-                  {config.manualPublications.length === 0 ? (
-                    <p className="text-sm text-slate-500">No hay publicaciones manuales aún.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {config.manualPublications.map((manual) => (
-                        <div key={manual.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm">
-                          <div>
-                            <p className="font-semibold text-slate-900">{manual.title}</p>
-                            <p className="text-xs text-slate-500">
-                              {manual.patente ?? "Sin patente"} · {manual.images.length} foto(s) · {manual.visible ? "Visible" : "Oculto"}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => deleteManualPublication(manual.id)}
-                            className="ui-focus rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => (
@@ -2058,7 +2026,7 @@ export function CatalogHomeClient({ feed }: Props) {
               </div>
               <div className="info-tile">
                 <p className="text-[11px] uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">Inspección pre-compra presencial disponible, sin garantía previa</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">Plataforma pública con registro multimedia 3D, trazabilidad y soporte de contact center</p>
               </div>
               <div className="info-tile">
                 <p className="text-[11px] uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
@@ -2288,10 +2256,10 @@ export function CatalogHomeClient({ feed }: Props) {
           <h2 className="text-2xl font-bold text-slate-900">Experiencia respaldada</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {[
-              ["Atención comercial", "Acompañamiento en cada etapa de oferta."],
-              ["Remates online", "Plataforma activa y monitoreada en tiempo real."],
-              ["Exhibición presencial", "Revisión física de unidades pre-compra."],
-              ["Soporte post-venta", "Coordinación para documentación y retiro."],
+              ["+40 años de experiencia", "Trayectoria especializada en subastas de vehículos de todo tipo y condición."],
+              ["+2.500 vehículos al mes", "Capacidad operativa para alto volumen con procesos estandarizados y ágiles."],
+              ["+150 clientes satisfechos", "Relaciones de largo plazo con foco en transparencia y recupero."],
+              ["Transferencia en 72 horas", "Gestión administrativa orientada a reducir tiempos y acelerar liquidez."],
             ].map(([title, text]) => (
               <div key={title} className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
@@ -2308,13 +2276,35 @@ export function CatalogHomeClient({ feed }: Props) {
               ["¿Cómo oferto en un remate?", "Regístrate, activa garantía y participa online en la fecha de remate."],
               ["¿Puedo revisar vehículos antes?", "Sí. Puedes visitar la exhibición presencial para inspección pre-compra."],
               ["¿Todos los vehículos tienen visor 3D?", "No todos, pero los que lo tienen aparecen marcados como 3D."],
-              ["¿Dónde recibo apoyo comercial?", "Nuestro equipo responde por WhatsApp y canales oficiales de VEDISA."],
+              ["¿Dónde recibo apoyo comercial?", "Nuestro equipo responde por WhatsApp, correo y canales oficiales de VEDISA."],
             ].map(([question, answer]) => (
               <details key={question} className="rounded-lg border border-slate-200 bg-white p-3">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-900">{question}</summary>
                 <p className="mt-2 text-sm text-slate-600">{answer}</p>
               </details>
             ))}
+          </div>
+          <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50/70 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-800">Contacto comercial</p>
+            <p className="mt-1 text-sm text-slate-700">
+              Ignacio Rodriguez Yanine · Gerente Comercial ·
+              {" "}
+              <a href="mailto:irodriguez@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
+                irodriguez@vedisaremates.cl
+              </a>
+            </p>
+            <p className="mt-1 text-sm text-slate-700">
+              Tasaciones:
+              {" "}
+              <a href="mailto:tasaciones@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
+                tasaciones@vedisaremates.cl
+              </a>
+              {" "}· Retiros:
+              {" "}
+              <a href="mailto:retiros@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
+                retiros@vedisaremates.cl
+              </a>
+            </p>
           </div>
         </div>
       </section>
@@ -2535,6 +2525,253 @@ export function CatalogHomeClient({ feed }: Props) {
         </div>
       ) : null}
 
+      {showManualCreateModal ? (
+        <div
+          className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-900/70 p-4"
+          onClick={resetManualCreation}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Crear nueva unidad manual"
+            className="max-h-[92vh] w-full max-w-5xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Agregar nueva unidad al inventario</h3>
+                <p className="text-xs text-slate-500">
+                  Carga imágenes desde tu PC (drag & drop o selección múltiple) y crea la publicación manual.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={resetManualCreation}
+                className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setManualDropActive(true);
+                }}
+                onDragLeave={() => setManualDropActive(false)}
+                onDrop={(event) => {
+                  void handleManualDropFiles(event);
+                }}
+                className={`rounded-xl border-2 border-dashed p-4 text-center transition ${
+                  manualDropActive
+                    ? "border-cyan-500 bg-cyan-50"
+                    : "border-cyan-200 bg-slate-50"
+                }`}
+              >
+                <p className="text-sm font-semibold text-slate-700">
+                  Arrastra aquí múltiples fotos para subirlas a Cloudinary
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  También puedes seleccionar muchas fotos desde tu equipo.
+                </p>
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => manualFileInputRef.current?.click()}
+                    disabled={manualUploading}
+                    className="ui-focus rounded-md bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:opacity-60"
+                  >
+                    {manualUploading ? "Subiendo..." : "Seleccionar fotos"}
+                  </button>
+                  <input
+                    ref={manualFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      void uploadManualFiles(files);
+                    }}
+                  />
+                </div>
+              </div>
+
+              {manualUploadedImages.length > 0 ? (
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Imágenes subidas (arrastra para ordenar)
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-4">
+                    {manualUploadedImages.map((imageUrl, index) => (
+                      <div
+                        key={`${imageUrl}-${index}`}
+                        draggable
+                        onDragStart={() => setDraggedImageIndex(index)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => {
+                          if (draggedImageIndex === null) return;
+                          reorderManualImage(draggedImageIndex, index);
+                          setDraggedImageIndex(null);
+                        }}
+                        className="group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={imageUrl} alt={`Imagen ${index + 1}`} className="h-24 w-full object-cover" />
+                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/50 px-2 py-1 text-[10px] text-white">
+                          <span>#{index + 1}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setManualUploadedImages((prev) => prev.filter((_, imageIndex) => imageIndex !== index))
+                            }
+                            className="ui-focus rounded bg-white/20 px-1.5 py-0.5"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid gap-2 md:grid-cols-2">
+                <input
+                  value={manualDraft.title}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, title: event.target.value }))}
+                  placeholder="Título publicación"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.subtitle}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, subtitle: event.target.value }))}
+                  placeholder="Subtítulo"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.patente}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, patente: event.target.value }))}
+                  placeholder="Patente"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.brand}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, brand: event.target.value }))}
+                  placeholder="Marca"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.model}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, model: event.target.value }))}
+                  placeholder="Modelo"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.year}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, year: event.target.value }))}
+                  placeholder="Año"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.price}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, price: event.target.value }))}
+                  placeholder="Precio CLP"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.auctionDate}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, auctionDate: event.target.value }))}
+                  placeholder="Fecha (YYYY-MM-DD)"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                />
+                <input
+                  value={manualDraft.location}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, location: event.target.value }))}
+                  placeholder="Ubicación"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                />
+                <textarea
+                  value={manualDraft.description}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, description: event.target.value }))}
+                  placeholder="Descripción personalizada"
+                  className="ui-focus min-h-20 rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                />
+                <textarea
+                  value={manualDraft.imagesCsv}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, imagesCsv: event.target.value }))}
+                  placeholder="URLs adicionales de Cloudinary separadas por coma (opcional)"
+                  className="ui-focus min-h-16 rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                />
+                <input
+                  value={manualDraft.thumbnail}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, thumbnail: event.target.value }))}
+                  placeholder="URL portada Cloudinary (opcional, si no se usa la primera)"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                />
+                <input
+                  value={manualDraft.view3dUrl}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, view3dUrl: event.target.value }))}
+                  placeholder="URL visor 3D (opcional)"
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm md:col-span-2"
+                />
+                <select
+                  value={manualDraft.upcomingAuctionId}
+                  onChange={(event) => setManualDraft((prev) => ({ ...prev, upcomingAuctionId: event.target.value }))}
+                  className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">Sin remate</option>
+                  {sortedUpcomingAuctions.map((auction) => (
+                    <option key={auction.id} value={auction.id}>
+                      {auction.name} ({formatAuctionDateLabel(auction.date)})
+                    </option>
+                  ))}
+                </select>
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={manualDraft.visible}
+                    onChange={(event) => setManualDraft((prev) => ({ ...prev, visible: event.target.checked }))}
+                  />
+                  Visible
+                </label>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => (
+                  <label key={`manual-modal-section-${sectionId}`} className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs text-cyan-800">
+                    <input
+                      type="checkbox"
+                      checked={manualDraft.sectionIds.includes(sectionId)}
+                      onChange={() => toggleManualDraftSection(sectionId)}
+                    />
+                    {SECTION_LABELS[sectionId]}
+                  </label>
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={resetManualCreation}
+                  className="ui-focus rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={createManualPublication}
+                  className="ui-focus rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
+                >
+                  Crear publicación manual
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showLogin ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
           <div role="dialog" aria-modal="true" aria-label="Inicio de sesión administrador" className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl">
@@ -2562,6 +2799,39 @@ export function CatalogHomeClient({ feed }: Props) {
         >
           <span>WhatsApp</span>
         </a>
+      ) : null}
+
+      {systemNotice ? (
+        <div
+          key={systemNotice.id}
+          className="pointer-events-none fixed left-1/2 top-20 z-[80] w-[92%] max-w-md -translate-x-1/2"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            className={`pointer-events-auto glass-soft rounded-xl border px-4 py-3 shadow-xl ${
+              systemNotice.tone === "success"
+                ? "border-emerald-200 bg-emerald-50/95"
+                : systemNotice.tone === "error"
+                  ? "border-rose-200 bg-rose-50/95"
+                  : "border-cyan-200 bg-cyan-50/95"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">{systemNotice.title}</p>
+                <p className="mt-1 text-xs text-slate-700">{systemNotice.message}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSystemNotice(null)}
+                className="ui-focus rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {isAdmin && editingVehicleKey && editingDetails && editingItem ? (
