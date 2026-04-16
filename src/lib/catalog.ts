@@ -238,7 +238,10 @@ async function fetchFromTasacionesApi(): Promise<CatalogItem[] | null> {
     "limit",
     process.env.CATALOG_SOURCE_API_LIMIT ?? "500",
   );
-  endpoint.searchParams.set("solo_visible", "true");
+  endpoint.searchParams.set(
+    "estado",
+    process.env.CATALOG_SOURCE_API_ESTADO ?? "en_bodega",
+  );
   endpoint.searchParams.set(
     "incluir_historicos",
     process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
