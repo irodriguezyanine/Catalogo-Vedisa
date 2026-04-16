@@ -6,7 +6,7 @@ Catalogo historico de remates de VEDISA, construido desde cero en Next.js para d
 
 Este proyecto intenta reutilizar la misma fuente de datos para evitar re-implementar todas las APIs:
 
-1. **Primera opcion (preferida):** consumir un endpoint existente de Tasaciones (ej: `https://vedisa.vercel.app/api/...`) mediante `CATALOG_SOURCE_API_URL`.
+1. **Primera opcion (preferida):** consumir la API pública de Tasaciones (`/api/inventario-publico`) mediante `CATALOG_SOURCE_API_URL`.
 2. **Fallback automatico:** si ese endpoint no existe o falla, consulta directamente Supabase con credenciales anonimas de solo lectura.
 
 ## Variables de entorno
@@ -19,8 +19,10 @@ cp .env.example .env.local
 
 Campos principales:
 
-- `CATALOG_SOURCE_API_URL`: endpoint remoto desde Tasaciones/vedisa.
-- `CATALOG_SOURCE_API_TOKEN`: token opcional (si el endpoint lo exige).
+- `CATALOG_SOURCE_API_URL`: base URL remota de Tasaciones (ej: `https://vedisa.vercel.app`).
+- `CATALOG_SOURCE_API_TOKEN`: token para header `x-api-key`.
+- `CATALOG_SOURCE_API_LIMIT`: límite solicitado al endpoint público.
+- `CATALOG_SOURCE_API_INCLUIR_HISTORICOS`: envía `incluir_historicos=true|false` al endpoint.
 - `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`: fallback a Supabase.
 - `CATALOG_SUPABASE_TABLE`: tabla origen (por defecto `inventario`).
 - `AWS_*`: inventario DynamoDB (misma lógica que Tasaciones).
@@ -74,6 +76,7 @@ Puedes usarlo para integraciones futuras sin acoplarte al formato crudo de la ba
 
 No requiere `vercel.json` adicional para este MVP.
 
-## Siguiente paso recomendado
+## Nota de integracion actual
 
-En `TasacionesVedisa`, crear un endpoint read-only dedicado al catalogo (ej: `/api/catalogo-publico`) para estabilizar contrato de datos y dejar Supabase solo como respaldo.
+La integración con `TasacionesVedisa` ya puede hacerse directo por API pública en `/api/inventario-publico`.  
+El catálogo mantiene fallback a Supabase solo como contingencia.
