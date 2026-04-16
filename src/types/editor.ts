@@ -48,6 +48,8 @@ export type ManualPublication = {
 export type EditorVehicleDetails = {
   title?: string;
   subtitle?: string;
+  patente?: string;
+  vin?: string;
   status?: string;
   location?: string;
   lot?: string;
@@ -57,6 +59,13 @@ export type EditorVehicleDetails = {
   model?: string;
   year?: string;
   category?: string;
+  kilometraje?: string;
+  color?: string;
+  combustible?: string;
+  transmision?: string;
+  traccion?: string;
+  aro?: string;
+  cilindrada?: string;
   thumbnail?: string;
   view3dUrl?: string;
   imagesCsv?: string;
