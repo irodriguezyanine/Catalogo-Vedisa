@@ -7,6 +7,8 @@ const DEFAULT_TABLE = process.env.CATALOG_SUPABASE_TABLE ?? "inventario";
 const DEFAULT_SELECT = process.env.CATALOG_SUPABASE_SELECT ?? "*";
 const DEFAULT_LIMIT = Number(process.env.CATALOG_LIMIT ?? "60");
 const DEFAULT_ORDER_BY = process.env.CATALOG_SUPABASE_ORDER_BY ?? "created_at";
+const AUTORED_API_URL = process.env.CATALOG_SOURCE_AUTORED_API_URL;
+const AUTORED_MAX_LOOKUPS = Number(process.env.CATALOG_AUTORED_MAX_LOOKUPS ?? "120");
 const GLO3D_INVENTORY_POST_URL =
   "https://us-central1-glo3d-c338b.cloudfunctions.net/outbound/api/v1/inventory";
 const GLO3D_MAX_PAGES = Number(process.env.GLO3D_MAX_PAGES ?? "8");
@@ -563,6 +565,111 @@ function getItemStock(item: CatalogItem): string | undefined {
   );
 }
 
+function isMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+}
+
+function mergeRawPreferPrimary(
+  primaryRaw: Record<string, unknown>,
+  fallbackRaw: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...primaryRaw };
+  for (const [key, value] of Object.entries(fallbackRaw)) {
+    const current = merged[key];
+    if (!isMeaningfulValue(current) && isMeaningfulValue(value)) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function itemNeedsTechnicalFallback(item: CatalogItem): boolean {
+  const raw = item.raw as Record<string, unknown>;
+  const fieldsToCheck = [
+    ["vin", "numero_chasis", "nro_chasis", "chasis"],
+    ["kilometraje", "km", "kms", "odometro"],
+    ["color", "color_exterior", "color_vehiculo"],
+    ["combustible", "tipo_combustible", "fuel"],
+    ["transmision", "caja", "tipo_caja"],
+    ["traccion", "tipo_traccion"],
+    ["aro", "rin", "rines"],
+    ["cilindrada", "cc", "motor_cc"],
+  ];
+  return fieldsToCheck.some((aliases) => !getStringFromKeys(raw, aliases));
+}
+
+async function fetchAutoredByPatent(
+  patent: string,
+): Promise<Record<string, unknown> | null> {
+  if (!AUTORED_API_URL) return null;
+  const token = process.env.CATALOG_SOURCE_API_TOKEN;
+  const url = new URL(AUTORED_API_URL);
+  url.searchParams.set("patente", patent);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "x-api-key": token } : {}),
+    },
+    next: { revalidate: 120 },
+  });
+  if (!response.ok) return null;
+
+  const payload = (await response.json()) as unknown;
+  const rows = extractRowsFromPayload(payload);
+  if (rows.length > 0) return rows[0];
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    return payload as Record<string, unknown>;
+  }
+  return null;
+}
+
+async function enrichWithAutoredFallback(
+  items: CatalogItem[],
+): Promise<CatalogItem[]> {
+  if (!AUTORED_API_URL || items.length === 0) return items;
+
+  const candidates = items
+    .map((item) => ({ item, stock: getItemStock(item) }))
+    .filter(
+      (entry): entry is { item: CatalogItem; stock: string } =>
+        !!entry.stock && itemNeedsTechnicalFallback(entry.item),
+    )
+    .slice(0, AUTORED_MAX_LOOKUPS);
+
+  if (candidates.length === 0) return items;
+
+  const byStock = new Map<string, Record<string, unknown>>();
+  for (const entry of candidates) {
+    try {
+      const autored = await fetchAutoredByPatent(entry.stock);
+      if (autored) byStock.set(entry.stock, autored);
+    } catch {
+      // noop: no bloquea catálogo si Autored falla
+    }
+  }
+
+  if (byStock.size === 0) return items;
+
+  return items.map((item) => {
+    const stock = getItemStock(item);
+    if (!stock) return item;
+    const autored = byStock.get(stock);
+    if (!autored) return item;
+    const raw = item.raw as Record<string, unknown>;
+    return {
+      ...item,
+      raw: {
+        ...mergeRawPreferPrimary(raw, autored),
+        autored,
+      },
+    };
+  });
+}
+
 function mergeCatalogItems(primary: CatalogItem[], secondary: CatalogItem[]): CatalogItem[] {
   const merged = new Map<string, CatalogItem>();
 
@@ -585,7 +692,10 @@ function mergeCatalogItems(primary: CatalogItem[], secondary: CatalogItem[]): Ca
       images: item.images.length > 0 ? item.images : existing.images,
       thumbnail: item.thumbnail ?? existing.thumbnail,
       view3dUrl: item.view3dUrl ?? existing.view3dUrl,
-      raw: { ...existing.raw, ...item.raw },
+      raw: mergeRawPreferPrimary(
+        item.raw as Record<string, unknown>,
+        existing.raw as Record<string, unknown>,
+      ),
     });
   };
 
@@ -615,13 +725,14 @@ export async function getCatalogFeed(): Promise<CatalogFeed> {
       resolvedSource = "tasaciones-api";
       const awsItems = await fetchFromAwsInventory().catch(() => []);
       const mergedItems = mergeCatalogItems(apiItems, awsItems);
-      const stocks = mergedItems
+      const enrichedItems = await enrichWithAutoredFallback(mergedItems);
+      const stocks = enrichedItems
         .filter((item) => !item.view3dUrl)
         .map(getItemStock)
         .filter((value): value is string => !!value);
       const glo3dMap = await fetchGlo3dByStocks(stocks);
 
-      const itemsWith3d = mergedItems.map((item) => ({
+      const itemsWith3d = enrichedItems.map((item) => ({
         ...item,
         view3dUrl:
           item.view3dUrl ??
@@ -642,13 +753,14 @@ export async function getCatalogFeed(): Promise<CatalogFeed> {
     const supabaseItems = await fetchFromSupabase();
     const awsItems = await fetchFromAwsInventory().catch(() => []);
     const mergedItems = mergeCatalogItems(supabaseItems, awsItems);
+    const enrichedItems = await enrichWithAutoredFallback(mergedItems);
 
-    const stocks = mergedItems
+    const stocks = enrichedItems
       .filter((item) => !item.view3dUrl)
       .map(getItemStock)
       .filter((value): value is string => !!value);
     const glo3dMap = await fetchGlo3dByStocks(stocks);
-    const itemsWith3d = mergedItems.map((item) => ({
+    const itemsWith3d = enrichedItems.map((item) => ({
       ...item,
       view3dUrl:
         item.view3dUrl ??

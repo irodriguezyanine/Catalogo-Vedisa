@@ -24,6 +24,8 @@ Campos principales:
 - `CATALOG_SOURCE_API_LIMIT`: límite solicitado al endpoint público.
 - `CATALOG_SOURCE_API_ESTADO`: estado de inventario solicitado (recomendado `en_bodega`).
 - `CATALOG_SOURCE_API_INCLUIR_HISTORICOS`: envía `incluir_historicos=true|false` al endpoint.
+- `CATALOG_SOURCE_AUTORED_API_URL`: endpoint para enriquecer por patente (fallback técnico).
+- `CATALOG_AUTORED_MAX_LOOKUPS`: máximo de patentes a consultar por ciclo para fallback Autored.
 - `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`: fallback a Supabase.
 - `CATALOG_SUPABASE_TABLE`: tabla origen (por defecto `inventario`).
 - `AWS_*`: inventario DynamoDB (misma lógica que Tasaciones).
