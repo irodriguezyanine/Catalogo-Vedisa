@@ -160,6 +160,19 @@ function normalizeText(value?: string): string {
     .replace(/\p{Diacritic}/gu, "");
 }
 
+function normalizePatentToken(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function extractPatentTokens(value: string): string[] {
+  const raw = value.toUpperCase();
+  const matches = raw.match(/[A-Z]{4}\s*-?\s*\d{2}/g) ?? [];
+  const normalized = matches
+    .map((token) => normalizePatentToken(token))
+    .filter((token) => /^[A-Z]{4}\d{2}$/.test(token));
+  return Array.from(new Set(normalized));
+}
+
 function getVehicleKey(item: CatalogItem): string {
   const raw = item.raw as Record<string, unknown>;
   const patent = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number]
@@ -968,10 +981,18 @@ export function CatalogHomeClient({ feed }: Props) {
 
   const filteredEditorItems = useMemo(() => {
     const query = normalizeText(searchTerm);
+    const patentTokens = extractPatentTokens(searchTerm);
     const source = query
-      ? items.filter((item) =>
-          normalizeText(`${item.title} ${item.subtitle ?? ""}`).includes(query),
-        )
+      ? items.filter((item) => {
+          if (patentTokens.length > 0) {
+            const itemPatent = getPatent(item);
+            if (itemPatent !== "—") {
+              return patentTokens.includes(normalizePatentToken(itemPatent));
+            }
+            return patentTokens.includes(normalizePatentToken(getVehicleKey(item)));
+          }
+          return normalizeText(`${item.title} ${item.subtitle ?? ""}`).includes(query);
+        })
       : items;
     if (!auctionFilterId) return source;
     return source.filter(
