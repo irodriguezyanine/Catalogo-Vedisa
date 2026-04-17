@@ -2811,7 +2811,7 @@ export function CatalogHomeClient({ feed }: Props) {
         ) : null}
         {config.homeLayout.sectionOrder.map((sectionId) => {
           if (sectionId === "proximos-remates") {
-            if (hasActiveSearchOrQuickFilters && proximosRemates.length === 0 && !hasUpcomingAuctionCategories) {
+            if (proximosRemates.length === 0 && !hasUpcomingAuctionCategories) {
               return null;
             }
             return hasUpcomingAuctionCategories ? (
@@ -2846,7 +2846,7 @@ export function CatalogHomeClient({ feed }: Props) {
             );
           }
           if (sectionId === "ventas-directas") {
-            if (hasActiveSearchOrQuickFilters && ventasDirectas.length === 0) return null;
+            if (ventasDirectas.length === 0) return null;
             return (
               <Section
                 key="public-ventas-directas"
@@ -2866,7 +2866,7 @@ export function CatalogHomeClient({ feed }: Props) {
             );
           }
           if (sectionId === "novedades") {
-            if (hasActiveSearchOrQuickFilters && novedades.length === 0) return null;
+            if (novedades.length === 0) return null;
             return (
               <Section
                 key="public-novedades"
@@ -2885,7 +2885,7 @@ export function CatalogHomeClient({ feed }: Props) {
               />
             );
           }
-          if (hasActiveSearchOrQuickFilters && filteredCatalogItems.length === 0) return null;
+          if (catalogoItems.length === 0) return null;
           return (
             <section key="public-catalogo" id="catalogo" className="section-shell scroll-mt-24">
               <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
