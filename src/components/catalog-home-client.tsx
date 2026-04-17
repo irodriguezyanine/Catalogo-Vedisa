@@ -903,7 +903,7 @@ export function CatalogHomeClient({ feed }: Props) {
         const session = (await sessionRes.json()) as { loggedIn?: boolean };
         const loggedIn = Boolean(session.loggedIn);
         setIsAdmin(loggedIn);
-        if (loggedIn) setAdminView("editor");
+        setAdminView("home");
 
         const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
         if (configRes.ok) {
