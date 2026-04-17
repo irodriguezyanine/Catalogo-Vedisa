@@ -16,14 +16,13 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://catalogo.vedisaremates.cl"),
   title: "Catálogo Oficial VEDISA REMATES | Subastas de Vehículos",
   description:
-    "Explora vehículos para remate y venta directa en VEDISA REMATES. Revisa unidades con fotos, visor 3D y acompañamiento comercial para ofertar con confianza.",
+    "Catálogo Vedisa: revisa nuestro stock de autos disponibles para remate y venta directa, y cuéntanos cuáles te interesan para ayudarte con la mejor alternativa.",
   alternates: {
     canonical: "https://catalogo.vedisaremates.cl",
   },
   icons: {
     icon: [
       { url: "/favicon.png", type: "image/png" },
-      { url: "/icon.png", type: "image/png" },
       { url: "/favicon.ico", type: "image/x-icon" },
     ],
     shortcut: "/favicon.png",
@@ -36,7 +35,7 @@ export const metadata: Metadata = {
     siteName: "VEDISA REMATES",
     title: "Catálogo Oficial VEDISA REMATES | Remates y Venta Directa",
     description:
-      "Inventario actualizado de vehículos para remate y venta directa. Cotiza, compara y oférta con respaldo comercial VEDISA.",
+      "Revisa nuestro stock de autos en Catálogo Vedisa y dinos qué unidades te interesan para asesorarte en tu compra.",
     images: [
       {
         url: "/vedisa-logo.png",
@@ -50,7 +49,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Catálogo Oficial VEDISA REMATES",
     description:
-      "Revisa vehículos para remate y venta directa con respaldo comercial VEDISA.",
+      "Revisa nuestro stock de autos y dinos cuáles te interesan en Catálogo Vedisa.",
     images: ["/vedisa-logo.png"],
   },
 };
