@@ -299,15 +299,22 @@ function getModel(item: CatalogItem): string {
 
 function inferVehicleType(item: CatalogItem): VehicleTypeId {
   const raw = item.raw as Record<string, unknown>;
+  const normalizedCategory = normalizeVehicleCategoryValue(
+    String(raw.categoria ?? raw.tipo_vehiculo ?? raw.tipo ?? ""),
+  );
+  if (normalizedCategory === "vehiculo_liviano") return "livianos";
+  if (normalizedCategory === "vehiculo_pesado") return "pesados";
+  if (normalizedCategory === "maquinaria") return "maquinaria";
+
   const sample = normalizeText(
     [item.title, item.subtitle, raw.categoria, raw.tipo_vehiculo, raw.description]
       .filter(Boolean)
       .join(" "),
   );
 
-  if (/(camion|camión|bus|tracto|tolva|pesad|semi|rampla|grua)/.test(sample)) return "pesados";
   if (/(retro|excav|motoniv|bulldo|cargador|grua horquilla|maquinaria)/.test(sample)) return "maquinaria";
   if (/(auto|suv|sedan|hatch|pickup|camioneta|station)/.test(sample)) return "livianos";
+  if (/\b(camion(?!eta)|bus|tracto|tolva|pesad|semi|rampla|grua)\b/.test(sample)) return "pesados";
   return "otros";
 }
 

@@ -241,10 +241,6 @@ async function fetchFromTasacionesApi(): Promise<CatalogItem[] | null> {
     process.env.CATALOG_SOURCE_API_LIMIT ?? "500",
   );
   endpoint.searchParams.set(
-    "estado",
-    process.env.CATALOG_SOURCE_API_ESTADO ?? "en_bodega",
-  );
-  endpoint.searchParams.set(
     "incluir_historicos",
     process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
   );
@@ -822,8 +818,8 @@ function mergeCatalogItems(primary: CatalogItem[], secondary: CatalogItem[]): Ca
   return Array.from(merged.values());
 }
 
-const BODEGA_FILTER_ENABLED =
-  (process.env.CATALOG_BODEGA_FILTER ?? "true") !== "false";
+// Requisito del negocio: el catálogo debe cargar el inventario completo.
+const BODEGA_FILTER_ENABLED = false;
 
 function filterEnBodega(items: CatalogItem[]): CatalogItem[] {
   if (!BODEGA_FILTER_ENABLED) return items;
