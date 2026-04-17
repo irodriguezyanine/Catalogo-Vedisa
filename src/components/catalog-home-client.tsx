@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+} from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { CatalogCard } from "@/components/catalog-card";
@@ -24,6 +32,7 @@ const EDITOR_PAGE_SIZE = 20;
 type AdminTabId = "vehiculos" | "categorias" | "layout";
 type EditorGroupFilter = "all" | SectionId;
 type EditorVisibilityFilter = "all" | "visible" | "hidden";
+type EditorVehicleCategoryFilter = "all" | "livianos" | "pesados" | "maquinaria" | "chatarra";
 type BatchAssignTarget =
   | { type: "section"; sectionId: "ventas-directas" | "novedades" | "catalogo" }
   | { type: "auction"; auctionId: string };
@@ -299,8 +308,20 @@ function getModel(item: CatalogItem): string {
 
 function inferVehicleType(item: CatalogItem): VehicleTypeId {
   const raw = item.raw as Record<string, unknown>;
+  const lookup = buildVehicleLookup(raw);
   const normalizedCategory = normalizeVehicleCategoryValue(
-    String(raw.categoria ?? raw.tipo_vehiculo ?? raw.tipo ?? ""),
+    String(
+      getLookupValue(lookup, [
+        "categoria",
+        "category",
+        "tipo_vehiculo",
+        "tipo",
+        "vehicle_type",
+        "aws.categoria",
+        "aws.tipo_vehiculo",
+        "aws_campos.categoria",
+      ]) ?? "",
+    ),
   );
   if (normalizedCategory === "vehiculo_liviano") return "livianos";
   if (normalizedCategory === "vehiculo_pesado") return "pesados";
@@ -316,6 +337,38 @@ function inferVehicleType(item: CatalogItem): VehicleTypeId {
   if (/(auto|suv|sedan|hatch|pickup|camioneta|station)/.test(sample)) return "livianos";
   if (/\b(camion(?!eta)|bus|tracto|tolva|pesad|semi|rampla|grua)\b/.test(sample)) return "pesados";
   return "otros";
+}
+
+function inferVehicleCategoryForAdmin(item: CatalogItem): EditorVehicleCategoryFilter | "otros" {
+  const raw = item.raw as Record<string, unknown>;
+  const lookup = buildVehicleLookup(raw);
+  const normalizedCategory = normalizeVehicleCategoryValue(
+    String(
+      getLookupValue(lookup, [
+        "categoria",
+        "category",
+        "tipo_vehiculo",
+        "tipo",
+        "vehicle_type",
+        "aws.categoria",
+        "aws.tipo_vehiculo",
+        "aws_campos.categoria",
+      ]) ?? "",
+    ),
+  );
+
+  if (normalizedCategory === "vehiculo_liviano") return "livianos";
+  if (normalizedCategory === "vehiculo_pesado") return "pesados";
+  if (normalizedCategory === "maquinaria") return "maquinaria";
+  if (normalizedCategory === "chatarra") return "chatarra";
+
+  const sample = normalizeText(
+    [item.title, item.subtitle, raw.categoria, raw.tipo_vehiculo, raw.description]
+      .filter(Boolean)
+      .join(" "),
+  );
+  if (/chatarra|scrap/.test(sample)) return "chatarra";
+  return inferVehicleType(item);
 }
 
 function formatPrice(value?: string): string | null {
@@ -602,6 +655,79 @@ type FeaturedStripProps = {
 
 function FeaturedStrip({ items, onOpenVehicle }: FeaturedStripProps) {
   if (items.length === 0) return null;
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const dragStartXRef = useRef(0);
+  const dragStartScrollLeftRef = useRef(0);
+  const draggedRef = useRef(false);
+
+  const updateScrollArrows = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const maxScrollLeft = Math.max(0, node.scrollWidth - node.clientWidth);
+    const hasOverflow = maxScrollLeft > 4;
+    setCanScrollLeft(hasOverflow && node.scrollLeft > 4);
+    setCanScrollRight(hasOverflow && node.scrollLeft < maxScrollLeft - 4);
+  }, []);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    updateScrollArrows();
+    const onScroll = () => updateScrollArrows();
+    const onResize = () => updateScrollArrows();
+    node.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onResize);
+    return () => {
+      node.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [items.length, updateScrollArrows]);
+
+  const scrollByAmount = (direction: "left" | "right") => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const amount = Math.max(280, Math.round(node.clientWidth * 0.72));
+    const offset = direction === "left" ? -amount : amount;
+    node.scrollBy({ left: offset, behavior: "smooth" });
+    window.setTimeout(() => updateScrollArrows(), 320);
+  };
+
+  const onMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    const node = scrollRef.current;
+    if (!node) return;
+    setIsDragging(true);
+    draggedRef.current = false;
+    dragStartXRef.current = event.clientX;
+    dragStartScrollLeftRef.current = node.scrollLeft;
+  };
+
+  const onMouseMove = (event: MouseEvent<HTMLDivElement>) => {
+    const node = scrollRef.current;
+    if (!node || !isDragging) return;
+    const delta = event.clientX - dragStartXRef.current;
+    if (Math.abs(delta) > 6) draggedRef.current = true;
+    node.scrollLeft = dragStartScrollLeftRef.current - delta;
+  };
+
+  const endDrag = () => {
+    setIsDragging(false);
+    window.setTimeout(() => {
+      draggedRef.current = false;
+    }, 20);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      scrollByAmount("left");
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      scrollByAmount("right");
+    }
+  };
 
   return (
     <section className="section-shell">
@@ -610,35 +736,77 @@ function FeaturedStrip({ items, onOpenVehicle }: FeaturedStripProps) {
           <p className="premium-kicker">Selecciones premium</p>
           <h2 className="text-2xl font-bold text-slate-900">Vitrina destacada</h2>
         </div>
-        <p className="text-xs text-slate-500">Desliza horizontalmente</p>
+        <p className="text-xs text-slate-500">Desliza con mouse o flechas</p>
       </div>
-      <div className="featured-strip">
-        {items.map((item) => (
-          <button
-            key={`featured-${item.id}`}
-            type="button"
-            className="featured-item text-left"
-            onClick={() => onOpenVehicle(item)}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
-              alt={item.title}
-              className="featured-image"
-              loading="lazy"
-            />
-            <div className="featured-overlay" />
-            <div className="featured-content">
-              <p className="line-clamp-1 text-sm font-semibold uppercase tracking-wide text-cyan-700">
-                {item.status ?? "Unidad disponible"}
-              </p>
-              <h3 className="line-clamp-2 text-xl font-bold text-white">{item.title}</h3>
-              <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-100">
-                {item.subtitle ? <span className="featured-chip">{item.subtitle}</span> : null}
+      <div className="featured-strip-shell relative">
+        <button
+          type="button"
+          onClick={() => scrollByAmount("left")}
+          className={`ui-focus absolute left-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-slate-900/25 text-white backdrop-blur-sm transition hover:bg-slate-900/45 md:inline-flex ${
+            canScrollLeft ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+          aria-label="Desplazar vitrina hacia la izquierda"
+          title="Anterior"
+        >
+          <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M12.78 4.22a.75.75 0 0 1 0 1.06L8.06 10l4.72 4.72a.75.75 0 1 1-1.06 1.06l-5.25-5.25a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => scrollByAmount("right")}
+          className={`ui-focus absolute right-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-slate-900/25 text-white backdrop-blur-sm transition hover:bg-slate-900/45 md:inline-flex ${
+            canScrollRight ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+          aria-label="Desplazar vitrina hacia la derecha"
+          title="Siguiente"
+        >
+          <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M7.22 15.78a.75.75 0 0 1 0-1.06L11.94 10 7.22 5.28a.75.75 0 1 1 1.06-1.06l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 0 1-1.06 0Z" clipRule="evenodd" />
+          </svg>
+        </button>
+        <div
+          ref={scrollRef}
+          className={`featured-strip select-none ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+          tabIndex={0}
+          role="region"
+          aria-label="Vitrina destacada: usa flechas izquierda y derecha para navegar"
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={endDrag}
+          onMouseLeave={endDrag}
+          onKeyDown={onKeyDown}
+        >
+          {items.map((item) => (
+            <button
+              key={`featured-${item.id}`}
+              type="button"
+              className="featured-item text-left"
+              onClick={() => {
+                if (draggedRef.current) return;
+                onOpenVehicle(item);
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
+                alt={item.title}
+                className="featured-image"
+                loading="lazy"
+              />
+              <div className="featured-overlay" />
+              <div className="featured-content">
+                <p className="line-clamp-1 text-sm font-semibold uppercase tracking-wide text-cyan-700">
+                  {item.status ?? "Unidad disponible"}
+                </p>
+                <h3 className="line-clamp-2 text-xl font-bold text-white">{item.title}</h3>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-100">
+                  {item.subtitle ? <span className="featured-chip">{item.subtitle}</span> : null}
+                </div>
               </div>
-            </div>
-          </button>
-        ))}
+            </button>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -850,6 +1018,8 @@ export function CatalogHomeClient({ feed }: Props) {
   const [editorGroupFilter, setEditorGroupFilter] = useState<EditorGroupFilter>("all");
   const [editorVisibilityFilter, setEditorVisibilityFilter] =
     useState<EditorVisibilityFilter>("all");
+  const [editorVehicleCategoryFilter, setEditorVehicleCategoryFilter] =
+    useState<EditorVehicleCategoryFilter>("all");
   const [showEditorFiltersMenu, setShowEditorFiltersMenu] = useState(false);
   const [editorPage, setEditorPage] = useState(1);
   const [editingVehicleKey, setEditingVehicleKey] = useState<string | null>(null);
@@ -1221,7 +1391,7 @@ export function CatalogHomeClient({ feed }: Props) {
     [config.managedCategories, itemsByKey, homeVisibleKeys],
   );
 
-  const featuredItems = useMemo(() => proximosRemates.slice(0, 8), [proximosRemates]);
+  const featuredItems = useMemo(() => homeVisibleItems.slice(0, 16), [homeVisibleItems]);
 
   const favoritesItems = useMemo(
     () => homeVisibleItems.filter((item) => favoriteKeys.includes(getVehicleKey(item))).slice(0, 12),
@@ -1690,8 +1860,15 @@ export function CatalogHomeClient({ feed }: Props) {
             const isHidden = mergedHiddenVehicleIds.has(getVehicleKey(item));
             return editorVisibilityFilter === "hidden" ? isHidden : !isHidden;
           });
-    if (!auctionFilterId) return byVisibility;
-    return byVisibility.filter(
+    const byVehicleCategory =
+      editorVehicleCategoryFilter === "all"
+        ? byVisibility
+        : byVisibility.filter(
+            (item) =>
+              inferVehicleCategoryForAdmin(item) === editorVehicleCategoryFilter,
+          );
+    if (!auctionFilterId) return byVehicleCategory;
+    return byVehicleCategory.filter(
       (item) =>
         (config.vehicleUpcomingAuctionIds[getVehicleKey(item)] ?? "") === auctionFilterId,
     );
@@ -1701,6 +1878,7 @@ export function CatalogHomeClient({ feed }: Props) {
     auctionFilterId,
     editorGroupFilter,
     editorVisibilityFilter,
+    editorVehicleCategoryFilter,
     mergedHiddenVehicleIds,
     config.vehicleUpcomingAuctionIds,
     config.sectionVehicleIds,
@@ -2612,6 +2790,22 @@ export function CatalogHomeClient({ feed }: Props) {
                             <option value="hidden">Solo ocultos</option>
                           </select>
                           <select
+                            value={editorVehicleCategoryFilter}
+                            onChange={(event) => {
+                              setEditorVehicleCategoryFilter(
+                                event.target.value as EditorVehicleCategoryFilter,
+                              );
+                              setEditorPage(1);
+                            }}
+                            className="ui-focus w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                          >
+                            <option value="all">Todas las categorías</option>
+                            <option value="livianos">Vehículos livianos</option>
+                            <option value="pesados">Vehículos pesados</option>
+                            <option value="maquinaria">Maquinaria</option>
+                            <option value="chatarra">Chatarra</option>
+                          </select>
+                          <select
                             value={auctionFilterId}
                             onChange={(event) => {
                               setAuctionFilterId(event.target.value);
@@ -3518,9 +3712,6 @@ export function CatalogHomeClient({ feed }: Props) {
             ))}
           </div>
         </section>
-        {config.homeLayout.showFeaturedStrip ? (
-          <FeaturedStrip items={featuredItems} onOpenVehicle={openVehicleDetail} />
-        ) : null}
         {favoritesItems.length > 0 ? (
           <section className="section-shell">
             <header className="mb-4 flex items-center justify-between gap-3">
@@ -3840,6 +4031,9 @@ export function CatalogHomeClient({ feed }: Props) {
           {leadMessage ? <p className="mt-2 text-xs font-semibold text-cyan-700">{leadMessage}</p> : null}
         </div>
       </section>
+      {config.homeLayout.showFeaturedStrip ? (
+        <FeaturedStrip items={featuredItems} onOpenVehicle={openVehicleDetail} />
+      ) : null}
 
       {selectedVehicle ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm md:p-5" onClick={closeSelectedVehicle}>

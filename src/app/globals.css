@@ -197,6 +197,27 @@ body {
   padding-bottom: 0.35rem;
 }
 
+.featured-strip-shell::before,
+.featured-strip-shell::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0.35rem;
+  width: 56px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.featured-strip-shell::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(243, 251, 255, 0.96) 12%, rgba(243, 251, 255, 0));
+}
+
+.featured-strip-shell::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(243, 251, 255, 0.96) 12%, rgba(243, 251, 255, 0));
+}
+
 .featured-strip::-webkit-scrollbar {
   height: 8px;
 }
