@@ -704,6 +704,9 @@ function UpcomingAuctionsSection({
   onOpenVehicle,
   cardDensity,
 }: UpcomingAuctionsSectionProps) {
+  const visibleGroups = groups.filter((group) => group.items.length > 0);
+  if (visibleGroups.length === 0) return null;
+
   return (
     <section id="proximos-remates" className="section-shell scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -714,7 +717,7 @@ function UpcomingAuctionsSection({
         </div>
       </header>
       <div className="space-y-8">
-        {groups.map(({ auction, items }) => (
+        {visibleGroups.map(({ auction, items }) => (
           <div key={auction.id}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2">
               <h3 className="text-base font-semibold text-indigo-900">{auction.name}</h3>
@@ -722,35 +725,29 @@ function UpcomingAuctionsSection({
                 {formatAuctionDateLabel(auction.date)} · {items.length} vehículos
               </span>
             </div>
-            {items.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-                Sin vehículos asignados en este remate. Puedes revisar ventas directas o novedades.
-              </div>
-            ) : (
-              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                {items.map((item) => (
-                  <CatalogCard
-                    key={`${auction.id}-${item.id}`}
-                    item={item}
-                    priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
-                    upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
-                    density={cardDensity}
-                    onOpen={() => onOpenVehicle(item)}
-                    isFavorite={favoriteKeys.includes(getVehicleKey(item))}
-                    onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
-                    isCompared={compareKeys.includes(getVehicleKey(item))}
-                    onToggleCompare={() => onToggleCompare(getVehicleKey(item))}
-                    onWhatsappClick={() =>
-                      trackEvent("whatsapp_click_card", {
-                        section: "proximos-remates",
-                        auctionId: auction.id,
-                        itemKey: getVehicleKey(item),
-                      })
-                    }
-                  />
-                ))}
-              </div>
-            )}
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {items.map((item) => (
+                <CatalogCard
+                  key={`${auction.id}-${item.id}`}
+                  item={item}
+                  priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
+                  upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                  density={cardDensity}
+                  onOpen={() => onOpenVehicle(item)}
+                  isFavorite={favoriteKeys.includes(getVehicleKey(item))}
+                  onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
+                  isCompared={compareKeys.includes(getVehicleKey(item))}
+                  onToggleCompare={() => onToggleCompare(getVehicleKey(item))}
+                  onWhatsappClick={() =>
+                    trackEvent("whatsapp_click_card", {
+                      section: "proximos-remates",
+                      auctionId: auction.id,
+                      itemKey: getVehicleKey(item),
+                    })
+                  }
+                />
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -2889,6 +2886,9 @@ export function CatalogHomeClient({ feed }: Props) {
         ) : null}
         {config.homeLayout.sectionOrder.map((sectionId) => {
           if (sectionId === "proximos-remates") {
+            if (hasActiveSearchOrQuickFilters && proximosRemates.length === 0 && !hasUpcomingAuctionCategories) {
+              return null;
+            }
             return hasUpcomingAuctionCategories ? (
               <UpcomingAuctionsSection
                 key="public-proximos-auctions"
@@ -2921,6 +2921,7 @@ export function CatalogHomeClient({ feed }: Props) {
             );
           }
           if (sectionId === "ventas-directas") {
+            if (hasActiveSearchOrQuickFilters && ventasDirectas.length === 0) return null;
             return (
               <Section
                 key="public-ventas-directas"
@@ -2940,6 +2941,7 @@ export function CatalogHomeClient({ feed }: Props) {
             );
           }
           if (sectionId === "novedades") {
+            if (hasActiveSearchOrQuickFilters && novedades.length === 0) return null;
             return (
               <Section
                 key="public-novedades"
@@ -2958,6 +2960,7 @@ export function CatalogHomeClient({ feed }: Props) {
               />
             );
           }
+          if (hasActiveSearchOrQuickFilters && filteredCatalogItems.length === 0) return null;
           return (
             <section key="public-catalogo" id="catalogo" className="section-shell scroll-mt-24">
               <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -3053,10 +3056,8 @@ export function CatalogHomeClient({ feed }: Props) {
           <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50/70 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-cyan-800">Contacto comercial</p>
             <p className="mt-1 text-sm text-slate-700">
-              Ignacio Rodriguez Yanine · Gerente Comercial ·
-              {" "}
-              <a href="mailto:irodriguez@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
-                irodriguez@vedisaremates.cl
+              <a href="mailto:comercial@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
+                comercial@vedisaremates.cl
               </a>
             </p>
             <p className="mt-1 text-sm text-slate-700">
