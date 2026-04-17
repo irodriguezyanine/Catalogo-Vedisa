@@ -3296,19 +3296,21 @@ export function CatalogHomeClient({ feed }: Props) {
                     </div>
                   </>
                 ) : null}
-                <div className="mt-2 rounded-md border border-slate-200 bg-white p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">
-                    Documentación y datos técnicos
-                  </p>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {selectedVehicleFieldsByTab.tecnica.slice(0, 4).map(([label, value]) => (
-                      <div key={`tech-${label}`} className="rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
-                        <p className="font-semibold text-slate-600">{label}</p>
-                        <p>{value}</p>
-                      </div>
-                    ))}
+                {selectedVehicleTab === "tecnica" ? (
+                  <div className="mt-2 rounded-md border border-slate-200 bg-white p-3">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      Documentación y datos técnicos
+                    </p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {selectedVehicleFieldsByTab.tecnica.slice(0, 4).map(([label, value]) => (
+                        <div key={`tech-${label}`} className="rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
+                          <p className="font-semibold text-slate-600">{label}</p>
+                          <p>{value}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : null}
               </div>
             </div>
             <div className="sticky bottom-0 z-20 mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 p-2 shadow md:hidden">
