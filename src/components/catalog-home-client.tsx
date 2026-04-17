@@ -861,6 +861,7 @@ export function CatalogHomeClient({ feed }: Props) {
   const [newCategoryDescription, setNewCategoryDescription] = useState("");
   const [showCreateCategoryForm, setShowCreateCategoryForm] = useState(false);
   const [createGroupKind, setCreateGroupKind] = useState<"categoria" | "remate">("categoria");
+  const [editingSectionTextId, setEditingSectionTextId] = useState<SectionId | null>(null);
   const [assignCategoryId, setAssignCategoryId] = useState<string | null>(null);
   const [assignSearchTerm, setAssignSearchTerm] = useState("");
   const [batchAssignTarget, setBatchAssignTarget] = useState<BatchAssignTarget | null>(null);
@@ -1730,7 +1731,7 @@ export function CatalogHomeClient({ feed }: Props) {
       );
       return sample.includes(query);
     });
-    return source.slice(0, 120);
+    return source;
   }, [activeManagedCategory, assignSearchTerm, items]);
 
   const batchAssignCandidates = useMemo(() => {
@@ -1750,7 +1751,7 @@ export function CatalogHomeClient({ feed }: Props) {
       const sample = normalizeText(`${patent} ${getModel(item)} ${item.title} ${item.subtitle ?? ""}`);
       return sample.includes(query);
     });
-    return source.slice(0, 220);
+    return source;
   }, [batchAssignSearchTerm, batchAssignTarget, items]);
 
   const batchAssignTargetLabel = useMemo(() => {
@@ -2899,30 +2900,69 @@ export function CatalogHomeClient({ feed }: Props) {
                     Secciones base
                   </p>
                   {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map(
-                    (sectionId) => (
-                      <article
-                        key={sectionId}
-                        className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[1.2fr_1.6fr_auto_auto]"
-                      >
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                            {SECTION_LABELS[sectionId]}
-                          </p>
-                        </div>
-                        <div className="grid gap-1 md:grid-cols-2">
-                          <input
-                            value={config.sectionTexts[sectionId]?.title ?? ""}
-                            onChange={(event) => setSectionText(sectionId, "title", event.target.value)}
-                            placeholder="Título"
-                            className="ui-focus rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm"
-                          />
-                          <input
-                            value={config.sectionTexts[sectionId]?.subtitle ?? ""}
-                            onChange={(event) => setSectionText(sectionId, "subtitle", event.target.value)}
-                            placeholder="Descripción"
-                            className="ui-focus rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm"
-                          />
-                        </div>
+                    (sectionId) => {
+                      const isEditingTexts = editingSectionTextId === sectionId;
+                      return (
+                        <article
+                          key={sectionId}
+                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[1.2fr_1.6fr_auto_auto]"
+                        >
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                              {SECTION_LABELS[sectionId]}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5">
+                            {isEditingTexts ? (
+                              <div className="grid gap-1 md:grid-cols-[1fr_1fr_auto]">
+                                <input
+                                  value={config.sectionTexts[sectionId]?.title ?? ""}
+                                  onChange={(event) => setSectionText(sectionId, "title", event.target.value)}
+                                  placeholder="Título"
+                                  className="ui-focus rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+                                />
+                                <input
+                                  value={config.sectionTexts[sectionId]?.subtitle ?? ""}
+                                  onChange={(event) => setSectionText(sectionId, "subtitle", event.target.value)}
+                                  placeholder="Descripción"
+                                  className="ui-focus rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingSectionTextId(null)}
+                                  className="ui-focus inline-flex items-center justify-center rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-emerald-700"
+                                  aria-label={`Cerrar edición de ${SECTION_LABELS[sectionId]}`}
+                                  title="Listo"
+                                >
+                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                    <path fillRule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.25a1 1 0 0 1-1.42.001l-3-3.015a1 1 0 1 1 1.418-1.41l2.29 2.3 6.49-6.534a1 1 0 0 1 1.416-.006Z" clipRule="evenodd" />
+                                  </svg>
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="line-clamp-1 text-sm font-semibold text-slate-700">
+                                    {config.sectionTexts[sectionId]?.title ?? SECTION_LABELS[sectionId]}
+                                  </p>
+                                  <p className="line-clamp-1 text-xs text-slate-500">
+                                    {config.sectionTexts[sectionId]?.subtitle ?? "Sin descripción"}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingSectionTextId(sectionId)}
+                                  className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-slate-300 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
+                                  aria-label={`Editar textos de ${SECTION_LABELS[sectionId]}`}
+                                  title="Editar textos"
+                                >
+                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                    <path d="M13.586 2.586a2 2 0 0 1 2.828 2.828l-8.2 8.2a1 1 0 0 1-.475.264l-3 0.75a1 1 0 0 1-1.212-1.213l.75-3a1 1 0 0 1 .264-.474l8.2-8.2ZM12.172 4 5.24 10.932l-.39 1.56 1.56-.39L13.344 5.17 12.172 4Z" />
+                                  </svg>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         <div className="flex items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                           {sectionVehicleCounts[sectionId]}
                         </div>
@@ -2935,9 +2975,13 @@ export function CatalogHomeClient({ feed }: Props) {
                               setEditorPage(1);
                               setAdminTab("vehiculos");
                             }}
-                            className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
+                            className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
+                            aria-label={`Ver y gestionar ${SECTION_LABELS[sectionId]}`}
+                            title="Ver y gestionar"
                           >
-                            Ver y gestionar
+                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <path d="M10 4c4.5 0 7.8 3.16 8.9 5.5.13.28.13.62 0 .9C17.8 12.74 14.5 15.9 10 15.9S2.2 12.74 1.1 10.4a1.06 1.06 0 0 1 0-.9C2.2 7.16 5.5 4 10 4Zm0 2c-3.42 0-6.06 2.31-7.08 4 .99 1.69 3.64 4 7.08 4s6.09-2.31 7.08-4C16.06 8.31 13.42 6 10 6Zm0 1.5A2.5 2.5 0 1 1 7.5 10 2.5 2.5 0 0 1 10 7.5Z" />
+                            </svg>
                           </button>
                           {sectionId !== "proximos-remates" ? (
                             <button
@@ -2945,14 +2989,17 @@ export function CatalogHomeClient({ feed }: Props) {
                               onClick={() =>
                                 openBatchAssignModal({ type: "section", sectionId: sectionId as "ventas-directas" | "novedades" | "catalogo" })
                               }
-                              className="ui-focus rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
+                              className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
+                              aria-label={`Agregar unidades a ${SECTION_LABELS[sectionId]}`}
+                              title="Agregar unidades"
                             >
-                              Agregar unidades
+                              +
                             </button>
                           ) : null}
                         </div>
                       </article>
-                    ),
+                      );
+                    },
                   )}
 
                   <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
@@ -2990,23 +3037,33 @@ export function CatalogHomeClient({ feed }: Props) {
                                 setEditorPage(1);
                                 setAdminTab("vehiculos");
                               }}
-                              className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
+                              className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
+                              aria-label={`Ver y gestionar ${auction.name}`}
+                              title="Ver y gestionar"
                             >
-                              Ver y gestionar
+                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                <path d="M10 4c4.5 0 7.8 3.16 8.9 5.5.13.28.13.62 0 .9C17.8 12.74 14.5 15.9 10 15.9S2.2 12.74 1.1 10.4a1.06 1.06 0 0 1 0-.9C2.2 7.16 5.5 4 10 4Zm0 2c-3.42 0-6.06 2.31-7.08 4 .99 1.69 3.64 4 7.08 4s6.09-2.31 7.08-4C16.06 8.31 13.42 6 10 6Zm0 1.5A2.5 2.5 0 1 1 7.5 10 2.5 2.5 0 0 1 10 7.5Z" />
+                              </svg>
                             </button>
                             <button
                               type="button"
                               onClick={() => openBatchAssignModal({ type: "auction", auctionId: auction.id })}
-                              className="ui-focus rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
+                              className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
+                              aria-label={`Agregar unidades a ${auction.name}`}
+                              title="Agregar unidades"
                             >
-                              Agregar unidades
+                              +
                             </button>
                             <button
                               type="button"
                               onClick={() => removeUpcomingAuction(auction.id)}
-                              className="ui-focus rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700"
+                              className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
+                              aria-label={`Quitar ${auction.name}`}
+                              title="Quitar"
                             >
-                              Quitar
+                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Zm6 .5a.5.5 0 0 1 .5.5v.5h-7V3.5a.5.5 0 0 1 .5-.5h6ZM8 8.25a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3 0a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Z" />
+                              </svg>
                             </button>
                           </div>
                         </article>
@@ -3061,16 +3118,22 @@ export function CatalogHomeClient({ feed }: Props) {
                               setAssignCategoryId(category.id);
                               setAssignSearchTerm("");
                             }}
-                            className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
+                            className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
+                            aria-label={`Asignar vehículos a ${category.name}`}
+                            title="Asignar vehículos"
                           >
-                            Asignar vehículos
+                            +
                           </button>
                           <button
                             type="button"
                             onClick={() => deleteManagedCategory(category.id)}
-                            className="ui-focus rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700"
+                            className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
+                            aria-label={`Eliminar ${category.name}`}
+                            title="Eliminar"
                           >
-                            Eliminar
+                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Zm6 .5a.5.5 0 0 1 .5.5v.5h-7V3.5a.5.5 0 0 1 .5-.5h6ZM8 8.25a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3 0a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Z" />
+                            </svg>
                           </button>
                         </div>
                       </article>
