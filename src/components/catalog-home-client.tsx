@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { CatalogCard } from "@/components/catalog-card";
@@ -17,11 +17,14 @@ import {
 
 const EDITOR_STORAGE_KEY = "vedisa_editor_config_local";
 const FAVORITES_STORAGE_KEY = "vedisa_client_favorites";
+const HOME_QUICK_FILTERS_STORAGE_KEY = "vedisa_home_quick_filters";
+const HOME_CARD_DENSITY_STORAGE_KEY = "vedisa_home_card_density";
 const EDITOR_CATEGORY_SECTIONS: SectionId[] = ["ventas-directas", "novedades", "catalogo"];
 const EDITOR_PAGE_SIZE = 20;
 type AdminTabId = "vehiculos" | "categorias" | "layout";
-type SortOption = "relevancia" | "fecha-remate" | "precio-asc" | "precio-desc" | "titulo";
+type SortOption = "recomendado" | "relevancia" | "fecha-remate" | "precio-asc" | "precio-desc" | "titulo";
 type QuickFilterId = "livianos" | "pesados" | "con3d" | "conPrecio" | "recientes" | "manuales";
+type CardDensity = "compact" | "detailed";
 type DetailEditorTabId = "general" | "tecnica";
 type ClientLeadForm = {
   name: string;
@@ -55,6 +58,7 @@ const VEHICLE_CONDITION_OPTIONS = [
 
 const WHATSAPP_CTA_URL =
   "https://api.whatsapp.com/send/?phone=56989323397&text=Hola%2C+quiero+asesor%C3%ADa+para+ofertar+en+VEDISA&type=phone_number&app_absent=0";
+const WHATSAPP_PHONE = "56989323397";
 const MAX_COMPARE_ITEMS = 4;
 const ANALYTICS_STORAGE_KEY = "vedisa_analytics_events";
 
@@ -170,6 +174,30 @@ function normalizeText(value?: string): string {
     .replace(/\p{Diacritic}/gu, "");
 }
 
+function isSubsequenceMatch(source: string, query: string): boolean {
+  if (!query) return true;
+  let qi = 0;
+  for (let i = 0; i < source.length && qi < query.length; i += 1) {
+    if (source[i] === query[qi]) qi += 1;
+  }
+  return qi === query.length;
+}
+
+function fuzzyMatches(source: string, query: string): boolean {
+  if (!query) return true;
+  if (source.includes(query)) return true;
+  const sourceTokens = source.split(/\s+/).filter(Boolean);
+  const queryTokens = query.split(/\s+/).filter(Boolean);
+  if (queryTokens.length === 0) return true;
+  return queryTokens.every((token) =>
+    sourceTokens.some(
+      (sourceToken) =>
+        sourceToken.startsWith(token) ||
+        isSubsequenceMatch(sourceToken, token),
+    ),
+  );
+}
+
 function normalizePatentToken(value: string): string {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -280,6 +308,21 @@ function formatPrice(value?: string): string | null {
   return new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }).format(amount);
 }
 
+function getConditionBadgeClasses(condition?: string | null): string {
+  const sample = normalizeText(condition ?? "");
+  if (!sample) return "border-slate-200 bg-slate-100 text-slate-700";
+  if (/100% operativo|operativo/.test(sample)) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+  if (/no arranca|desarme/.test(sample)) {
+    return "border-rose-200 bg-rose-50 text-rose-800";
+  }
+  if (/problema|recuperado|robo/.test(sample)) {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+  return "border-indigo-200 bg-indigo-50 text-indigo-800";
+}
+
 function formatAuctionDateLabel(value?: string): string {
   if (!value) return "";
   const date = new Date(value);
@@ -376,6 +419,7 @@ function mapManualPublicationToCatalogItem(entry: ManualPublication): CatalogIte
 
 function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): EditorVehicleDetails {
   const raw = item.raw as Record<string, unknown>;
+  const lookup = buildVehicleLookup(raw);
   const cav = (raw.cav_campos as Record<string, unknown> | undefined) ?? {};
   const baseImages = item.images.filter((url) => url.startsWith("http")).join(", ");
   return {
@@ -386,10 +430,16 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
     vehicleCondition:
       override?.vehicleCondition ??
       String(
-        raw.condicion ??
-          raw.condición ??
-          raw.condicion_vehiculo ??
-          raw.estado_vehiculo ??
+        getLookupValue(lookup, [
+          "condicion",
+          "condición",
+          "condicion_vehiculo",
+          "estado_vehiculo",
+          "estado",
+          "status",
+          "aws.condicion",
+          "aws.estado",
+        ]) ??
           item.status ??
           "",
       ),
@@ -400,7 +450,20 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
     description: override?.description ?? String(raw.descripcion ?? raw.description ?? ""),
     extendedDescription:
       override?.extendedDescription ??
-      String(raw.descripcion_ampliada ?? raw.observaciones ?? raw.detalle ?? ""),
+      String(
+        getLookupValue(lookup, [
+          "descripcion_ampliada",
+          "observaciones",
+          "detalle",
+          "descripcion",
+          "description",
+          "aws.observaciones",
+          "aws.descripcion",
+          "aws.description",
+          "cav_campos.observaciones",
+          "cav_campos.descripcion",
+        ]) ?? "",
+      ),
     brand: override?.brand ?? String(raw.marca ?? raw.brand ?? ""),
     model: override?.model ?? String(raw.modelo ?? raw.model ?? ""),
     year: override?.year ?? String(raw.ano ?? raw.anio ?? raw.year ?? ""),
@@ -556,6 +619,7 @@ type SectionProps = {
   compareKeys: string[];
   onToggleCompare: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
+  cardDensity: CardDensity;
 };
 
 function Section({
@@ -570,6 +634,7 @@ function Section({
   compareKeys,
   onToggleCompare,
   onOpenVehicle,
+  cardDensity,
 }: SectionProps) {
   return (
     <section id={id} className="section-shell scroll-mt-24">
@@ -586,7 +651,7 @@ function Section({
 
       {items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-          No hay elementos disponibles en esta seccion por ahora.
+          No encontramos unidades en esta sección. Prueba limpiar filtros o cambiar el tipo de vehículo.
         </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
@@ -596,6 +661,7 @@ function Section({
               item={item}
               priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
               upcomingAuctionLabel={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
+              density={cardDensity}
               onOpen={() => onOpenVehicle(item)}
               isFavorite={favoriteKeys.includes(getVehicleKey(item))}
               onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
@@ -624,6 +690,7 @@ type UpcomingAuctionsSectionProps = {
   compareKeys: string[];
   onToggleCompare: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
+  cardDensity: CardDensity;
 };
 
 function UpcomingAuctionsSection({
@@ -635,6 +702,7 @@ function UpcomingAuctionsSection({
   compareKeys,
   onToggleCompare,
   onOpenVehicle,
+  cardDensity,
 }: UpcomingAuctionsSectionProps) {
   return (
     <section id="proximos-remates" className="section-shell scroll-mt-24">
@@ -656,7 +724,7 @@ function UpcomingAuctionsSection({
             </div>
             {items.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-                Sin vehículos asignados en este remate.
+                Sin vehículos asignados en este remate. Puedes revisar ventas directas o novedades.
               </div>
             ) : (
               <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
@@ -666,6 +734,7 @@ function UpcomingAuctionsSection({
                     item={item}
                     priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
                     upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                    density={cardDensity}
                     onOpen={() => onOpenVehicle(item)}
                     isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                     onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
@@ -702,8 +771,23 @@ export function CatalogHomeClient({ feed }: Props) {
   const [saving, setSaving] = useState(false);
   const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
-  const [homeSort, setHomeSort] = useState<SortOption>("relevancia");
-  const [quickFilters, setQuickFilters] = useState<QuickFilterId[]>([]);
+  const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
+  const [quickFilters, setQuickFilters] = useState<QuickFilterId[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(HOME_QUICK_FILTERS_STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as QuickFilterId[]) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [cardDensity, setCardDensity] = useState<CardDensity>(() => {
+    if (typeof window === "undefined") return "detailed";
+    return window.localStorage.getItem(HOME_CARD_DENSITY_STORAGE_KEY) === "compact"
+      ? "compact"
+      : "detailed";
+  });
   const [favoriteKeys, setFavoriteKeys] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
     const saved = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
@@ -745,43 +829,98 @@ export function CatalogHomeClient({ feed }: Props) {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [selectedVehicle, setSelectedVehicle] = useState<CatalogItem | null>(null);
+  const [selectedVehicleImageIndex, setSelectedVehicleImageIndex] = useState(0);
   const [detailEditorTab, setDetailEditorTab] = useState<DetailEditorTabId>("general");
   const [selectedVehicleTab, setSelectedVehicleTab] = useState<VehicleDetailTabId>("general");
   const [revalidating, setRevalidating] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const rawItems = feed.items;
+  const updateVehicleUrlParam = useCallback((vehicleKey?: string) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (vehicleKey) {
+      url.searchParams.set("vehiculo", vehicleKey);
+      if (!url.hash) url.hash = "catalogo";
+    } else {
+      url.searchParams.delete("vehiculo");
+    }
+    window.history.replaceState(null, "", url.toString());
+  }, []);
+  const openVehicleDetail = useCallback(
+    (item: CatalogItem) => {
+      setSelectedVehicle(item);
+      updateVehicleUrlParam(getVehicleKey(item));
+    },
+    [updateVehicleUrlParam],
+  );
+  const closeSelectedVehicle = useCallback(() => {
+    setSelectedVehicle(null);
+    updateVehicleUrlParam();
+  }, [updateVehicleUrlParam]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedVehicle(null);
+      if (event.key === "Escape") closeSelectedVehicle();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [closeSelectedVehicle]);
+
+  useEffect(() => {
+    setSelectedVehicleImageIndex(0);
+  }, [selectedVehicle]);
+
+  useEffect(() => {
+    if (!selectedVehicle || typeof window === "undefined") return;
+    const scrollY = window.scrollY;
+    const { style } = document.body;
+    const previous = {
+      position: style.position,
+      top: style.top,
+      width: style.width,
+      overflow: style.overflow,
+    };
+    style.position = "fixed";
+    style.top = `-${scrollY}px`;
+    style.width = "100%";
+    style.overflow = "hidden";
+    return () => {
+      style.position = previous.position;
+      style.top = previous.top;
+      style.width = previous.width;
+      style.overflow = previous.overflow;
+      window.scrollTo({ top: scrollY, behavior: "auto" });
+    };
+  }, [selectedVehicle]);
 
   useEffect(() => {
     void (async () => {
-      const local = localStorage.getItem(EDITOR_STORAGE_KEY);
-      if (local) {
-        const parsed = JSON.parse(local) as Partial<EditorConfig>;
-        setConfig(normalizeEditorConfigClient(parsed));
-      }
-
-      const sessionRes = await fetch("/api/admin/session", { cache: "no-store" });
-      const session = (await sessionRes.json()) as { loggedIn?: boolean };
-      const loggedIn = Boolean(session.loggedIn);
-      setIsAdmin(loggedIn);
-      if (loggedIn) setAdminView("editor");
-
-      const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
-      if (configRes.ok) {
-        const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
-        const shouldUseServerConfig = Boolean(payload.persisted) || !local;
-        if (payload.config && shouldUseServerConfig) {
-          const normalized = normalizeEditorConfigClient(payload.config);
-          setConfig(normalized);
-          localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
-          return;
+      try {
+        const local = localStorage.getItem(EDITOR_STORAGE_KEY);
+        if (local) {
+          const parsed = JSON.parse(local) as Partial<EditorConfig>;
+          setConfig(normalizeEditorConfigClient(parsed));
         }
+
+        const sessionRes = await fetch("/api/admin/session", { cache: "no-store" });
+        const session = (await sessionRes.json()) as { loggedIn?: boolean };
+        const loggedIn = Boolean(session.loggedIn);
+        setIsAdmin(loggedIn);
+        if (loggedIn) setAdminView("editor");
+
+        const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
+        if (configRes.ok) {
+          const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
+          const shouldUseServerConfig = Boolean(payload.persisted) || !local;
+          if (payload.config && shouldUseServerConfig) {
+            const normalized = normalizeEditorConfigClient(payload.config);
+            setConfig(normalized);
+            localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
+            return;
+          }
+        }
+      } finally {
+        setIsBootstrapping(false);
       }
     })();
   }, []);
@@ -791,18 +930,27 @@ export function CatalogHomeClient({ feed }: Props) {
   }, [favoriteKeys]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(HOME_QUICK_FILTERS_STORAGE_KEY, JSON.stringify(quickFilters));
+  }, [quickFilters]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(HOME_CARD_DENSITY_STORAGE_KEY, cardDensity);
+  }, [cardDensity]);
+
+  useEffect(() => {
     if (!systemNotice) return;
     const timeout = window.setTimeout(() => setSystemNotice(null), 3200);
     return () => window.clearTimeout(timeout);
   }, [systemNotice]);
 
-  const showSystemNotice = (
-    tone: SystemNotice["tone"],
-    title: string,
-    message: string,
-  ) => {
-    setSystemNotice({ id: Date.now(), tone, title, message });
-  };
+  const showSystemNotice = useCallback(
+    (tone: SystemNotice["tone"], title: string, message: string) => {
+      setSystemNotice({ id: Date.now(), tone, title, message });
+    },
+    [],
+  );
 
   const manualItems = useMemo(
     () => (config.manualPublications ?? []).map(mapManualPublicationToCatalogItem),
@@ -824,6 +972,20 @@ export function CatalogHomeClient({ feed }: Props) {
     }
     return map;
   }, [items]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (itemsByKey.size === 0) return;
+    if (selectedVehicle) return;
+    const requestedKey = new URLSearchParams(window.location.search).get("vehiculo");
+    if (!requestedKey) return;
+    const directMatch = itemsByKey.get(requestedKey);
+    const normalizedMatch =
+      directMatch ??
+      itemsByKey.get(requestedKey.toUpperCase()) ??
+      itemsByKey.get(requestedKey.toLowerCase());
+    if (normalizedMatch) setSelectedVehicle(normalizedMatch);
+  }, [itemsByKey, selectedVehicle]);
 
   const mergedHiddenVehicleIds = useMemo(() => {
     const set = new Set(config.hiddenVehicleIds);
@@ -863,7 +1025,7 @@ export function CatalogHomeClient({ feed }: Props) {
       ]
         .filter((value) => typeof value === "string" || typeof value === "number")
         .join(" ");
-      return normalizeText(source).includes(query);
+      return fuzzyMatches(normalizeText(source), query);
     });
   }, [visibleItems, homeSearchTerm]);
 
@@ -887,6 +1049,20 @@ export function CatalogHomeClient({ feed }: Props) {
 
   const homeVisibleItems = useMemo(() => {
     const sorted = [...homeQuickFilteredItems];
+    if (homeSort === "recomendado") {
+      sorted.sort((a, b) => {
+        const score = (item: CatalogItem): number => {
+          const key = getVehicleKey(item);
+          const hasPrice = formatPrice(config.vehiclePrices[key]) ? 1 : 0;
+          const has3d = item.view3dUrl ? 1 : 0;
+          const isRecent = isRecentAuctionDate(item.auctionDate) ? 1 : 0;
+          const isFav = favoriteKeys.includes(key) ? 1 : 0;
+          return hasPrice * 3 + has3d * 2 + isRecent + isFav;
+        };
+        return score(b) - score(a);
+      });
+      return sorted;
+    }
     if (homeSort === "fecha-remate") {
       sorted.sort(
         (a, b) =>
@@ -916,7 +1092,7 @@ export function CatalogHomeClient({ feed }: Props) {
       return sorted;
     }
     return sorted;
-  }, [homeQuickFilteredItems, homeSort, config.vehiclePrices]);
+  }, [homeQuickFilteredItems, homeSort, config.vehiclePrices, favoriteKeys]);
 
   const homeVisibleKeys = useMemo(
     () => new Set(homeVisibleItems.map((item) => getVehicleKey(item))),
@@ -1068,6 +1244,77 @@ export function CatalogHomeClient({ feed }: Props) {
     [config.vehiclePrices, selectedVehicleKey],
   );
 
+  const selectedVehicleShareUrl = useMemo(() => {
+    if (!selectedVehicle || typeof window === "undefined") return "";
+    const url = new URL(window.location.href);
+    url.searchParams.set("vehiculo", selectedVehicleKey);
+    if (!url.hash) url.hash = "catalogo";
+    return url.toString();
+  }, [selectedVehicle, selectedVehicleKey]);
+
+  const selectedVehicleWhatsappUrl = useMemo(() => {
+    if (!selectedVehicle) return "";
+    const patent = getPatent(selectedVehicle);
+    const label = getModel(selectedVehicle);
+    const shareLink = selectedVehicleShareUrl || "https://catalogo.vedisaremates.cl/#catalogo";
+    const text = `Hola, me interesa este vehículo: ${patent} - ${label}. ¿Me puedes asesorar? ${shareLink}`;
+    return `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(
+      text,
+    )}&type=phone_number&app_absent=0`;
+  }, [selectedVehicle, selectedVehicleShareUrl]);
+
+  const selectedVehicleConditionLabel = useMemo(() => {
+    if (!selectedVehicle) return null;
+    const overrideValue = selectedVehicleOverride?.vehicleCondition;
+    if (overrideValue?.trim()) return overrideValue.trim();
+    const rawValue = getLookupValue(selectedVehicleLookup, [
+      "condicion",
+      "condición",
+      "condicion_vehiculo",
+      "estado_vehiculo",
+      "estado",
+      "status",
+      "aws.condicion",
+      "aws.estado",
+    ]);
+    return hasValue(rawValue) ? String(rawValue) : null;
+  }, [selectedVehicle, selectedVehicleLookup, selectedVehicleOverride]);
+
+  const selectedVehicleConditionClasses = useMemo(
+    () => getConditionBadgeClasses(selectedVehicleConditionLabel),
+    [selectedVehicleConditionLabel],
+  );
+  const selectedVehiclePrimaryCtaLabel = useMemo(() => {
+    const sample = normalizeText(selectedVehicleConditionLabel ?? "");
+    if (!sample) return "Solicitar asesoría por WhatsApp";
+    if (/100% operativo|operativo/.test(sample)) return "Me interesa este vehículo";
+    if (/no arranca|desarme/.test(sample)) return "Consultar condición y retiro";
+    return "Quiero más información de esta unidad";
+  }, [selectedVehicleConditionLabel]);
+
+  const selectedVehicleProgressSteps = useMemo(
+    () => [
+      { id: "revisar", label: "Revisa ficha y fotos", done: true },
+      { id: "contactar", label: "Solicita asesoría", done: false },
+      { id: "ofertar", label: "Coordina oferta o compra", done: false },
+    ],
+    [],
+  );
+
+  const selectedVehicleGalleryImages = useMemo(() => {
+    if (!selectedVehicle) return [] as string[];
+    const list = [selectedVehicle.thumbnail, ...selectedVehicle.images].filter(
+      (entry): entry is string => typeof entry === "string" && entry.startsWith("http"),
+    );
+    return Array.from(new Set(list));
+  }, [selectedVehicle]);
+
+  const selectedVehicleMainImage = useMemo(() => {
+    if (selectedVehicleGalleryImages.length === 0) return "/placeholder-car.svg";
+    const idx = Math.min(selectedVehicleImageIndex, selectedVehicleGalleryImages.length - 1);
+    return selectedVehicleGalleryImages[idx] ?? "/placeholder-car.svg";
+  }, [selectedVehicleGalleryImages, selectedVehicleImageIndex]);
+
   const selectedVehicleExpandedDescription = useMemo(() => {
     if (!selectedVehicle) return null;
     const overrideText =
@@ -1079,6 +1326,11 @@ export function CatalogHomeClient({ feed }: Props) {
       "detalle",
       "descripcion",
       "description",
+      "aws.observaciones",
+      "aws.descripcion",
+      "aws.description",
+      "cav_campos.observaciones",
+      "cav_campos.descripcion",
       "comentarios",
       "notas",
     ]);
@@ -1222,6 +1474,33 @@ export function CatalogHomeClient({ feed }: Props) {
     setLeadMessage("Perfecto. Te estamos redirigiendo a WhatsApp para contacto inmediato.");
     window.open(leadWhatsappUrl, "_blank", "noreferrer");
   };
+
+  const shareSelectedVehicle = useCallback(async () => {
+    if (!selectedVehicle) return;
+    const shareUrl = selectedVehicleShareUrl;
+    if (!shareUrl) return;
+    const title = `${getPatent(selectedVehicle)} · ${getModel(selectedVehicle)}`;
+    const text = `Revisa este vehículo en Catálogo Vedisa: ${title}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text, url: shareUrl });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        window.open(shareUrl, "_blank", "noreferrer");
+      }
+      trackEvent("vehicle_share", { itemKey: getVehicleKey(selectedVehicle) });
+      showSystemNotice(
+        "success",
+        "Enlace listo",
+        navigator.share
+          ? "Se compartió el vehículo correctamente."
+          : "Copiamos el enlace del vehículo para compartir.",
+      );
+    } catch {
+      showSystemNotice("error", "No se pudo compartir", "Intenta nuevamente en unos segundos.");
+    }
+  }, [selectedVehicle, selectedVehicleShareUrl, showSystemNotice]);
 
   const organizationSchema = useMemo(
     () => ({
@@ -2238,8 +2517,28 @@ export function CatalogHomeClient({ feed }: Props) {
 
       {showPublicHome ? (
         <>
-      <section className="relative z-10 mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
-        <div className="glass-soft rounded-xl p-3">
+      {isBootstrapping ? (
+        <section className="relative z-10 mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8" aria-hidden="true">
+          <div className="glass-soft rounded-xl p-4">
+            <div className="mb-3 h-10 animate-pulse rounded-md bg-slate-200" />
+            <div className="flex gap-2">
+              <div className="h-7 w-20 animate-pulse rounded-full bg-slate-200" />
+              <div className="h-7 w-24 animate-pulse rounded-full bg-slate-200" />
+              <div className="h-7 w-28 animate-pulse rounded-full bg-slate-200" />
+            </div>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div
+                key={`skeleton-card-${index}`}
+                className="h-72 animate-pulse rounded-2xl border border-slate-200 bg-slate-100"
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+      <section className="sticky top-[72px] z-20 mx-auto max-w-7xl px-4 pt-4 sm:px-6 md:static lg:px-8">
+        <div className="glass-soft rounded-xl p-3 md:p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <input
               value={homeSearchTerm}
@@ -2251,9 +2550,12 @@ export function CatalogHomeClient({ feed }: Props) {
               className="ui-focus w-full rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm sm:max-w-xl"
               aria-label="Buscar vehículos por patente, marca, modelo o categoría"
             />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-slate-600">
                 {homeVisibleItems.length} resultado(s)
+              </span>
+              <span className="sr-only" aria-live="polite">
+                {homeVisibleItems.length} resultados encontrados en catálogo.
               </span>
               {homeSearchTerm ? (
                 <button
@@ -2267,6 +2569,32 @@ export function CatalogHomeClient({ feed }: Props) {
                   Limpiar
                 </button>
               ) : null}
+              <div className="inline-flex overflow-hidden rounded-md border border-slate-300 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setCardDensity("compact")}
+                  className={`ui-focus px-2 py-1 text-xs font-semibold ${
+                    cardDensity === "compact"
+                      ? "bg-cyan-600 text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                  aria-label="Cambiar a vista compacta"
+                >
+                  Compacta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCardDensity("detailed")}
+                  className={`ui-focus px-2 py-1 text-xs font-semibold ${
+                    cardDensity === "detailed"
+                      ? "bg-cyan-600 text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                  aria-label="Cambiar a vista detallada"
+                >
+                  Detallada
+                </button>
+              </div>
             </div>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -2293,6 +2621,7 @@ export function CatalogHomeClient({ feed }: Props) {
               className="ui-focus ml-auto rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
               aria-label="Ordenar resultados del catálogo"
             >
+              <option value="recomendado">Orden: Recomendado</option>
               <option value="relevancia">Orden: Relevancia</option>
               <option value="fecha-remate">Orden: Fecha remate</option>
               <option value="precio-asc">Orden: Precio menor</option>
@@ -2300,6 +2629,30 @@ export function CatalogHomeClient({ feed }: Props) {
               <option value="titulo">Orden: Título A-Z</option>
             </select>
           </div>
+          {quickFilters.length > 0 ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-cyan-100 pt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Filtros activos
+              </p>
+              {quickFilters.map((filterId) => (
+                <button
+                  key={`active-${filterId}`}
+                  type="button"
+                  onClick={() => toggleQuickFilter(filterId)}
+                  className="ui-focus rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800"
+                >
+                  {QUICK_FILTER_LABELS[filterId]} ×
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setQuickFilters([])}
+                className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
       <div
@@ -2474,7 +2827,7 @@ export function CatalogHomeClient({ feed }: Props) {
           </div>
         </section>
         {config.homeLayout.showFeaturedStrip ? (
-          <FeaturedStrip items={featuredItems} onOpenVehicle={setSelectedVehicle} />
+          <FeaturedStrip items={featuredItems} onOpenVehicle={openVehicleDetail} />
         ) : null}
         {favoritesItems.length > 0 ? (
           <section className="section-shell">
@@ -2492,9 +2845,10 @@ export function CatalogHomeClient({ feed }: Props) {
                 <CatalogCard
                   key={`favorite-${item.id}`}
                   item={item}
+                  density={cardDensity}
                   priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
                   upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
-                  onOpen={() => setSelectedVehicle(item)}
+                  onOpen={() => openVehicleDetail(item)}
                   isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                   onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
                   isCompared={compareKeys.includes(getVehicleKey(item))}
@@ -2521,9 +2875,10 @@ export function CatalogHomeClient({ feed }: Props) {
                 <CatalogCard
                   key={`latest-${item.id}`}
                   item={item}
+                  density={cardDensity}
                   priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
                   upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
-                  onOpen={() => setSelectedVehicle(item)}
+                  onOpen={() => openVehicleDetail(item)}
                   isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                   onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
                   isCompared={compareKeys.includes(getVehicleKey(item))}
@@ -2551,7 +2906,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 onToggleFavorite={toggleFavorite}
                 compareKeys={compareKeys}
                 onToggleCompare={toggleCompare}
-                onOpenVehicle={setSelectedVehicle}
+                onOpenVehicle={openVehicleDetail}
+                cardDensity={cardDensity}
               />
             ) : (
               <Section
@@ -2566,7 +2922,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 onToggleFavorite={toggleFavorite}
                 compareKeys={compareKeys}
                 onToggleCompare={toggleCompare}
-                onOpenVehicle={setSelectedVehicle}
+                onOpenVehicle={openVehicleDetail}
+                cardDensity={cardDensity}
               />
             );
           }
@@ -2584,7 +2941,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 onToggleFavorite={toggleFavorite}
                 compareKeys={compareKeys}
                 onToggleCompare={toggleCompare}
-                onOpenVehicle={setSelectedVehicle}
+                onOpenVehicle={openVehicleDetail}
+                cardDensity={cardDensity}
               />
             );
           }
@@ -2602,7 +2960,8 @@ export function CatalogHomeClient({ feed }: Props) {
                 onToggleFavorite={toggleFavorite}
                 compareKeys={compareKeys}
                 onToggleCompare={toggleCompare}
-                onOpenVehicle={setSelectedVehicle}
+                onOpenVehicle={openVehicleDetail}
+                cardDensity={cardDensity}
               />
             );
           }
@@ -2610,9 +2969,11 @@ export function CatalogHomeClient({ feed }: Props) {
             <section key="public-catalogo" id="catalogo" className="section-shell scroll-mt-24">
               <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="premium-kicker">Catálogo</p>
+                  <p className="premium-kicker">Explora y decide</p>
                   <h2 className="text-2xl font-bold text-slate-900">{config.sectionTexts.catalogo.title}</h2>
-                  <p className="mt-1 text-sm text-slate-600">{config.sectionTexts.catalogo.subtitle}</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {config.sectionTexts.catalogo.subtitle} Usa filtros y comparación para decidir más rápido.
+                  </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {(["livianos", "pesados", "maquinaria", "otros"] as VehicleTypeId[]).map((type) => (
@@ -2630,7 +2991,9 @@ export function CatalogHomeClient({ feed }: Props) {
               </header>
               {filteredCatalogItems.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-                  No hay vehículos para esta pestaña.
+                  No encontramos vehículos para esta combinación.
+                  {" "}
+                  Prueba con “Livianos”, quita filtros activos o busca por patente exacta (ej: SYGD93).
                 </div>
               ) : (
                 <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
@@ -2638,9 +3001,10 @@ export function CatalogHomeClient({ feed }: Props) {
                     <CatalogCard
                       key={`catalog-${item.id}`}
                       item={item}
+                      density={cardDensity}
                       priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
                       upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
-                      onOpen={() => setSelectedVehicle(item)}
+                      onOpen={() => openVehicleDetail(item)}
                       isFavorite={favoriteKeys.includes(getVehicleKey(item))}
                       onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
                       isCompared={compareKeys.includes(getVehicleKey(item))}
@@ -2765,37 +3129,144 @@ export function CatalogHomeClient({ feed }: Props) {
       </section>
 
       {selectedVehicle ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4" onClick={() => setSelectedVehicle(null)}>
-          <div role="dialog" aria-modal="true" aria-label={`Detalle de ${selectedVehicle.title}`} className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-4 shadow-2xl md:p-6" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
-                <p className="text-sm text-slate-500">{selectedVehicle.subtitle ?? "Vehículo en catálogo"}</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm md:p-5" onClick={closeSelectedVehicle}>
+          <div role="dialog" aria-modal="true" aria-label={`Detalle de ${selectedVehicle.title}`} className="max-h-[94vh] w-full max-w-7xl overflow-auto rounded-3xl border border-cyan-100 bg-gradient-to-br from-white via-white to-cyan-50/40 p-4 shadow-2xl md:p-6" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
+                  <p className="text-sm text-slate-500">{selectedVehicle.subtitle ?? "Vehículo en catálogo"}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800">
+                      Patente {getPatent(selectedVehicle)}
+                    </span>
+                    {selectedVehicleConditionLabel ? (
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${selectedVehicleConditionClasses}`}
+                      >
+                        {selectedVehicleConditionLabel}
+                      </span>
+                    ) : null}
+                    {selectedVehicle.view3dUrl ? (
+                      <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-800">
+                        Visor 3D disponible
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleFavorite(selectedVehicleKey)}
+                    className={`ui-focus inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      favoriteKeys.includes(selectedVehicleKey)
+                        ? "border-amber-300 bg-amber-50 text-amber-700"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span aria-hidden="true">{favoriteKeys.includes(selectedVehicleKey) ? "★" : "☆"}</span>
+                    {favoriteKeys.includes(selectedVehicleKey) ? "Guardado" : "Guardar"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleCompare(selectedVehicleKey)}
+                    className={`ui-focus inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      compareKeys.includes(selectedVehicleKey)
+                        ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span aria-hidden="true">{compareKeys.includes(selectedVehicleKey) ? "✓" : "+"}</span>
+                    {compareKeys.includes(selectedVehicleKey) ? "Comparando" : "Comparar"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void shareSelectedVehicle();
+                    }}
+                    className="ui-focus rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Compartir
+                  </button>
+                  <a
+                    href={selectedVehicleWhatsappUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => trackEvent("whatsapp_click_modal", { itemKey: selectedVehicleKey })}
+                    className="ui-focus inline-flex items-center gap-1.5 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-95"
+                  >
+                    {selectedVehiclePrimaryCtaLabel}
+                  </a>
+                  <button className="ui-focus rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50" onClick={closeSelectedVehicle}>
+                    Volver a resultados
+                  </button>
+                </div>
               </div>
-              <button className="ui-focus rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 transition hover:bg-slate-50" onClick={() => setSelectedVehicle(null)}>
-                Cerrar
-              </button>
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-                {selectedVehicle.view3dUrl ? (
-                  <iframe
-                    src={selectedVehicle.view3dUrl}
-                    title={`Visor 3D ${selectedVehicle.title}`}
-                    className="h-[420px] w-full border-0"
-                    allow="fullscreen; autoplay"
-                  />
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={selectedVehicle.thumbnail ?? selectedVehicle.images[0] ?? "/placeholder-car.svg"}
-                    alt={selectedVehicle.title}
-                    className="h-[420px] w-full object-cover"
-                  />
-                )}
+              <div className="space-y-2">
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm">
+                  {selectedVehicle.view3dUrl ? (
+                    <iframe
+                      src={selectedVehicle.view3dUrl}
+                      title={`Visor 3D ${selectedVehicle.title}`}
+                      className="h-[420px] w-full border-0"
+                      allow="fullscreen; autoplay"
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={selectedVehicleMainImage}
+                      alt={selectedVehicle.title}
+                      className="h-[420px] w-full object-cover"
+                    />
+                  )}
+                </div>
+                {selectedVehicle.view3dUrl ? null : selectedVehicleGalleryImages.length > 1 ? (
+                  <div className="flex gap-2 overflow-x-auto rounded-xl border border-slate-200 bg-white p-2">
+                    {selectedVehicleGalleryImages.map((imageUrl, index) => (
+                      <button
+                        key={`${imageUrl}-${index}`}
+                        type="button"
+                        onClick={() => setSelectedVehicleImageIndex(index)}
+                        className={`ui-focus h-16 w-20 shrink-0 overflow-hidden rounded-lg border transition ${
+                          selectedVehicleImageIndex === index
+                            ? "border-cyan-500 ring-2 ring-cyan-200"
+                            : "border-slate-200 hover:border-cyan-300"
+                        }`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={imageUrl}
+                          alt={`${selectedVehicle.title} vista ${index + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
                 <h4 className="mb-3 text-base font-semibold text-slate-900">Resumen del vehículo</h4>
+                <div className="mb-3 rounded-md border border-slate-200 bg-white p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Progreso sugerido
+                  </p>
+                  <ol className="mt-2 flex flex-wrap gap-2" aria-label="Pasos recomendados para comprar">
+                    {selectedVehicleProgressSteps.map((step, index) => (
+                      <li
+                        key={step.id}
+                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                          index === 0
+                            ? "border-cyan-300 bg-cyan-50 text-cyan-800"
+                            : "border-slate-200 bg-slate-50 text-slate-600"
+                        }`}
+                      >
+                        {index + 1}. {step.label}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
                 <div className="mb-3 flex flex-wrap gap-2">
                   {selectedVehicleTabs.map((tab) => (
                     <button
@@ -2848,7 +3319,47 @@ export function CatalogHomeClient({ feed }: Props) {
                       "Sin descripción adicional para este vehículo."}
                   </p>
                 </div>
+                <div className="mt-2 rounded-md border border-slate-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">
+                    Documentación y datos técnicos
+                  </p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {selectedVehicleFieldsByTab.tecnica.slice(0, 4).map(([label, value]) => (
+                      <div key={`tech-${label}`} className="rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
+                        <p className="font-semibold text-slate-600">{label}</p>
+                        <p>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
+            </div>
+            <div className="sticky bottom-0 z-20 mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 p-2 shadow md:hidden">
+              <a
+                href={selectedVehicleWhatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => trackEvent("whatsapp_click_modal_mobile", { itemKey: selectedVehicleKey })}
+                className="ui-focus inline-flex flex-1 items-center justify-center rounded-lg bg-[#25D366] px-3 py-2 text-xs font-semibold text-white"
+              >
+                WhatsApp
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  void shareSelectedVehicle();
+                }}
+                className="ui-focus rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
+              >
+                Compartir
+              </button>
+              <button
+                type="button"
+                onClick={closeSelectedVehicle}
+                className="ui-focus rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
+              >
+                Volver
+              </button>
             </div>
             <div className="mt-4">
               <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Vehículos similares</h4>
@@ -2864,7 +3375,7 @@ export function CatalogHomeClient({ feed }: Props) {
                     <button
                       key={`similar-${item.id}`}
                       type="button"
-                      onClick={() => setSelectedVehicle(item)}
+                      onClick={() => openVehicleDetail(item)}
                       className="ui-focus rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-cyan-300 hover:bg-cyan-50/30"
                     >
                       <p className="line-clamp-1 text-sm font-semibold text-slate-900">{item.title}</p>

@@ -5,6 +5,7 @@ type CatalogCardProps = {
   item: CatalogItem;
   priceLabel?: string | null;
   upcomingAuctionLabel?: string;
+  density?: "compact" | "detailed";
   onOpen?: () => void;
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
@@ -59,10 +60,45 @@ function getBrandModel(item: CatalogItem): string {
   return `${brand ?? ""} ${model ?? ""}`.trim() || item.title;
 }
 
+function getVehicleKey(item: CatalogItem): string {
+  const raw = item.raw as Record<string, unknown>;
+  const patent = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number].find(
+    (entry) => typeof entry === "string" && entry.trim().length > 0,
+  ) as string | undefined;
+  if (patent) return patent.toUpperCase().replace(/\s+/g, "").replace(/-/g, "");
+  return item.id;
+}
+
+function getVehicleCondition(item: CatalogItem): string | null {
+  const raw = item.raw as Record<string, unknown>;
+  const value = [
+    raw.condicion,
+    raw.condición,
+    raw.condicion_vehiculo,
+    raw.estado_vehiculo,
+    raw.estado,
+    raw.status,
+  ].find((entry) => typeof entry === "string" && entry.trim().length > 0) as string | undefined;
+  return value?.trim() ?? null;
+}
+
+function getConditionBadgeClasses(condition?: string | null): string {
+  const sample = (condition ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+  if (!sample) return "bg-slate-900/75 text-white";
+  if (/100% operativo|operativo/.test(sample)) return "bg-emerald-600 text-white";
+  if (/no arranca|desarme/.test(sample)) return "bg-rose-600 text-white";
+  if (/problema|recuperado|robo/.test(sample)) return "bg-amber-500 text-white";
+  return "bg-indigo-600 text-white";
+}
+
 export function CatalogCard({
   item,
   priceLabel,
   upcomingAuctionLabel,
+  density = "detailed",
   onOpen,
   isFavorite,
   onToggleFavorite,
@@ -83,8 +119,21 @@ export function CatalogCard({
   const formattedDate = formatDate(item.auctionDate);
   const patent = getPatent(item);
   const brandModel = getBrandModel(item);
+  const itemKey = getVehicleKey(item);
+  const conditionLabel = getVehicleCondition(item);
+  const [shareCopied, setShareCopied] = useState(false);
+  const shareUrl = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const url = new URL(window.location.href);
+    url.searchParams.set("vehiculo", itemKey);
+    if (!url.hash) url.hash = "catalogo";
+    return url.toString();
+  }, [itemKey]);
   const whatsappText = `Hola, estoy interesado en ofertar por el vehículo ${patent} ${brandModel}`;
-  const whatsappUrl = `${WHATSAPP_BASE_URL}&text=${encodeURIComponent(whatsappText)}&type=phone_number&app_absent=0`;
+  const whatsappUrl = `${WHATSAPP_BASE_URL}&text=${encodeURIComponent(
+    `${whatsappText}${shareUrl ? `. Link: ${shareUrl}` : ""}`,
+  )}&type=phone_number&app_absent=0`;
+  const isCompact = density === "compact";
 
   useEffect(() => {
     setCoverSrc(cover);
@@ -93,7 +142,7 @@ export function CatalogCard({
   return (
     <article className="group glass-soft w-full overflow-hidden rounded-2xl text-left shadow-md transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg">
       <button type="button" onClick={onOpen} className="ui-focus w-full text-left">
-        <div className="relative h-56 w-full bg-slate-100">
+        <div className={`relative w-full bg-slate-100 ${isCompact ? "h-44" : "h-56"}`}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={coverSrc}
@@ -110,6 +159,15 @@ export function CatalogCard({
             {priceLabel ? (
               <span className="rounded-full bg-amber-500 px-2 py-1 text-[10px] font-semibold text-white">Precio</span>
             ) : null}
+            {conditionLabel ? (
+              <span
+                className={`rounded-full px-2 py-1 text-[10px] font-semibold ${getConditionBadgeClasses(
+                  conditionLabel,
+                )}`}
+              >
+                {conditionLabel}
+              </span>
+            ) : null}
           </div>
           {item.status ? (
             <span className="absolute right-3 top-3 rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-white">
@@ -118,12 +176,12 @@ export function CatalogCard({
           ) : null}
         </div>
 
-        <div className="space-y-3 p-4">
+        <div className={`space-y-3 p-4 ${isCompact ? "space-y-2" : ""}`}>
           <div>
             <h3 className="line-clamp-1 text-base font-semibold text-slate-900">
               {item.title}
             </h3>
-            {item.subtitle ? (
+            {!isCompact && item.subtitle ? (
               <p className="mt-1 text-sm text-slate-600">{shortText(item.subtitle)}</p>
             ) : null}
           </div>
@@ -149,7 +207,7 @@ export function CatalogCard({
             ) : null}
           </div>
 
-          {thumbs.length > 1 ? (
+          {!isCompact && thumbs.length > 1 ? (
             <div className="grid grid-cols-6 gap-1">
               {thumbs.map((thumb) => (
                 <div key={thumb} className="h-10 overflow-hidden rounded bg-slate-100">
@@ -214,6 +272,32 @@ export function CatalogCard({
           </button>
         </div>
         <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                if (navigator.share && shareUrl) {
+                  await navigator.share({
+                    title: item.title,
+                    text: `Revisa este vehículo: ${patent}`,
+                    url: shareUrl,
+                  });
+                } else if (navigator.clipboard && shareUrl) {
+                  await navigator.clipboard.writeText(shareUrl);
+                  setShareCopied(true);
+                  window.setTimeout(() => setShareCopied(false), 1800);
+                } else if (shareUrl) {
+                  window.open(shareUrl, "_blank", "noreferrer");
+                }
+              } catch {
+                // no-op if user cancels share
+              }
+            }}
+            className="ui-focus mr-2 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
+            aria-label={`Compartir ${item.title}`}
+          >
+            {shareCopied ? "Copiado" : "Compartir"}
+          </button>
           <a
             href={whatsappUrl}
             target="_blank"
