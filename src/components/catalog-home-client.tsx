@@ -2004,6 +2004,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const [offersDateFrom, setOffersDateFrom] = useState("");
   const [offersDateTo, setOffersDateTo] = useState("");
   const [showOffersFiltersMenu, setShowOffersFiltersMenu] = useState(false);
+  const [deletingOfferId, setDeletingOfferId] = useState<string | null>(null);
   const [soldSearch, setSoldSearch] = useState("");
   const [soldSearchField, setSoldSearchField] = useState<SoldFilterField>("all");
   const [soldAuctionFilter, setSoldAuctionFilter] = useState("all");
@@ -5587,6 +5588,41 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     offersDateFrom,
     offersDateTo,
   ]);
+  const handleDeleteOffer = useCallback(
+    async (offer: OfferRecord) => {
+      if (deletingOfferId) return;
+      if (typeof window !== "undefined") {
+        const confirmed = window.confirm(
+          `¿Eliminar esta oferta?\n\n${offer.patent || "Sin patente"} · ${offer.vehicleTitle || "Sin vehículo"}`,
+        );
+        if (!confirmed) return;
+      }
+      setDeletingOfferId(offer.id);
+      setOffersError("");
+      try {
+        const response = await fetch("/api/admin/offers", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: offer.id }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!response.ok || !payload.ok) {
+          const message = payload.error ?? "No se pudo eliminar la oferta.";
+          setOffersError(message);
+          showSystemNotice("error", "No se pudo eliminar", message);
+          return;
+        }
+        setOffersRows((prev) => prev.filter((row) => row.id !== offer.id));
+        showSystemNotice("success", "Oferta eliminada", "La oferta se eliminó correctamente.");
+      } catch {
+        setOffersError("No se pudo eliminar la oferta.");
+        showSystemNotice("error", "No se pudo eliminar", "Ocurrió un error de red al eliminar la oferta.");
+      } finally {
+        setDeletingOfferId(null);
+      }
+    },
+    [deletingOfferId, showSystemNotice],
+  );
 
   const analyticsFilteredEvents = useMemo(() => {
     if (analyticsSource === "server") return analyticsBaseEvents;
@@ -8038,7 +8074,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   ) : offersFilteredRows.length === 0 ? (
                     <p className="p-4 text-sm text-slate-500">No hay ofertas para los filtros actuales.</p>
                   ) : (
-                    <table className="min-w-[1280px] w-full text-left text-xs">
+                    <table className="min-w-[1320px] w-full text-left text-xs">
                       <thead className="bg-slate-50 text-slate-600">
                         <tr>
                           {[
@@ -8051,6 +8087,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                             "Oferta",
                             "Referencial",
                             "Diferencia",
+                            " ",
                           ].map((label) => (
                             <th key={`offers-head-${label}`} className="whitespace-nowrap border-b border-slate-200 px-3 py-2 font-semibold">
                               {label}
@@ -8083,6 +8120,36 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                                 }`}
                               >
                                 {formatSignedCurrencyAmount(diff)}
+                              </td>
+                              <td className="whitespace-nowrap px-2 py-2 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleDeleteOffer(row);
+                                  }}
+                                  disabled={deletingOfferId !== null}
+                                  aria-label={`Eliminar oferta de ${row.customerName || "cliente"}`}
+                                  title="Eliminar oferta"
+                                  className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-300 transition hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {deletingOfferId === row.id ? (
+                                    <span className="text-[11px] font-semibold">...</span>
+                                  ) : (
+                                    <svg
+                                      viewBox="0 0 20 20"
+                                      fill="none"
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                    >
+                                      <path
+                                        d="M5 5L15 15M15 5L5 15"
+                                        stroke="currentColor"
+                                        strokeWidth="1.8"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </button>
                               </td>
                             </tr>
                           );

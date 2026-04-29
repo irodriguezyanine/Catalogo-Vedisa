@@ -312,3 +312,20 @@ export async function readVehicleOffers(options: {
 
   return { ok: true, offers };
 }
+
+export async function deleteVehicleOfferById(
+  offerId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = getOffersSupabase();
+  if (!supabase) return { ok: false, error: "No hay conexión a ofertas." };
+
+  const normalizedId = offerId.trim();
+  if (!normalizedId) return { ok: false, error: "ID de oferta inválido." };
+
+  const { error } = await supabase.from(OFFERS_TABLE).delete().eq("id", normalizedId);
+  if (error) {
+    return { ok: false, error: `No se pudo eliminar la oferta desde '${OFFERS_TABLE}'.` };
+  }
+
+  return { ok: true };
+}
