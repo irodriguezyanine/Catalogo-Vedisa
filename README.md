@@ -32,6 +32,7 @@ Campos principales:
 - `GLO3D_API_USERNAME` / `GLO3D_API_PASSWORD`: visores 3D.
 - `ADMIN_EDITOR_EMAIL` / `ADMIN_EDITOR_PASSWORD`: acceso al modo editor.
 - `CATALOG_OFFERS_TABLE`: tabla para registrar ofertas de clientes (por defecto `catalogo_vehicle_offers`).
+- `CATALOG_OFFERS_FROM_EMAIL` (opcional): remitente para notificaciones de oferta por AWS SES (fallback `AWS_SES_FROM_EMAIL` o `no-reply@vedisaremates.cl`).
 
 ## Modo editor administrador
 
@@ -57,6 +58,11 @@ create table if not exists public.catalogo_editor_config (
 ## Ofertas de clientes
 
 El botón **Enviar mi precio** registra ofertas en Supabase y luego las muestra en el panel admin, pestaña **5. Ofertas recibidas**.
+Además, cada oferta envía notificación por correo vía AWS SES a:
+
+- `tasaciones@vedisaremates.cl`
+- `jpmontero@vedisaremates.cl`
+- `comercial@vedisaremates.cl`
 
 SQL sugerido:
 
