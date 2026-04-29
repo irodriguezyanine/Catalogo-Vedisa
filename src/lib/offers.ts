@@ -113,7 +113,7 @@ async function sendOfferNotificationEmail(payload: {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden;">
             <tr>
               <td style="padding:20px 24px;background:linear-gradient(120deg,#f8fafc,#ecfeff);border-bottom:1px solid #e2e8f0;">
-                <img src="${OFFER_NOTIFICATION_LOGO_URL}" alt="VEDISA REMATES" style="display:block;width:220px;max-width:100%;height:auto;" />
+                <img src="${OFFER_NOTIFICATION_LOGO_URL}" alt="VEDISA REMATES" style="display:block;width:160px;max-width:100%;height:auto;" />
               </td>
             </tr>
             <tr>
