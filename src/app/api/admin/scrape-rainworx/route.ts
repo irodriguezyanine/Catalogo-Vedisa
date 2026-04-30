@@ -25,6 +25,11 @@ type Body = {
   catalogItemIds?: string[];
   /** Si se envía `eventUrl`, filtra lotes cuya patente coincida (ej. STHC32 o XXYY12). */
   patente?: string;
+  /**
+   * Con `eventUrl`, restringe a lotes cuya patente esté en esta lista (p. ej. patentes del inventario
+   * visible en el editor). Si se omite, se consideran todos los lotes del evento (hasta `maxLots`).
+   */
+  matchInventoryPatentes?: string[];
   maxLots?: number;
   delayMs?: number;
   /**
@@ -77,11 +82,23 @@ export async function POST(request: Request) {
         items.push(parseLotDetailsHtml(html, url));
       }
     } else if (body.eventUrl) {
+      const rawMatch = body.matchInventoryPatentes;
+      const matchList =
+        rawMatch && rawMatch.length > 0
+          ? [...new Set(rawMatch.map((p) => normalizePatenteKey(p)).filter(Boolean))]
+          : undefined;
+      if (rawMatch && rawMatch.length > 0 && (!matchList || matchList.length === 0)) {
+        return Response.json(
+          { error: "Ninguna patente válida en matchInventoryPatentes." },
+          { status: 400 },
+        );
+      }
       items = await scrapeEventLots({
         eventPageUrl: body.eventUrl,
         patente: body.patente,
-        maxLots: body.maxLots,
-        delayMs: body.delayMs,
+        ...(matchList && matchList.length > 0 ? { matchPatentes: matchList } : {}),
+        maxLots: body.maxLots ?? (matchList && matchList.length > 0 ? 160 : 80),
+        delayMs: body.delayMs ?? 250,
       });
     } else {
       return Response.json(

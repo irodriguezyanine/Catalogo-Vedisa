@@ -522,6 +522,20 @@ function getPatent(item: CatalogItem): string {
   return patent?.toUpperCase().replace(/\s+/g, "").replace(/-/g, "") ?? "—";
 }
 
+/** Patentes normalizadas del inventario visible (para cruzar lotes de un evento Rainworx). */
+function collectInventoryPatentesForRainworx(catalogItems: CatalogItem[]): string[] {
+  const set = new Set<string>();
+  for (const item of catalogItems) {
+    const raw = item.raw as Record<string, unknown>;
+    const patent = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number].find(
+      (v) => typeof v === "string" && v.trim(),
+    ) as string | undefined;
+    const k = normalizePatenteKey(patent);
+    if (k) set.add(k);
+  }
+  return [...set];
+}
+
 /** Patente a exigir contra Rainworx: borrador del modal o dato en inventario. */
 function getExpectedPatenteForRainworx(item: CatalogItem, details: EditorVehicleDetails): string | undefined {
   const fromDraft = normalizePatenteKey(details.patente);
@@ -5346,30 +5360,49 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
 
   const importRainworxLot = async () => {
     const url = rainworxLotUrl.trim();
-    if (!url || !url.includes("LotDetails")) {
+    const isLotUrl = /\/Event\/LotDetails\//i.test(url);
+    const isEventUrl = /\/Event\/Details\//i.test(url);
+    if (!url || (!isLotUrl && !isEventUrl)) {
       showSystemNotice(
         "error",
         "URL inválida",
-        "Pega la URL completa de la ficha Rainworx (debe contener /Event/LotDetails/).",
+        "Pega la URL de un evento (…/Event/Details/…) o de una ficha de lote (…/Event/LotDetails/…).",
       );
       return;
     }
     setRainworxImporting(true);
     try {
-      const catalogItemIds = rainworxCatalogId.trim() ? [rainworxCatalogId.trim()] : undefined;
+      const body: Record<string, unknown> = {
+        applyToEditor: true,
+        editorMerge: "rainworx_wins",
+      };
+      if (isEventUrl) {
+        const matchInventoryPatentes = collectInventoryPatentesForRainworx(items);
+        if (matchInventoryPatentes.length === 0) {
+          showSystemNotice(
+            "error",
+            "Sin patentes en inventario",
+            "No hay patentes en el inventario actual para cruzar con el evento. Importa lote por lote con la URL de LotDetails o indica patente en el sistema.",
+          );
+          return;
+        }
+        body.eventUrl = url;
+        body.matchInventoryPatentes = matchInventoryPatentes;
+      } else {
+        body.lotUrls = [url];
+        const catalogItemIds = rainworxCatalogId.trim() ? [rainworxCatalogId.trim()] : undefined;
+        if (catalogItemIds) body.catalogItemIds = catalogItemIds;
+      }
+
       const res = await fetch("/api/admin/scrape-rainworx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lotUrls: [url],
-          ...(catalogItemIds ? { catalogItemIds } : {}),
-          applyToEditor: true,
-          editorMerge: "rainworx_wins",
-        }),
+        body: JSON.stringify(body),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
-        editor?: { applied?: string[]; skipped?: { reason: string }[] };
+        count?: number;
+        editor?: { applied?: string[]; skipped?: { reason: string; lotId?: string }[] };
       };
       if (!res.ok) {
         showSystemNotice("error", "Importación Rainworx", data.error ?? `Error HTTP ${res.status}`);
@@ -5396,13 +5429,32 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
           skipped.map((s) => s.reason).join(" · "),
         );
       }
-      showSystemNotice(
-        "success",
-        "Rainworx importado",
-        applied.length
-          ? `Actualizado en: ${applied.join(", ")}. Revisa la ficha del vehículo.`
-          : "Listo. Si no ves cambios, agrega el ID del vehículo en catálogo (UUID) en el campo opcional.",
-      );
+      if (isEventUrl) {
+        const n = typeof data.count === "number" ? data.count : applied.length;
+        if (applied.length === 0) {
+          showSystemNotice(
+            "info",
+            "Evento procesado",
+            n === 0
+              ? "Ningún lote del evento coincidió con las patentes de tu inventario (o Rainworx no publica patente en esas fichas)."
+              : "No se escribieron cambios en el editor; revisa coincidencia de patentes y permisos.",
+          );
+        } else {
+          showSystemNotice(
+            "success",
+            "Evento Rainworx sincronizado",
+            `${n} lote(s) leídos desde el evento. Fichas actualizadas: ${applied.join(", ")}.`,
+          );
+        }
+      } else {
+        showSystemNotice(
+          "success",
+          "Rainworx importado",
+          applied.length
+            ? `Actualizado en: ${applied.join(", ")}. Revisa la ficha del vehículo.`
+            : "Listo. Si no ves cambios, agrega el ID del vehículo en catálogo (UUID) en el campo opcional.",
+        );
+      }
     } catch {
       showSystemNotice("error", "Importación Rainworx", "No se pudo completar la solicitud.");
     } finally {
@@ -6349,29 +6401,33 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-4 text-sm">
               <p className="font-semibold text-indigo-950">Importar ficha desde Rainworx</p>
               <p className="mt-1 text-xs text-indigo-900/80">
-                No necesitas la consola del navegador. Pega aquí la URL de{" "}
-                <code className="rounded bg-white/80 px-1">vehiculoschocados.cl/.../LotDetails/...</code>. Si la unidad
-                aparece como &quot;sin patente&quot; en el inventario, indica también el ID interno del vehículo (UUID
-                del catálogo).
+                Pega la URL de un <strong>evento</strong> (<code className="rounded bg-white/80 px-1">…/Event/Details/…</code>) para
+                sincronizar todos los lotes cuya <strong>patente</strong> coincida con tu inventario, o la URL de un{" "}
+                <strong>lote</strong> (<code className="rounded bg-white/80 px-1">…/Event/LotDetails/…</code>). La
+                importación usa el mismo formato de datos que en cada ficha (técnico, fechas, pruebas SI/NO, etc.).
+              </p>
+              <p className="mt-1 text-xs text-indigo-900/75">
+                En eventos solo se actualizan unidades con patente en el inventario actual. Si una unidad no tiene patente,
+                importa su lote individualmente e indica el ID interno (UUID) en el campo opcional.
               </p>
               <div className="mt-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-end">
                 <label className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-600">URL del lote Rainworx</span>
+                  <span className="text-xs font-medium text-slate-600">URL Rainworx (evento o lote)</span>
                   <input
                     type="url"
                     value={rainworxLotUrl}
                     onChange={(e) => setRainworxLotUrl(e.target.value)}
-                    placeholder="https://vehiculoschocados.cl/Event/LotDetails/..."
+                    placeholder="https://vehiculoschocados.cl/Event/Details/… o …/LotDetails/…"
                     className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                   />
                 </label>
                 <label className="flex w-full flex-col gap-1 md:w-72">
-                  <span className="text-xs font-medium text-slate-600">ID en catálogo (opcional)</span>
+                  <span className="text-xs font-medium text-slate-600">ID en catálogo (solo lote suelto)</span>
                   <input
                     type="text"
                     value={rainworxCatalogId}
                     onChange={(e) => setRainworxCatalogId(e.target.value)}
-                    placeholder="UUID del ítem en /api/catalogo"
+                    placeholder="UUID si importas LotDetails sin patente"
                     className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono text-xs"
                   />
                 </label>

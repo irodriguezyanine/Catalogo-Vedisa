@@ -227,10 +227,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function normalizePatenteKeyLocal(patente: string | undefined): string {
+  if (!patente?.trim()) return "";
+  return patente.toUpperCase().replace(/\s+/g, "").replace(/-/g, "");
+}
+
 export type ScrapeEventOptions = {
   eventPageUrl: string;
   /** Filtrar por patente normalizada (sin guiones, mayúsculas). */
   patente?: string;
+  /** Solo incluye lotes cuya patente esté en este listado (p. ej. inventario del catálogo). */
+  matchPatentes?: string[];
   maxLots?: number;
   delayMs?: number;
 };
@@ -244,7 +251,13 @@ export async function scrapeEventLots(options: ScrapeEventOptions): Promise<Rain
   const html = await fetchRainworxHtml(eventUrl);
   let urls = extractLotDetailUrls(html, origin);
 
-  const wantPatente = options.patente?.replace(/-/g, "").trim().toUpperCase();
+  const wantPatente = normalizePatenteKeyLocal(options.patente);
+  const matchSet =
+    options.matchPatentes && options.matchPatentes.length > 0
+      ? new Set(
+          options.matchPatentes.map((p) => normalizePatenteKeyLocal(p)).filter(Boolean),
+        )
+      : null;
   const maxLots = options.maxLots ?? 80;
   const delayMs = options.delayMs ?? 200;
 
@@ -254,12 +267,22 @@ export async function scrapeEventLots(options: ScrapeEventOptions): Promise<Rain
     if (results.length >= maxLots) break;
     const detailHtml = await fetchRainworxHtml(lotUrl);
     const parsed = parseLotDetailsHtml(detailHtml, lotUrl);
+    const p = normalizePatenteKeyLocal(
+      parsed.detalles.PATENTE ?? parsed.detallesNormalizados.patente,
+    );
+
     if (wantPatente) {
-      const p =
-        parsed.detallesNormalizados.patente?.replace(/-/g, "").trim().toUpperCase() ??
-        parsed.detalles.PATENTE?.replace(/-/g, "").trim().toUpperCase();
-      if (p !== wantPatente) continue;
+      if (p !== wantPatente) {
+        await sleep(delayMs);
+        continue;
+      }
+    } else if (matchSet && matchSet.size > 0) {
+      if (!p || !matchSet.has(p)) {
+        await sleep(delayMs);
+        continue;
+      }
     }
+
     results.push(parsed);
     if (wantPatente && results.length > 0) break;
     await sleep(delayMs);
