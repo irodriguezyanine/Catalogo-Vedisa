@@ -24,6 +24,157 @@ function pickDetalle(scraped: RainworxLotScraped, ...labels: string[]): string |
   return undefined;
 }
 
+/** Texto comparable: minúsculas, sin tildes. */
+function normTxt(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+}
+
+/**
+ * Rainworx envía frases ("MOTOR ARRANCA") pero el editor solo acepta SI/NO.
+ */
+function mapPruebaMotorToSiNo(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined;
+  const coerced = coerceSiNoSpanish(raw);
+  if (coerced) return coerced;
+  const t = normTxt(raw);
+  if (/no\s*arranca|motor\s*no|no\s*funciona|averia|averia\s*motor|reparaci[oó]n\s*mayor\s*motor/.test(t)) return "NO";
+  if (/motor\s*arranca|\barranca\b|funcionando|operativo|ok\s*motor/.test(t)) return "SI";
+  return undefined;
+}
+
+function mapPruebaDesplazamientoToSiNo(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined;
+  const coerced = coerceSiNoSpanish(raw);
+  if (coerced) return coerced;
+  const t = normTxt(raw);
+  if (/no\s*se\s*desplaza|no\s*desplaza|no\s*mueve|inmovil|bloquead|en\s*panne/.test(t)) return "NO";
+  if (/se\s*desplaza|\bdesplaza\b|se\s*mueve|rodar|en\s*movimiento/.test(t)) return "SI";
+  return undefined;
+}
+
+/** Campos tipo SI/NO que a veces vienen "Si", "Sí", "true", etc. */
+function coerceSiNoSpanish(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined;
+  const t = normTxt(raw);
+  if (/^(si|s|yes|true|1)$/.test(t)) return "SI";
+  if (/^(no|n|false|0)$/.test(t)) return "NO";
+  return undefined;
+}
+
+const MES_3: Record<string, number> = {
+  ENE: 1,
+  FEB: 2,
+  MAR: 3,
+  ABR: 4,
+  MAY: 5,
+  JUN: 6,
+  JUL: 7,
+  AGO: 8,
+  SEP: 9,
+  SEPT: 9,
+  OCT: 10,
+  NOV: 11,
+  DIC: 12,
+  JAN: 1,
+  APR: 4,
+  AUG: 8,
+  DEC: 12,
+};
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Quita "FOTOCOPIA" y devuelve fecha DD/MM/YYYY válida para el editor, o undefined.
+ */
+export function normalizeRainworxVencimientoDate(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined;
+  let s = raw
+    .replace(/\bFOTOCOP(IAS?|Y)?\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return undefined;
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+    const [dd, mm, yyyy] = s.split("/").map(Number);
+    const date = new Date(yyyy, mm - 1, dd);
+    if (
+      !Number.isNaN(date.getTime()) &&
+      date.getFullYear() === yyyy &&
+      date.getMonth() === mm - 1 &&
+      date.getDate() === dd
+    ) {
+      return `${pad2(dd)}/${pad2(mm)}/${yyyy}`;
+    }
+    return undefined;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    if (
+      !Number.isNaN(date.getTime()) &&
+      date.getFullYear() === y &&
+      date.getMonth() === m - 1 &&
+      date.getDate() === d
+    ) {
+      return `${pad2(d)}/${pad2(m)}/${y}`;
+    }
+    return undefined;
+  }
+
+  const dmyShort = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2}|\d{4})$/);
+  if (dmyShort) {
+    const dd = Number(dmyShort[1]);
+    const mm = Number(dmyShort[2]);
+    let yyyy = Number(dmyShort[3]);
+    if (yyyy < 100) yyyy += 2000;
+    const date = new Date(yyyy, mm - 1, dd);
+    if (
+      !Number.isNaN(date.getTime()) &&
+      date.getFullYear() === yyyy &&
+      date.getMonth() === mm - 1 &&
+      date.getDate() === dd
+    ) {
+      return `${pad2(dd)}/${pad2(mm)}/${yyyy}`;
+    }
+    return undefined;
+  }
+
+  const mesAnio = s.match(/^([A-ZÁÉÍÓÚÑ]{3,9})\s+(\d{2}|\d{4})$/i);
+  if (mesAnio) {
+    let mesTok = mesAnio[1].toUpperCase().normalize("NFD").replace(/\p{M}/gu, "");
+    if (mesTok.length > 3) mesTok = mesTok.slice(0, 3);
+    const month = MES_3[mesTok];
+    if (!month) return undefined;
+    let year = Number(mesAnio[2]);
+    if (year < 100) year += 2000;
+    return `${pad2(1)}/${pad2(month)}/${year}`;
+  }
+
+  const embeddedMes = s.match(
+    /\b(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|SEPT|OCT|NOV|DIC|JAN|APR|AUG|DEC)\b\.?\s*(\d{2}|\d{4})\b/i,
+  );
+  if (embeddedMes) {
+    let mesTok = embeddedMes[1].toUpperCase();
+    if (mesTok === "SEPT") mesTok = "SEP";
+    if (mesTok.length > 3) mesTok = mesTok.slice(0, 3);
+    const month = MES_3[mesTok];
+    if (month) {
+      let year = Number(embeddedMes[2]);
+      if (year < 100) year += 2000;
+      return `${pad2(1)}/${pad2(month)}/${year}`;
+    }
+  }
+
+  return undefined;
+}
+
 function extractYearFromTitle(title?: string): string | undefined {
   if (!title) return undefined;
   const m = title.match(/\b(20\d{2}|19\d{2})\b/);
@@ -105,16 +256,24 @@ export function rainworxToEditorVehicleDetails(scraped: RainworxLotScraped): Edi
     traccion: pickDetalle(scraped, "TRACCION"),
     aro: pickDetalle(scraped, "ARO"),
     cilindrada: pickDetalle(scraped, "CILINDRADA"),
-    llaves: pickDetalle(scraped, "LLAVES"),
-    aireAcondicionado: pickDetalle(scraped, "AIRE ACONDICIONADO"),
-    unicoPropietario: pickDetalle(scraped, "UNICO PROPIETARIO"),
-    condicionado: pickDetalle(scraped, "CONDICIONADO"),
+    llaves: coerceSiNoSpanish(pickDetalle(scraped, "LLAVES")),
+    aireAcondicionado: coerceSiNoSpanish(pickDetalle(scraped, "AIRE ACONDICIONADO")),
+    unicoPropietario: coerceSiNoSpanish(pickDetalle(scraped, "UNICO PROPIETARIO")),
+    condicionado: coerceSiNoSpanish(pickDetalle(scraped, "CONDICIONADO")),
     ubicacionFisica: pickDetalle(scraped, "UBICACION"),
-    vencPermisoCirculacion: pickDetalle(scraped, "PERMISO DE CIRCULACION VENCE"),
-    vencRevisionTecnica: pickDetalle(scraped, "REV TECNICA O HOMOLOGACION VENCE"),
-    vencSeguroObligatorio: pickDetalle(scraped, "SEGURO OBLIGATORIO VENCE"),
-    pruebaMotor: pickDetalle(scraped, "PRUEBA BASICA MOTOR"),
-    pruebaDesplazamiento: pickDetalle(scraped, "PRUEBA BASICA DESPLAZAMIENTO"),
+    vencPermisoCirculacion: normalizeRainworxVencimientoDate(
+      pickDetalle(scraped, "PERMISO DE CIRCULACION VENCE"),
+    ),
+    vencRevisionTecnica: normalizeRainworxVencimientoDate(
+      pickDetalle(scraped, "REV TECNICA O HOMOLOGACION VENCE"),
+    ),
+    vencSeguroObligatorio: normalizeRainworxVencimientoDate(
+      pickDetalle(scraped, "SEGURO OBLIGATORIO VENCE"),
+    ),
+    pruebaMotor: mapPruebaMotorToSiNo(pickDetalle(scraped, "PRUEBA BASICA MOTOR")),
+    pruebaDesplazamiento: mapPruebaDesplazamientoToSiNo(
+      pickDetalle(scraped, "PRUEBA BASICA DESPLAZAMIENTO"),
+    ),
     estadoAirbags: pickDetalle(scraped, "ESTADO AIRBAGS"),
     lot: scraped.loteDisplay,
     description: scraped.subtitle ?? observaciones,
