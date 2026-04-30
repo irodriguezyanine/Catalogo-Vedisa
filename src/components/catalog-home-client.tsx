@@ -15,6 +15,7 @@ import Link from "next/link";
 import { CatalogCard } from "@/components/catalog-card";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { OfferRecord } from "@/types/offers";
+import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
 import {
   DEFAULT_EDITOR_CONFIG,
   type EditorConfig,
@@ -519,6 +520,15 @@ function getPatent(item: CatalogItem): string {
   const patent = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number]
     .find((value) => typeof value === "string" && value.trim().length > 0) as string | undefined;
   return patent?.toUpperCase().replace(/\s+/g, "").replace(/-/g, "") ?? "—";
+}
+
+/** Patente a exigir contra Rainworx: borrador del modal o dato en inventario. */
+function getExpectedPatenteForRainworx(item: CatalogItem, details: EditorVehicleDetails): string | undefined {
+  const fromDraft = normalizePatenteKey(details.patente);
+  if (fromDraft) return fromDraft;
+  const label = getPatent(item);
+  if (!label || label === "—") return undefined;
+  return normalizePatenteKey(label);
 }
 
 function getModel(item: CatalogItem): string {
@@ -1993,6 +2003,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const [detailEditorTab, setDetailEditorTab] = useState<DetailEditorTabId>("general");
   const [selectedVehicleTab, setSelectedVehicleTab] = useState<VehicleDetailTabId>("general");
   const [revalidating, setRevalidating] = useState(false);
+  const [rainworxLotUrl, setRainworxLotUrl] = useState("");
+  const [rainworxCatalogId, setRainworxCatalogId] = useState("");
+  const [rainworxImporting, setRainworxImporting] = useState(false);
+  const [detailRainworxUrl, setDetailRainworxUrl] = useState("");
+  const [detailRainworxImporting, setDetailRainworxImporting] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [analyticsRangeDays, setAnalyticsRangeDays] = useState<7 | 30 | 90>(30);
   const [analyticsEvents, setAnalyticsEvents] = useState<AnalyticsEventPayload[]>([]);
@@ -5234,8 +5249,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const openDetailsEditor = (item: CatalogItem) => {
     const key = getVehicleKey(item);
     setEditingVehicleKey(key);
-    setEditingDetails(buildDetailsDraft(item, config.vehicleDetails[key]));
+    setEditingDetails(
+      buildDetailsDraft(item, getEditorOverrideForItem(item, config.vehicleDetails)),
+    );
     setDetailEditorTab("general");
+    setDetailRainworxUrl("");
   };
 
   const saveDetailsEditor = () => {
@@ -5262,6 +5280,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const cancelDetailsEditor = () => {
     setEditingVehicleKey(null);
     setEditingDetails(null);
+    setDetailRainworxUrl("");
   };
 
   const persistEditorConfig = useCallback(async (nextConfig: EditorConfig) => {
@@ -5322,6 +5341,138 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       );
     } finally {
       setRevalidating(false);
+    }
+  };
+
+  const importRainworxLot = async () => {
+    const url = rainworxLotUrl.trim();
+    if (!url || !url.includes("LotDetails")) {
+      showSystemNotice(
+        "error",
+        "URL inválida",
+        "Pega la URL completa de la ficha Rainworx (debe contener /Event/LotDetails/).",
+      );
+      return;
+    }
+    setRainworxImporting(true);
+    try {
+      const catalogItemIds = rainworxCatalogId.trim() ? [rainworxCatalogId.trim()] : undefined;
+      const res = await fetch("/api/admin/scrape-rainworx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lotUrls: [url],
+          ...(catalogItemIds ? { catalogItemIds } : {}),
+          applyToEditor: true,
+          editorMerge: "rainworx_wins",
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        editor?: { applied?: string[]; skipped?: { reason: string }[] };
+      };
+      if (!res.ok) {
+        showSystemNotice("error", "Importación Rainworx", data.error ?? `Error HTTP ${res.status}`);
+        return;
+      }
+      const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
+      if (configRes.ok) {
+        const payload = (await configRes.json()) as { config?: EditorConfig };
+        if (payload.config) {
+          const normalized = normalizeEditorConfigClient(payload.config);
+          setConfig(normalized);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
+          }
+          lastPersistedConfigRef.current = JSON.stringify(normalized);
+        }
+      }
+      const applied = data.editor?.applied ?? [];
+      const skipped = data.editor?.skipped ?? [];
+      if (skipped.length > 0) {
+        showSystemNotice(
+          "info",
+          "Importación parcial",
+          skipped.map((s) => s.reason).join(" · "),
+        );
+      }
+      showSystemNotice(
+        "success",
+        "Rainworx importado",
+        applied.length
+          ? `Actualizado en: ${applied.join(", ")}. Revisa la ficha del vehículo.`
+          : "Listo. Si no ves cambios, agrega el ID del vehículo en catálogo (UUID) en el campo opcional.",
+      );
+    } catch {
+      showSystemNotice("error", "Importación Rainworx", "No se pudo completar la solicitud.");
+    } finally {
+      setRainworxImporting(false);
+    }
+  };
+
+  const importRainworxInDetailEditor = async () => {
+    if (!editingItem || !editingDetails) return;
+    const url = detailRainworxUrl.trim();
+    if (!url || !url.includes("LotDetails")) {
+      showSystemNotice(
+        "error",
+        "URL inválida",
+        "Pega la URL completa de Rainworx (debe contener /Event/LotDetails/).",
+      );
+      return;
+    }
+    const expectedPatente = getExpectedPatenteForRainworx(editingItem, editingDetails);
+    setDetailRainworxImporting(true);
+    try {
+      const res = await fetch("/api/admin/scrape-rainworx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lotUrls: [url],
+          catalogItemIds: [editingItem.id],
+          applyToEditor: true,
+          editorMerge: "rainworx_wins",
+          ...(expectedPatente ? { expectedPatente } : {}),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        editor?: { applied?: string[]; skipped?: { reason: string }[] };
+      };
+      if (!res.ok) {
+        showSystemNotice("error", "Importación Rainworx", data.error ?? `Error HTTP ${res.status}`);
+        return;
+      }
+      const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
+      if (configRes.ok) {
+        const payload = (await configRes.json()) as { config?: EditorConfig };
+        if (payload.config) {
+          const normalized = normalizeEditorConfigClient(payload.config);
+          setConfig(normalized);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
+          }
+          lastPersistedConfigRef.current = JSON.stringify(normalized);
+          setEditingDetails(
+            buildDetailsDraft(editingItem, getEditorOverrideForItem(editingItem, normalized.vehicleDetails)),
+          );
+        }
+      }
+      const skipped = data.editor?.skipped ?? [];
+      if (skipped.length > 0) {
+        showSystemNotice("info", "Importación", skipped.map((s) => s.reason).join(" · "));
+      }
+      showSystemNotice(
+        "success",
+        "Ficha sincronizada",
+        expectedPatente
+          ? `Datos de Rainworx importados (patente ${expectedPatente} verificada).`
+          : "Datos de Rainworx importados. Si esta unidad tenía patente vacía, conviene revisarla en el sistema origen.",
+      );
+    } catch {
+      showSystemNotice("error", "Importación Rainworx", "No se pudo completar la solicitud.");
+    } finally {
+      setDetailRainworxImporting(false);
     }
   };
 
@@ -6192,6 +6343,45 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.262.263A7 7 0 0 0 17.25 10a.75.75 0 0 0-1.5 0 5.48 5.48 0 0 1-.438 1.424ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.466l.312.311h-2.433a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.537a.75.75 0 0 0-1.5 0v2.033l-.262-.263A7 7 0 0 0 2.75 10a.75.75 0 0 0 1.5 0c0-.51.07-1.003.438-1.424Z" clipRule="evenodd" />
                   </svg>
                   {revalidating ? "Actualizando..." : "Actualizar inventario"}
+                </button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-4 text-sm">
+              <p className="font-semibold text-indigo-950">Importar ficha desde Rainworx</p>
+              <p className="mt-1 text-xs text-indigo-900/80">
+                No necesitas la consola del navegador. Pega aquí la URL de{" "}
+                <code className="rounded bg-white/80 px-1">vehiculoschocados.cl/.../LotDetails/...</code>. Si la unidad
+                aparece como &quot;sin patente&quot; en el inventario, indica también el ID interno del vehículo (UUID
+                del catálogo).
+              </p>
+              <div className="mt-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-end">
+                <label className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="text-xs font-medium text-slate-600">URL del lote Rainworx</span>
+                  <input
+                    type="url"
+                    value={rainworxLotUrl}
+                    onChange={(e) => setRainworxLotUrl(e.target.value)}
+                    placeholder="https://vehiculoschocados.cl/Event/LotDetails/..."
+                    className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="flex w-full flex-col gap-1 md:w-72">
+                  <span className="text-xs font-medium text-slate-600">ID en catálogo (opcional)</span>
+                  <input
+                    type="text"
+                    value={rainworxCatalogId}
+                    onChange={(e) => setRainworxCatalogId(e.target.value)}
+                    placeholder="UUID del ítem en /api/catalogo"
+                    className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono text-xs"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void importRainworxLot()}
+                  disabled={rainworxImporting}
+                  className="ui-focus shrink-0 rounded-md border border-indigo-400 bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  {rainworxImporting ? "Importando…" : "Importar desde Rainworx"}
                 </button>
               </div>
             </div>
@@ -10504,6 +10694,42 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   {label}
                 </button>
               ))}
+            </div>
+
+            <div className="rounded-xl border border-emerald-200/90 bg-emerald-50/60 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                Importar URL de Rainworx
+              </p>
+              <p className="mt-1 text-xs text-emerald-900/85">
+                Pega la URL de la ficha (ej.{" "}
+                <span className="font-mono text-[11px]">.../Event/LotDetails/11860442/...</span>).{" "}
+                {getExpectedPatenteForRainworx(editingItem, editingDetails) ? (
+                  <>
+                    Solo se importa si la patente del lote coincide con{" "}
+                    <strong>{getExpectedPatenteForRainworx(editingItem, editingDetails)}</strong>.
+                  </>
+                ) : (
+                  <>Como esta ficha no tiene patente cargada, no se exige coincidencia; revisa que la URL sea del vehículo correcto.</>
+                )}
+              </p>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  type="url"
+                  className="ui-focus min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="https://vehiculoschocados.cl/Event/LotDetails/..."
+                  value={detailRainworxUrl}
+                  onChange={(e) => setDetailRainworxUrl(e.target.value)}
+                  disabled={detailRainworxImporting}
+                />
+                <button
+                  type="button"
+                  onClick={() => void importRainworxInDetailEditor()}
+                  disabled={detailRainworxImporting}
+                  className="ui-focus shrink-0 rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:opacity-60"
+                >
+                  {detailRainworxImporting ? "Sincronizando…" : "Importar desde esta URL"}
+                </button>
+              </div>
             </div>
 
             {detailEditorTab === "general" ? (
