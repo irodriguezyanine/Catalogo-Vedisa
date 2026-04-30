@@ -35,6 +35,10 @@ type Body = {
   editorMerge?: "rainworx_wins" | "fill_empty";
   /** Si es true (default con `applyToEditor`), actualiza `vehiclePrices` con el precio actual del lote. */
   updateVehiclePrices?: boolean;
+  /**
+   * Patente normalizada esperada (p. ej. al editar una ficha). Si se envía y no coincide con la del lote Rainworx, no se guarda (409).
+   */
+  expectedPatente?: string;
 };
 
 /**
@@ -101,6 +105,29 @@ export async function POST(request: Request) {
         items,
         mapped: mapped.map((m) => ({ vehicleKey: m.vehicleKey, details: m.details })),
       });
+    }
+
+    const expectedPatente = normalizePatenteKey(body.expectedPatente);
+    if (expectedPatente) {
+      for (const row of mapped) {
+        if (!row.vehicleKey) {
+          return Response.json(
+            {
+              error:
+                "El lote Rainworx no incluye patente; no se puede verificar que corresponda a esta ficha.",
+            },
+            { status: 409 },
+          );
+        }
+        if (row.vehicleKey !== expectedPatente) {
+          return Response.json(
+            {
+              error: `La patente en Rainworx (${row.vehicleKey}) no coincide con esta ficha (${expectedPatente}). Revisa la URL o la patente del vehículo.`,
+            },
+            { status: 409 },
+          );
+        }
+      }
     }
 
     const load = await getEditorConfig();
