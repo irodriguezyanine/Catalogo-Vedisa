@@ -108,15 +108,30 @@ function extractGalleryFullUrls($: CheerioAPI): string[] {
 function extractDocumentos($: CheerioAPI, origin: string): RainworxDocumento[] {
   const out: RainworxDocumento[] = [];
   const seen = new Set<string>();
-  $(".detail__documents__container a[href]").each((_, el) => {
-    const href = $(el).attr("href")?.trim();
-    if (!href) return;
-    const abs = toAbsoluteUrl(origin, href);
+  const push = (href: string | undefined, labelSource: string) => {
+    if (!href?.trim()) return;
+    const abs = toAbsoluteUrl(origin, href.trim());
     if (seen.has(abs)) return;
     seen.add(abs);
-    const label = $(el).text().replace(/\s+/g, " ").trim() || abs.split("/").pop() || "Documento";
+    const label =
+      labelSource.replace(/\s+/g, " ").trim() || abs.split("/").pop()?.split("?")[0] || "Documento";
     out.push({ url: abs, label });
+  };
+
+  $(".detail__documents__container a[href]").each((_, el) => {
+    push($(el).attr("href"), $(el).text());
   });
+
+  if (out.length === 0) {
+    $(".panel").each((_, panel) => {
+      const title = $(panel).find(".panel-title, .panel-heading, h4, .panel-title-text").first().text().toLowerCase();
+      if (!title.includes("documento")) return;
+      $(panel).find("a[href]").each((_, el) => {
+        push($(el).attr("href"), $(el).text());
+      });
+    });
+  }
+
   return out;
 }
 

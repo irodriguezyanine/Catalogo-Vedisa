@@ -7,6 +7,7 @@ import {
   normalizePatenteKey,
   rainworxToEditorVehicleDetails,
 } from "@/lib/rainworx-to-editor";
+import { mirrorRainworxDocumentsToCloudinary } from "@/lib/rainworx-documents-cloudinary";
 import {
   fetchRainworxHtml,
   getRainworxOrigin,
@@ -105,6 +106,17 @@ export async function POST(request: Request) {
         { error: "Indica eventUrl o lotUrls en el cuerpo JSON" },
         { status: 400 },
       );
+    }
+
+    if (applyToEditor) {
+      for (let i = 0; i < items.length; i++) {
+        const s = items[i];
+        if (!s.documentos.length) continue;
+        items[i] = {
+          ...s,
+          documentos: await mirrorRainworxDocumentsToCloudinary(s.documentos, s.lotId),
+        };
+      }
     }
 
     const mapped = items.map((scraped) => ({

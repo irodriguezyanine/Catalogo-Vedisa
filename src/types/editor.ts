@@ -137,6 +137,8 @@ export type EditorVehicleDetails = {
   thumbnail?: string;
   view3dUrl?: string;
   imagesCsv?: string;
+  /** JSON: `[{"label":"…","url":"https://…"}]` documentos del lote (p. ej. PDF en Cloudinary). */
+  lotDocumentsJson?: string;
   originalPrice?: string;
   promoPrice?: string;
   promoEnabled?: boolean;

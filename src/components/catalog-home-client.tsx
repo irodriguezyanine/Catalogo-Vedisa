@@ -1007,6 +1007,28 @@ function sanitizeRichHtml(value: string): string {
   return html;
 }
 
+type LotDocumentLink = { url: string; label: string };
+
+function parseLotDocumentsJson(json: string | undefined | null): LotDocumentLink[] {
+  if (!json?.trim()) return [];
+  try {
+    const p = JSON.parse(json) as unknown;
+    if (!Array.isArray(p)) return [];
+    const out: LotDocumentLink[] = [];
+    for (const entry of p) {
+      if (!entry || typeof entry !== "object") continue;
+      const o = entry as Record<string, unknown>;
+      const url = typeof o.url === "string" ? o.url.trim() : "";
+      if (!url.startsWith("http")) continue;
+      const label = typeof o.label === "string" && o.label.trim() ? o.label.trim() : "Documento";
+      out.push({ url, label });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 function formatExtendedDescriptionHtml(value?: string | null): string {
   const normalized = String(value ?? "")
     .replace(/\/n/g, "\n")
@@ -1317,6 +1339,11 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
     thumbnail: override?.thumbnail ?? (item.thumbnail ?? ""),
     view3dUrl: override?.view3dUrl ?? (item.view3dUrl ?? ""),
     imagesCsv: override?.imagesCsv ?? baseImages,
+    lotDocumentsJson:
+      override?.lotDocumentsJson ??
+      String(
+        getLookupValue(lookup, ["documentos_lote_json", "lot_documents_json", "glo3d.documentos_lote_json"]) ?? "",
+      ),
   };
 }
 
@@ -1373,6 +1400,7 @@ function sanitizeDetails(details: EditorVehicleDetails): EditorVehicleDetails | 
     thumbnail: cleanOptional(details.thumbnail),
     view3dUrl: cleanOptional(details.view3dUrl),
     imagesCsv: cleanOptional(details.imagesCsv),
+    lotDocumentsJson: cleanOptional(details.lotDocumentsJson),
   };
 
   if (Object.values(clean).every((value) => !value)) return undefined;
@@ -1443,6 +1471,9 @@ function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails
       ...(override.pruebaMotor ? { prueba_motor: override.pruebaMotor, pdm: override.pruebaMotor } : {}),
       ...(override.pruebaDesplazamiento ? { prueba_desplazamiento: override.pruebaDesplazamiento, pdd: override.pruebaDesplazamiento } : {}),
       ...(override.estadoAirbags ? { estado_airbags: override.estadoAirbags, eda: override.estadoAirbags } : {}),
+      ...(override.lotDocumentsJson
+        ? { documentos_lote_json: override.lotDocumentsJson, lot_documents_json: override.lotDocumentsJson }
+        : {}),
       ...(override.nombrePropietarioAnterior ? { nombre_propietario_anterior: override.nombrePropietarioAnterior, npa: override.nombrePropietarioAnterior } : {}),
       ...(override.rutPropietarioAnterior ? { rut_propietario_anterior: override.rutPropietarioAnterior, rpa: override.rutPropietarioAnterior } : {}),
       ...(override.rutVerificador ? { rut_verificador: override.rutVerificador, verifier_rut: override.rutVerificador } : {}),
@@ -3539,6 +3570,20 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       "notas",
     ]);
     return hasValue(rawText) ? String(rawText) : null;
+  }, [selectedVehicle, selectedVehicleLookup, selectedVehicleOverride]);
+
+  const selectedVehicleLotDocuments = useMemo(() => {
+    if (!selectedVehicle) return [] as LotDocumentLink[];
+    const j =
+      selectedVehicleOverride?.lotDocumentsJson?.trim() ||
+      String(
+        getLookupValue(selectedVehicleLookup, [
+          "documentos_lote_json",
+          "lot_documents_json",
+          "glo3d.documentos_lote_json",
+        ]) ?? "",
+      );
+    return parseLotDocumentsJson(j);
   }, [selectedVehicle, selectedVehicleLookup, selectedVehicleOverride]);
 
   const selectedVehicleTabs = useMemo(
@@ -9420,6 +9465,28 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                         Valor + gastos de impuesto y transferencia.
                       </p>
                     </div>
+                    {selectedVehicleLotDocuments.length > 0 ? (
+                      <div className="mt-2 rounded-md border border-slate-200 bg-white p-3">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Documentación</p>
+                        <ul className="mt-2 list-none space-y-2 p-0">
+                          {selectedVehicleLotDocuments.map((doc, idx) => (
+                            <li key={`lot-doc-${doc.url}-${idx}`}>
+                              <a
+                                href={doc.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 underline decoration-cyan-400 underline-offset-2 hover:text-cyan-800"
+                              >
+                                <span className="inline-block rounded bg-red-50 px-1 py-0.5 text-[10px] font-bold text-red-700">
+                                  PDF
+                                </span>
+                                {doc.label}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
                 {selectedVehicleTab === "descripcion" ? (

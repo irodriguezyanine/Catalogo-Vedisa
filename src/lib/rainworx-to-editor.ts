@@ -279,6 +279,9 @@ export function rainworxToEditorVehicleDetails(scraped: RainworxLotScraped): Edi
     description: scraped.subtitle ?? observaciones,
     ...(observaciones && /multa/i.test(observaciones) ? { multas: observaciones } : {}),
     extendedDescription,
+    ...(scraped.documentos.length > 0
+      ? { lotDocumentsJson: JSON.stringify(scraped.documentos) }
+      : {}),
     thumbnail: scraped.imagenPrincipal,
     imagesCsv,
   };
