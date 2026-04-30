@@ -21,6 +21,8 @@ type Body = {
   eventUrl?: string;
   /** Una o más URLs de `/Event/LotDetails/{lotId}/...`. */
   lotUrls?: string[];
+  /** Mismo orden que `lotUrls`: `id` del vehículo en catálogo (UUID de inventario) para guardar también bajo esa clave si el listado no tiene patente. */
+  catalogItemIds?: string[];
   /** Si se envía `eventUrl`, filtra lotes cuya patente coincida (ej. STHC32 o XXYY12). */
   patente?: string;
   maxLots?: number;
@@ -103,32 +105,33 @@ export async function POST(request: Request) {
 
     const load = await getEditorConfig();
     let config = load.config;
-    const applied: string[] = [];
+    const applied = new Set<string>();
     const skipped: { reason: string; lotId?: string }[] = [];
 
-    for (const row of mapped) {
+    for (let i = 0; i < mapped.length; i++) {
+      const row = mapped[i];
       if (!row.vehicleKey) {
         skipped.push({ reason: "Sin patente en ficha Rainworx", lotId: row.scraped.lotId });
         continue;
       }
-      const prev = config.vehicleDetails[row.vehicleKey];
-      config = {
-        ...config,
-        vehicleDetails: {
-          ...config.vehicleDetails,
-          [row.vehicleKey]: mergeEditorVehicleDetails(prev, row.details, editorMerge),
-        },
-      };
-      if (updateVehiclePrices && row.scraped.precioActualClp != null) {
-        config = {
-          ...config,
-          vehiclePrices: {
-            ...config.vehiclePrices,
-            [row.vehicleKey]: formatClpString(row.scraped.precioActualClp),
-          },
-        };
+
+      const keysToWrite = new Set<string>([row.vehicleKey]);
+      const catalogId = body.catalogItemIds?.[i]?.trim();
+      if (catalogId) keysToWrite.add(catalogId);
+      for (const [k, v] of Object.entries(config.vehicleDetails)) {
+        if (normalizePatenteKey(v.patente) === row.vehicleKey) keysToWrite.add(k);
       }
-      applied.push(row.vehicleKey);
+
+      let nextDetails = { ...config.vehicleDetails };
+      let nextPrices = { ...config.vehiclePrices };
+      for (const k of keysToWrite) {
+        nextDetails[k] = mergeEditorVehicleDetails(nextDetails[k], row.details, editorMerge);
+        if (updateVehiclePrices && row.scraped.precioActualClp != null) {
+          nextPrices[k] = formatClpString(row.scraped.precioActualClp);
+        }
+        applied.add(k);
+      }
+      config = { ...config, vehicleDetails: nextDetails, vehiclePrices: nextPrices };
     }
 
     const saved = await saveEditorConfig(config, session.email);
@@ -140,7 +143,7 @@ export async function POST(request: Request) {
           count: items.length,
           items,
           mapped: mapped.map((m) => ({ vehicleKey: m.vehicleKey, details: m.details })),
-          applied,
+          applied: [...applied],
           skipped,
         },
         { status: 400 },
@@ -156,7 +159,7 @@ export async function POST(request: Request) {
         saved: true,
         merge: editorMerge,
         pricesUpdated: updateVehiclePrices,
-        applied,
+        applied: [...applied],
         skipped,
       },
     });

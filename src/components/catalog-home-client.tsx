@@ -486,6 +486,26 @@ function isBaseHomeSectionOrderId(value: string): value is SectionId {
   return (BASE_HOME_SECTION_ORDER as string[]).includes(value);
 }
 
+/** Combina overrides guardados bajo `vehicleDetails[item.id]` y bajo la patente (p. ej. import Rainworx). */
+function getEditorOverrideForItem(
+  item: CatalogItem,
+  vehicleDetails: Record<string, EditorVehicleDetails>,
+): EditorVehicleDetails | undefined {
+  const fromId = vehicleDetails[item.id];
+  const raw = item.raw as Record<string, unknown>;
+  const rawPatente = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number].find(
+    (v) => typeof v === "string" && v.trim(),
+  ) as string | undefined;
+  const patentKey = rawPatente
+    ? rawPatente.toUpperCase().replace(/\s+/g, "").replace(/-/g, "")
+    : fromId?.patente?.trim()
+      ? fromId.patente.toUpperCase().replace(/\s+/g, "").replace(/-/g, "")
+      : "";
+  const fromPatentKey = patentKey ? vehicleDetails[patentKey] : undefined;
+  if (fromId && fromPatentKey) return { ...fromId, ...fromPatentKey };
+  return fromPatentKey ?? fromId;
+}
+
 function getVehicleKey(item: CatalogItem): string {
   const raw = item.raw as Record<string, unknown>;
   const patent = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number]
@@ -2550,7 +2570,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const items = useMemo(
     () =>
       [...rawItems, ...manualItems].map((item) =>
-        applyDetailsOverride(item, config.vehicleDetails[getVehicleKey(item)]),
+        applyDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
       ),
     [rawItems, manualItems, config.vehicleDetails],
   );
