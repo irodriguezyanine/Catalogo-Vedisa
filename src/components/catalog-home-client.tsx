@@ -2020,6 +2020,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const [saving, setSaving] = useState(false);
   const [autoSaveState, setAutoSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string>("");
+  const [syncRetrying, setSyncRetrying] = useState(false);
   const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
   const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
@@ -5457,6 +5458,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ config: nextConfig }),
     });
+    const payload = (await response.json().catch(() => ({}))) as {
+      config?: EditorConfig;
+      syncOk?: boolean;
+      error?: string;
+    };
     setSaving(false);
     if (!response.ok) {
       setAutoSaveState("error");
@@ -5465,11 +5471,46 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         "Guardado local activo",
         "Los cambios se guardaron en este navegador. El guardado central en servidor está temporalmente no disponible.",
       );
+      if (payload.syncOk === false) {
+        showSystemNotice(
+          "info",
+          "Sincronización pendiente",
+          payload.error ?? "La configuración se guardó, pero la sincronización compartida falló.",
+        );
+      }
       return;
     }
     setAutoSaveState("saved");
     setLastAutoSaveAt(new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }));
-    lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+    const configPersistida = payload.config ? normalizeEditorConfigClient(payload.config) : nextConfig;
+    lastPersistedConfigRef.current = JSON.stringify(configPersistida);
+    if (payload.syncOk === false) {
+      showSystemNotice(
+        "info",
+        "Sincronización pendiente",
+        payload.error ?? "La configuración se guardó, pero la sincronización compartida quedó pendiente.",
+      );
+    }
+  }, [showSystemNotice]);
+
+  const retrySharedSync = useCallback(async () => {
+    setSyncRetrying(true);
+    try {
+      const response = await fetch("/api/admin/editor-config/sync", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
+      }
+      showSystemNotice("success", "Sincronización compartida", "Se reintentó la sincronización y finalizó correctamente.");
+    } catch (error) {
+      showSystemNotice(
+        "error",
+        "Sincronización compartida",
+        error instanceof Error ? error.message : "No se pudo completar el reintento.",
+      );
+    } finally {
+      setSyncRetrying(false);
+    }
   }, [showSystemNotice]);
 
   useEffect(() => {
@@ -6546,6 +6587,16 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.262.263A7 7 0 0 0 17.25 10a.75.75 0 0 0-1.5 0 5.48 5.48 0 0 1-.438 1.424ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.466l.312.311h-2.433a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.537a.75.75 0 0 0-1.5 0v2.033l-.262-.263A7 7 0 0 0 2.75 10a.75.75 0 0 0 1.5 0c0-.51.07-1.003.438-1.424Z" clipRule="evenodd" />
                   </svg>
                   {revalidating ? "Actualizando..." : "Actualizar inventario"}
+                </button>
+                <button
+                  onClick={retrySharedSync}
+                  disabled={syncRetrying}
+                  className="ui-focus inline-flex items-center gap-1.5 rounded-md border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 shadow-sm transition hover:bg-sky-100 disabled:opacity-60"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 ${syncRetrying ? "animate-spin" : ""}`}>
+                    <path d="M10 2a8 8 0 1 0 7.747 10h-2.08A6 6 0 1 1 10 4v2l4-3-4-3v2Z" />
+                  </svg>
+                  {syncRetrying ? "Reintentando..." : "Reintentar sync"}
                 </button>
               </div>
             </div>

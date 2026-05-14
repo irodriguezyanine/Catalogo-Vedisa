@@ -207,7 +207,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const sync = await syncEditorConfigToSharedTables(config);
+    const normalizedConfig = saved.normalizedConfig ?? config;
+    const sync = await syncEditorConfigToSharedTables(normalizedConfig);
 
     return Response.json({
       ok: true,

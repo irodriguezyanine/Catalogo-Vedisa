@@ -142,7 +142,10 @@ export async function getEditorConfig(): Promise<EditorConfigLoadResult> {
   };
 }
 
-export async function saveEditorConfig(config: EditorConfig, updatedBy: string): Promise<{ ok: boolean; error?: string }> {
+export async function saveEditorConfig(
+  config: EditorConfig,
+  updatedBy: string,
+): Promise<{ ok: boolean; error?: string; normalizedConfig?: EditorConfig }> {
   const supabase = getServerSupabase();
   if (!supabase) {
     return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY o URL para guardar configuración." };
@@ -157,7 +160,7 @@ export async function saveEditorConfig(config: EditorConfig, updatedBy: string):
   };
 
   const fullSave = await supabase.from(EDITOR_TABLE).upsert(payloadWithAudit, { onConflict: "id" });
-  if (!fullSave.error) return { ok: true };
+  if (!fullSave.error) return { ok: true, normalizedConfig };
 
   // Compatibilidad: algunas instalaciones antiguas tienen solo (id, config).
   const payloadMinimal = {
@@ -165,7 +168,7 @@ export async function saveEditorConfig(config: EditorConfig, updatedBy: string):
     config: normalizedConfig,
   };
   const fallbackSave = await supabase.from(EDITOR_TABLE).upsert(payloadMinimal, { onConflict: "id" });
-  if (!fallbackSave.error) return { ok: true };
+  if (!fallbackSave.error) return { ok: true, normalizedConfig };
 
   return {
     ok: false,

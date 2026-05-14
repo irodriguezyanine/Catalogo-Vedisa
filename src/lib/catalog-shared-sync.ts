@@ -407,12 +407,15 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
   }
 
   const remateItemRows: RemateItemSyncRow[] = [];
+  const desiredRemateItemKeys = new Set<string>();
   for (const [vehicleKey, remateId] of eventByVehicle.entries()) {
     const patentResolved = resolveVehiclePatent(config, vehicleKey);
     if (!patentResolved) {
       result.skipped.push(`Asignación omitida sin patente: ${vehicleKey}`);
       continue;
     }
+    const patenteUpper = patentResolved.patente.trim().toUpperCase();
+    desiredRemateItemKeys.add(`${remateId}|${patenteUpper}|factura_exenta`);
     remateItemRows.push(buildRemateItemPayload(config, vehicleKey, remateId, patentResolved.patente));
   }
 
@@ -421,6 +424,39 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
       .from(REMATES_ITEMS_TABLE)
       .upsert(remateItemRows, { onConflict: "remate_id,patente,tipo_documento" });
     if (error) throw new Error(`No se pudieron sincronizar items de remate: ${error.message}`);
+
+    // Limpia vínculos obsoletos de origen catálogo que ya no están en la configuración actual.
+    const remateIds = [...new Set(remateItemRows.map((row) => row.remate_id))];
+    const { data: existingRows, error: existingError } = await supabase
+      .from(REMATES_ITEMS_TABLE)
+      .select("id, remate_id, patente, tipo_documento, extra_fields")
+      .in("remate_id", remateIds);
+    if (!existingError && existingRows) {
+      const toDeleteIds: string[] = [];
+      for (const row of existingRows as Array<{
+        id: string;
+        remate_id: string;
+        patente: string | null;
+        tipo_documento: string;
+        extra_fields?: Record<string, unknown> | null;
+      }>) {
+        const source = String((row.extra_fields?.source_system as string | undefined) ?? "");
+        if (source !== "catalogo") continue;
+        const key = `${row.remate_id}|${String(row.patente ?? "").trim().toUpperCase()}|${row.tipo_documento}`;
+        if (!desiredRemateItemKeys.has(key)) {
+          toDeleteIds.push(row.id);
+        }
+      }
+      if (toDeleteIds.length > 0) {
+        const { error: delError } = await supabase
+          .from(REMATES_ITEMS_TABLE)
+          .delete()
+          .in("id", toDeleteIds);
+        if (delError) {
+          result.skipped.push(`No se pudieron limpiar items obsoletos: ${delError.message}`);
+        }
+      }
+    }
     result.remateItemsUpserted = remateItemRows.length;
   }
 

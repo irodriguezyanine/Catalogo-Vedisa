@@ -23,15 +23,16 @@ export async function PUT(req: Request) {
   if (!result.ok) {
     return Response.json({ ok: false, error: result.error }, { status: 400 });
   }
+  const normalizedConfig = result.normalizedConfig ?? config
 
   try {
-    const sync = await syncEditorConfigToSharedTables(config);
-    return Response.json({ ok: true, sync });
+    const sync = await syncEditorConfigToSharedTables(normalizedConfig);
+    return Response.json({ ok: true, sync, config: normalizedConfig, syncOk: true });
   } catch (error) {
     const message =
       error instanceof Error
         ? error.message
         : "Se guardó la configuración, pero falló la sincronización compartida.";
-    return Response.json({ ok: false, error: message }, { status: 500 });
+    return Response.json({ ok: false, error: message, config: normalizedConfig, syncOk: false }, { status: 500 });
   }
 }
