@@ -2,6 +2,7 @@ export type SectionId = "proximos-remates" | "ventas-directas" | "novedades" | "
 export type HomeSectionOrderId = SectionId | `managed:${string}`;
 
 export type VehicleTypeId = "livianos" | "pesados" | "maquinaria" | "otros";
+export type CommercialEventType = "remate" | "venta_directa";
 
 export type UpcomingAuction = {
   id: string;
@@ -9,6 +10,7 @@ export type UpcomingAuction = {
   date: string;
   startAt?: string;
   endAt?: string;
+  eventType?: CommercialEventType;
 };
 
 export type SectionTextConfig = {

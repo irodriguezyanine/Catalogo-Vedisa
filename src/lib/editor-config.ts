@@ -5,6 +5,23 @@ import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
 const EDITOR_TABLE = process.env.CATALOG_EDITOR_TABLE ?? "catalogo_editor_config";
 const EDITOR_ROW_ID = "global";
 
+function normalizeEventTypeFromName(value?: string | null): "remate" | "venta_directa" {
+  const normalized = String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  if (
+    normalized.includes("ventadirecta") ||
+    normalized.includes("vtadirecta") ||
+    normalized.includes("vtdirecta") ||
+    normalized.includes("ventadir")
+  ) {
+    return "venta_directa";
+  }
+  return "remate";
+}
+
 function getServerSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -66,7 +83,13 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
     soldVehicleHistory: migrated?.soldVehicleHistory ?? defaults.soldVehicleHistory,
     vehiclePrices: migrated?.vehiclePrices ?? defaults.vehiclePrices,
     vehicleDetails: migrated?.vehicleDetails ?? defaults.vehicleDetails,
-    upcomingAuctions: migrated?.upcomingAuctions ?? defaults.upcomingAuctions,
+    upcomingAuctions: (migrated?.upcomingAuctions ?? defaults.upcomingAuctions).map((auction) => ({
+      ...auction,
+      eventType:
+        auction.eventType === "venta_directa" || auction.eventType === "remate"
+          ? auction.eventType
+          : normalizeEventTypeFromName(auction.name),
+    })),
     vehicleUpcomingAuctionIds:
       migrated?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
     sectionTexts: {

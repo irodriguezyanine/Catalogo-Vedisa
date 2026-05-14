@@ -27,6 +27,7 @@ import {
   type ManualPublication,
   type SoldVehicleRecord,
   type UpcomingAuction,
+  type CommercialEventType,
   type SectionId,
   type VehicleTypeId,
 } from "@/types/editor";
@@ -192,6 +193,30 @@ const sectionCategoryKey = (sectionId: SectionId) => `section:${sectionId}` as c
 const auctionCategoryKey = (auctionId: string) => `auction:${auctionId}`;
 const managedCategoryKey = (categoryId: string) => `managed:${categoryId}`;
 
+function detectCommercialEventType(value?: string | null): CommercialEventType {
+  const normalized = String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  if (
+    normalized.includes("ventadirecta") ||
+    normalized.includes("vtadirecta") ||
+    normalized.includes("vtdirecta") ||
+    normalized.includes("ventadir")
+  ) {
+    return "venta_directa";
+  }
+  return "remate";
+}
+
+function getAuctionEventType(auction: UpcomingAuction): CommercialEventType {
+  if (auction.eventType === "venta_directa" || auction.eventType === "remate") {
+    return auction.eventType;
+  }
+  return detectCommercialEventType(auction.name);
+}
+
 function normalizeEditorConfigClient(
   value?: Partial<EditorConfig> | null,
 ): EditorConfig {
@@ -253,7 +278,10 @@ function normalizeEditorConfigClient(
     soldVehicleHistory: migrated?.soldVehicleHistory ?? defaults.soldVehicleHistory,
     vehiclePrices: migrated?.vehiclePrices ?? defaults.vehiclePrices,
     vehicleDetails: migrated?.vehicleDetails ?? defaults.vehicleDetails,
-    upcomingAuctions: migrated?.upcomingAuctions ?? defaults.upcomingAuctions,
+    upcomingAuctions: (migrated?.upcomingAuctions ?? defaults.upcomingAuctions).map((auction) => ({
+      ...auction,
+      eventType: getAuctionEventType(auction),
+    })),
     vehicleUpcomingAuctionIds:
       migrated?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
     sectionTexts: {
@@ -2079,10 +2107,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const [newAuctionDate, setNewAuctionDate] = useState("");
   const [newAuctionStartTime, setNewAuctionStartTime] = useState("10:00");
   const [newAuctionEndTime, setNewAuctionEndTime] = useState("15:00");
+  const [newAuctionEventType, setNewAuctionEventType] = useState<CommercialEventType>("remate");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryDescription, setNewCategoryDescription] = useState("");
   const [showCreateCategoryForm, setShowCreateCategoryForm] = useState(false);
-  const [createGroupKind, setCreateGroupKind] = useState<"categoria" | "remate">("categoria");
+  const [createGroupKind, setCreateGroupKind] = useState<"categoria" | "remate" | "venta_directa">("categoria");
   const [editingSectionTextId, setEditingSectionTextId] = useState<SectionId | null>(null);
   const [assignCategoryId, setAssignCategoryId] = useState<string | null>(null);
   const [assignSearchTerm, setAssignSearchTerm] = useState("");
@@ -2928,6 +2957,14 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         (a.date ?? "").localeCompare(b.date ?? "", "es"),
       ),
     [config.upcomingAuctions],
+  );
+  const sortedRemateAuctions = useMemo(
+    () => sortedUpcomingAuctions.filter((auction) => getAuctionEventType(auction) === "remate"),
+    [sortedUpcomingAuctions],
+  );
+  const sortedVentaDirectaAuctions = useMemo(
+    () => sortedUpcomingAuctions.filter((auction) => getAuctionEventType(auction) === "venta_directa"),
+    [sortedUpcomingAuctions],
   );
 
   const upcomingAuctionGroups = useMemo(
@@ -4943,7 +4980,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     [resolvedHomeSectionOrder],
   );
 
-  const createUpcomingAuction = () => {
+  const createUpcomingAuction = (eventType: CommercialEventType) => {
     const name = newAuctionName.trim();
     const date = newAuctionDate.trim();
     const startAt = toChileIsoDateTime(date, newAuctionStartTime);
@@ -4963,12 +5000,13 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     const id = crypto.randomUUID();
     setConfig((prev) => ({
       ...prev,
-      upcomingAuctions: [...prev.upcomingAuctions, { id, name, date, startAt, endAt }],
+      upcomingAuctions: [...prev.upcomingAuctions, { id, name, date, startAt, endAt, eventType }],
     }));
     setNewAuctionName("");
     setNewAuctionDate("");
     setNewAuctionStartTime("10:00");
     setNewAuctionEndTime("15:00");
+    setNewAuctionEventType("remate");
   };
 
   const createManagedCategory = (openAssign = false) => {
@@ -7193,21 +7231,35 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 </div>
 
                 {showCreateCategoryForm ? (
-                  <div className="mt-3 grid gap-2 rounded-lg border border-cyan-100 bg-cyan-50/40 p-2 md:grid-cols-[auto_1fr_1fr_auto_auto]">
+                  <div className="mt-3 grid gap-2 rounded-lg border border-cyan-100 bg-cyan-50/40 p-2 md:grid-cols-[auto_auto_1fr_1fr_auto_auto]">
                     <select
                       value={createGroupKind}
-                      onChange={(event) => setCreateGroupKind(event.target.value as "categoria" | "remate")}
+                      onChange={(event) => {
+                        const kind = event.target.value as "categoria" | "remate" | "venta_directa";
+                        setCreateGroupKind(kind);
+                        if (kind === "remate") setNewAuctionEventType("remate");
+                        if (kind === "venta_directa") setNewAuctionEventType("venta_directa");
+                      }}
                       className="ui-focus rounded-md border border-cyan-200 bg-white px-2.5 py-2 text-sm"
                     >
                       <option value="categoria">Categoría</option>
                       <option value="remate">Remate</option>
+                      <option value="venta_directa">Venta directa</option>
                     </select>
-                    {createGroupKind === "remate" ? (
+                    {createGroupKind === "remate" || createGroupKind === "venta_directa" ? (
                       <>
+                        <select
+                          value={newAuctionEventType}
+                          onChange={(event) => setNewAuctionEventType(event.target.value as CommercialEventType)}
+                          className="ui-focus rounded-md border border-cyan-200 bg-white px-2.5 py-2 text-sm"
+                        >
+                          <option value="remate">Remate</option>
+                          <option value="venta_directa">Venta directa</option>
+                        </select>
                         <input
                           value={newAuctionName}
                           onChange={(event) => setNewAuctionName(event.target.value)}
-                          placeholder="Nombre del remate"
+                          placeholder={newAuctionEventType === "venta_directa" ? "Nombre de la venta directa" : "Nombre del remate"}
                           className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
                         />
                         <input
@@ -7232,10 +7284,10 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                         />
                         <button
                           type="button"
-                          onClick={createUpcomingAuction}
+                          onClick={() => createUpcomingAuction(newAuctionEventType)}
                           className="ui-focus rounded-md border border-cyan-300 bg-white px-3 py-2 text-sm font-semibold text-cyan-700 transition hover:bg-cyan-50"
                         >
-                          Crear remate
+                          {newAuctionEventType === "venta_directa" ? "Crear venta directa" : "Crear remate"}
                         </button>
                         <button
                           type="button"
@@ -7243,12 +7295,14 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                             if (!newAuctionName.trim() || !newAuctionDate.trim() || !newAuctionStartTime.trim() || !newAuctionEndTime.trim()) {
                               showSystemNotice(
                                 "error",
-                                "Remate incompleto",
-                                "Ingresa nombre, fecha, hora de inicio y cierre para crear el remate.",
+                                newAuctionEventType === "venta_directa" ? "Venta directa incompleta" : "Remate incompleto",
+                                `Ingresa nombre, fecha, hora de inicio y cierre para crear ${
+                                  newAuctionEventType === "venta_directa" ? "la venta directa" : "el remate"
+                                }.`,
                               );
                               return;
                             }
-                            createUpcomingAuction();
+                            createUpcomingAuction(newAuctionEventType);
                             setShowCreateCategoryForm(false);
                           }}
                           className="ui-focus rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
@@ -7448,115 +7502,131 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     },
                   )}
 
-                  <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
-                    Remates creados
-                  </p>
-                  {sortedUpcomingAuctions.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-500">
-                      No hay remates creados.
+                  {([
+                    {
+                      title: "Remates creados",
+                      empty: "No hay remates creados.",
+                      auctions: sortedRemateAuctions,
+                    },
+                    {
+                      title: "Ventas directas creadas",
+                      empty: "No hay ventas directas creadas.",
+                      auctions: sortedVentaDirectaAuctions,
+                    },
+                  ]).map((group) => (
+                    <div key={group.title} className="space-y-2">
+                      <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
+                        {group.title}
+                      </p>
+                      {group.auctions.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-500">
+                          {group.empty}
+                        </div>
+                      ) : (
+                        group.auctions.map((auction) => {
+                          const count = Object.values(config.vehicleUpcomingAuctionIds).filter(
+                            (id) => id === auction.id,
+                          ).length;
+                          const auctionHidden = hiddenHomeCategoryIds.has(auctionCategoryKey(auction.id));
+                          return (
+                            <article
+                              key={auction.id}
+                              className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1.1fr)_minmax(300px,1.8fr)_72px_228px] md:items-center"
+                            >
+                              <div className="min-h-8 md:flex md:items-center">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                  {auction.name}
+                                </p>
+                              </div>
+                              <p className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600">
+                                {getAuctionEventType(auction) === "venta_directa" ? "Venta directa programada para " : "Remate programado para "}
+                                {formatAuctionWindowLabel(auction)}
+                              </p>
+                              <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                                {count}
+                              </div>
+                              <div className="flex items-center justify-end gap-1.5 md:w-56">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleCategoryHidden(auctionCategoryKey(auction.id), auction.name)
+                                  }
+                                  className={`ui-focus inline-flex h-8 w-8 items-center justify-center rounded border transition ${
+                                    auctionHidden
+                                      ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                                  }`}
+                                  aria-label={`${auctionHidden ? "Mostrar" : "Ocultar"} ${auction.name} en home`}
+                                  title={auctionHidden ? "Mostrar en home" : "Ocultar del home"}
+                                >
+                                  {auctionHidden ? (
+                                    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                      <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16s-6.63-2-8.37-5.42a1.3 1.3 0 0 1 0-1.16C3.37 6 6.62 4 10 4Zm0 2c-2.6 0-5.16 1.5-6.71 4 .01.02.02.04.03.05C4.84 12.5 7.4 14 10 14s5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6Zm0 1.75A2.25 2.25 0 1 1 10 12.25 2.25 2.25 0 0 1 10 7.75Z" />
+                                    </svg>
+                                  ) : (
+                                    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                      <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16c-1.72 0-3.42-.52-4.95-1.5l1.5-1.5c1.06.63 2.24.97 3.45.97 2.6 0 5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6c-1.2 0-2.38.34-3.43.96L5.1 5.49A9.85 9.85 0 0 1 10 4Zm7.2 13.6a.75.75 0 0 1-1.06 0l-13-13a.75.75 0 1 1 1.06-1.06l13 13a.75.75 0 0 1 0 1.06ZM10 7.75c.7 0 1.33.32 1.75.83L8.58 11.75A2.25 2.25 0 0 1 10 7.75Z" />
+                                    </svg>
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAuctionFilterId(auction.id);
+                                    setEditorGroupFilter("proximos-remates");
+                                    setEditorPage(1);
+                                    setAdminTab("vehiculos");
+                                  }}
+                                  className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
+                                  aria-label={`Ver y gestionar ${auction.name}`}
+                                  title="Ver y gestionar"
+                                >
+                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                    <path d="M10 4c4.5 0 7.8 3.16 8.9 5.5.13.28.13.62 0 .9C17.8 12.74 14.5 15.9 10 15.9S2.2 12.74 1.1 10.4a1.06 1.06 0 0 1 0-.9C2.2 7.16 5.5 4 10 4Zm0 2c-3.42 0-6.06 2.31-7.08 4 .99 1.69 3.64 4 7.08 4s6.09-2.31 7.08-4C16.06 8.31 13.42 6 10 6Zm0 1.5A2.5 2.5 0 1 1 7.5 10 2.5 2.5 0 0 1 10 7.5Z" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openBatchAssignModal({ type: "auction", auctionId: auction.id })}
+                                  className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
+                                  aria-label={`Agregar unidades a ${auction.name}`}
+                                  title="Agregar unidades"
+                                >
+                                  +
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFinalizeAuctionId(auction.id);
+                                    setFinalizeAuctionSearchTerm("");
+                                    setFinalizeSoldVehicleKeys([]);
+                                  }}
+                                  className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-amber-300 bg-amber-50 text-amber-700"
+                                  aria-label={`Finalizar remate ${auction.name}`}
+                                  title="Finalizar remate"
+                                >
+                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                    <path fillRule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.25a1 1 0 0 1-1.42.001l-3-3.015a1 1 0 1 1 1.418-1.41l2.29 2.3 6.49-6.534a1 1 0 0 1 1.416-.006Z" clipRule="evenodd" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeUpcomingAuction(auction.id)}
+                                  className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
+                                  aria-label={`Quitar ${auction.name}`}
+                                  title="Quitar"
+                                >
+                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                    <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Zm6 .5a.5.5 0 0 1 .5.5v.5h-7V3.5a.5.5 0 0 1 .5-.5h6ZM8 8.25a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3 0a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Z" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </article>
+                          );
+                        })
+                      )}
                     </div>
-                  ) : (
-                    sortedUpcomingAuctions.map((auction) => {
-                      const count = Object.values(config.vehicleUpcomingAuctionIds).filter(
-                        (id) => id === auction.id,
-                      ).length;
-                      const auctionHidden = hiddenHomeCategoryIds.has(auctionCategoryKey(auction.id));
-                      return (
-                        <article
-                          key={auction.id}
-                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1.1fr)_minmax(300px,1.8fr)_72px_228px] md:items-center"
-                        >
-                          <div className="min-h-8 md:flex md:items-center">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                              {auction.name}
-                            </p>
-                          </div>
-                          <p className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600">
-                            Remate programado para {formatAuctionWindowLabel(auction)}
-                          </p>
-                          <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
-                            {count}
-                          </div>
-                          <div className="flex items-center justify-end gap-1.5 md:w-56">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                toggleCategoryHidden(auctionCategoryKey(auction.id), auction.name)
-                              }
-                              className={`ui-focus inline-flex h-8 w-8 items-center justify-center rounded border transition ${
-                                auctionHidden
-                                  ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                              }`}
-                              aria-label={`${auctionHidden ? "Mostrar" : "Ocultar"} ${auction.name} en home`}
-                              title={auctionHidden ? "Mostrar en home" : "Ocultar del home"}
-                            >
-                              {auctionHidden ? (
-                                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                  <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16s-6.63-2-8.37-5.42a1.3 1.3 0 0 1 0-1.16C3.37 6 6.62 4 10 4Zm0 2c-2.6 0-5.16 1.5-6.71 4 .01.02.02.04.03.05C4.84 12.5 7.4 14 10 14s5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6Zm0 1.75A2.25 2.25 0 1 1 10 12.25 2.25 2.25 0 0 1 10 7.75Z" />
-                                </svg>
-                              ) : (
-                                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                  <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16c-1.72 0-3.42-.52-4.95-1.5l1.5-1.5c1.06.63 2.24.97 3.45.97 2.6 0 5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6c-1.2 0-2.38.34-3.43.96L5.1 5.49A9.85 9.85 0 0 1 10 4Zm7.2 13.6a.75.75 0 0 1-1.06 0l-13-13a.75.75 0 1 1 1.06-1.06l13 13a.75.75 0 0 1 0 1.06ZM10 7.75c.7 0 1.33.32 1.75.83L8.58 11.75A2.25 2.25 0 0 1 10 7.75Z" />
-                                </svg>
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setAuctionFilterId(auction.id);
-                                setEditorGroupFilter("proximos-remates");
-                                setEditorPage(1);
-                                setAdminTab("vehiculos");
-                              }}
-                              className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
-                              aria-label={`Ver y gestionar ${auction.name}`}
-                              title="Ver y gestionar"
-                            >
-                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                <path d="M10 4c4.5 0 7.8 3.16 8.9 5.5.13.28.13.62 0 .9C17.8 12.74 14.5 15.9 10 15.9S2.2 12.74 1.1 10.4a1.06 1.06 0 0 1 0-.9C2.2 7.16 5.5 4 10 4Zm0 2c-3.42 0-6.06 2.31-7.08 4 .99 1.69 3.64 4 7.08 4s6.09-2.31 7.08-4C16.06 8.31 13.42 6 10 6Zm0 1.5A2.5 2.5 0 1 1 7.5 10 2.5 2.5 0 0 1 10 7.5Z" />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openBatchAssignModal({ type: "auction", auctionId: auction.id })}
-                              className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
-                              aria-label={`Agregar unidades a ${auction.name}`}
-                              title="Agregar unidades"
-                            >
-                              +
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setFinalizeAuctionId(auction.id);
-                                setFinalizeAuctionSearchTerm("");
-                                setFinalizeSoldVehicleKeys([]);
-                              }}
-                              className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-amber-300 bg-amber-50 text-amber-700"
-                              aria-label={`Finalizar remate ${auction.name}`}
-                              title="Finalizar remate"
-                            >
-                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                <path fillRule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.25a1 1 0 0 1-1.42.001l-3-3.015a1 1 0 1 1 1.418-1.41l2.29 2.3 6.49-6.534a1 1 0 0 1 1.416-.006Z" clipRule="evenodd" />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeUpcomingAuction(auction.id)}
-                              className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
-                              aria-label={`Quitar ${auction.name}`}
-                              title="Quitar"
-                            >
-                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Zm6 .5a.5.5 0 0 1 .5.5v.5h-7V3.5a.5.5 0 0 1 .5-.5h6ZM8 8.25a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3 0a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Z" />
-                              </svg>
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })
-                  )}
+                  ))}
 
                   <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
                     Categorías personalizadas

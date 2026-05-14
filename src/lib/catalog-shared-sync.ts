@@ -135,6 +135,11 @@ function isVentaDirectaEventName(value?: string | null): boolean {
   );
 }
 
+function getAuctionEventType(auction: { name?: string | null; eventType?: string | null }): "remate" | "venta_directa" {
+  if (auction.eventType === "venta_directa" || auction.eventType === "remate") return auction.eventType;
+  return isVentaDirectaEventName(auction.name) ? "venta_directa" : "remate";
+}
+
 function manualById(config: EditorConfig): Map<string, ManualPublication> {
   return new Map((config.manualPublications ?? []).map((entry) => [entry.id, entry]));
 }
@@ -321,8 +326,8 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
       parseIsoOrNull(auction.startAt) ??
       new Date(new Date(fechaHoraCierre).getTime() - 24 * 60 * 60 * 1000).toISOString();
     const nombre = auction.name.trim();
-    const esVentaDirectaPorNombre = isVentaDirectaEventName(nombre);
-    const esVentaDirecta = rematesVentaDirecta.has(auction.id) || esVentaDirectaPorNombre;
+    const tipoEvento = getAuctionEventType(auction);
+    const esVentaDirecta = rematesVentaDirecta.has(auction.id) || tipoEvento === "venta_directa";
     remateRows.push({
       id: auction.id,
       fecha_hora_inicio: fechaHoraInicio,
