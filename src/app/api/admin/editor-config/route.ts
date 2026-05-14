@@ -20,6 +20,7 @@ type SharedRemateRow = {
 type SharedRemateItemRow = {
   remate_id: string | null;
   patente?: string | null;
+  extra_fields?: Record<string, unknown> | null;
 };
 
 function normalizeText(value?: string | null) {
@@ -66,6 +67,29 @@ function inferEventName(row: SharedRemateRow) {
   const numero = String(row.numero_remate ?? "").trim();
   if (numero) return numero;
   return `Evento ${row.id.slice(0, 8)}`;
+}
+
+function readExtraString(
+  extra: Record<string, unknown> | null | undefined,
+  keys: string[],
+): string {
+  for (const key of keys) {
+    const value = String(extra?.[key] ?? "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function inferOriginFromSources(sources: Set<string>): "subastas" | "catalogo" | "tasaciones" | "mixto" | "desconocido" {
+  const hasPortal = sources.has("portal") || sources.has("subastas");
+  const hasCatalogo = sources.has("catalogo");
+  const hasTasaciones = sources.has("tasaciones");
+  const total = Number(hasPortal) + Number(hasCatalogo) + Number(hasTasaciones);
+  if (total > 1) return "mixto";
+  if (hasPortal) return "subastas";
+  if (hasCatalogo) return "catalogo";
+  if (hasTasaciones) return "tasaciones";
+  return "desconocido";
 }
 
 function normalizePatentKey(value?: string | null) {
@@ -137,17 +161,38 @@ async function fetchSharedRemateItems(remateIds: string[]) {
   if (!remateIds.length) return [] as SharedRemateItemRow[];
   const supabase = getServerSupabase();
   if (!supabase) return [] as SharedRemateItemRow[];
+  const remateSet = new Set(remateIds);
 
   const { data, error } = await supabase
     .from("remates_items")
-    .select("remate_id, patente")
+    .select("remate_id, patente, extra_fields")
     .in("remate_id", remateIds)
-    .limit(10000);
-  if (error) {
-    console.warn("No se pudieron leer items compartidos de remates:", error);
+    .limit(20000);
+  if (!error && data) {
+    const direct = (data ?? []) as unknown as SharedRemateItemRow[];
+    if (direct.length > 0) return direct;
+  } else if (error) {
+    console.warn("No se pudieron leer items compartidos de remates (direct):", error);
+  }
+
+  // Fallback: algunos entornos tienen el vínculo en extra_fields (tasaciones_remate_id/source_remate_id).
+  const { data: fallbackData, error: fallbackError } = await supabase
+    .from("remates_items")
+    .select("remate_id, patente, extra_fields")
+    .order("created_at", { ascending: false })
+    .limit(20000);
+  if (fallbackError) {
+    console.warn("No se pudieron leer items compartidos de remates (fallback):", fallbackError);
     return [] as SharedRemateItemRow[];
   }
-  return (data ?? []) as unknown as SharedRemateItemRow[];
+  const fallbackRows = ((fallbackData ?? []) as unknown as SharedRemateItemRow[]).filter((row) => {
+    const remateId = String(row.remate_id ?? "");
+    if (remateId && remateSet.has(remateId)) return true;
+    const extra = (row.extra_fields ?? {}) as Record<string, unknown>;
+    const linked = readExtraString(extra, ["tasaciones_remate_id", "source_remate_id", "portal_remate_id"]);
+    return Boolean(linked && remateSet.has(linked));
+  });
+  return fallbackRows;
 }
 
 async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
@@ -196,15 +241,28 @@ async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<Editor
   const nextVehicleUpcomingAuctionIds = { ...config.vehicleUpcomingAuctionIds };
   const rematesSection = new Set(config.sectionVehicleIds["proximos-remates"] ?? []);
   const ventaDirectaSection = new Set(config.sectionVehicleIds["ventas-directas"] ?? []);
+  const hiddenCategoryIds = new Set(config.hiddenCategoryIds ?? []);
+  const sourcesByAuction = new Map<string, Set<string>>();
+
+  // Mantiene visibles en Home las secciones comerciales sincronizadas.
+  hiddenCategoryIds.delete("section:proximos-remates");
+  hiddenCategoryIds.delete("section:ventas-directas");
 
   for (const item of sharedItems) {
-    const auctionId = String(item.remate_id ?? "");
+    const remateId = String(item.remate_id ?? "");
+    const extra = (item.extra_fields ?? {}) as Record<string, unknown>;
+    const linkedId = readExtraString(extra, ["tasaciones_remate_id", "source_remate_id", "portal_remate_id"]);
+    const auctionId = remateId && visibleAuctionIds.has(remateId) ? remateId : linkedId;
     if (!auctionId || !visibleAuctionIds.has(auctionId)) continue;
     const vehicleKey = normalizePatentKey(item.patente);
+    const source = readExtraString(extra, ["source_system", "origin_system"]).toLowerCase();
+    if (!sourcesByAuction.has(auctionId)) sourcesByAuction.set(auctionId, new Set<string>());
+    if (source) sourcesByAuction.get(auctionId)?.add(source);
     if (!vehicleKey) continue;
 
     const auction = byId.get(auctionId);
     const eventType = auction?.eventType ?? "remate";
+    hiddenCategoryIds.delete(`auction:${auctionId}`);
     nextVehicleUpcomingAuctionIds[vehicleKey] = auctionId;
     if (eventType === "venta_directa") {
       ventaDirectaSection.add(vehicleKey);
@@ -220,13 +278,19 @@ async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<Editor
       const tB = Date.parse(b.date || "");
       if (!Number.isFinite(tA) || !Number.isFinite(tB)) return 0;
       return tA - tB;
-    }),
+    }).map((auction) => ({
+      ...auction,
+      eventOrigin:
+        auction.eventOrigin ??
+        inferOriginFromSources(sourcesByAuction.get(auction.id) ?? new Set<string>()),
+    })),
     vehicleUpcomingAuctionIds: nextVehicleUpcomingAuctionIds,
     sectionVehicleIds: {
       ...config.sectionVehicleIds,
       "proximos-remates": Array.from(rematesSection),
       "ventas-directas": Array.from(ventaDirectaSection),
     },
+    hiddenCategoryIds: Array.from(hiddenCategoryIds),
   };
 }
 

@@ -3,6 +3,7 @@ export type HomeSectionOrderId = SectionId | `managed:${string}`;
 
 export type VehicleTypeId = "livianos" | "pesados" | "maquinaria" | "otros";
 export type CommercialEventType = "remate" | "venta_directa";
+export type CommercialEventOrigin = "subastas" | "catalogo" | "tasaciones" | "mixto" | "desconocido";
 
 export type UpcomingAuction = {
   id: string;
@@ -11,6 +12,7 @@ export type UpcomingAuction = {
   startAt?: string;
   endAt?: string;
   eventType?: CommercialEventType;
+  eventOrigin?: CommercialEventOrigin;
 };
 
 export type SectionTextConfig = {

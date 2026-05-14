@@ -20,6 +20,7 @@ import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
 import { cloudinaryRawPdfUrlForInlineDisplay, cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
 import {
   DEFAULT_EDITOR_CONFIG,
+  type CommercialEventOrigin,
   type EditorConfig,
   type EditorVehicleDetails,
   type HomeSectionOrderId,
@@ -216,6 +217,35 @@ function getAuctionEventType(auction: UpcomingAuction): CommercialEventType {
     return auction.eventType;
   }
   return detectCommercialEventType(auction.name);
+}
+
+function getAuctionEventOrigin(auction: UpcomingAuction): CommercialEventOrigin {
+  if (
+    auction.eventOrigin === "subastas" ||
+    auction.eventOrigin === "catalogo" ||
+    auction.eventOrigin === "tasaciones" ||
+    auction.eventOrigin === "mixto" ||
+    auction.eventOrigin === "desconocido"
+  ) {
+    return auction.eventOrigin;
+  }
+  return "desconocido";
+}
+
+function auctionOriginLabel(origin: CommercialEventOrigin) {
+  if (origin === "subastas") return "Origen: Subastas";
+  if (origin === "catalogo") return "Origen: Catálogo";
+  if (origin === "tasaciones") return "Origen: Tasaciones";
+  if (origin === "mixto") return "Origen: Mixto";
+  return "Origen: Sin datos";
+}
+
+function auctionOriginClass(origin: CommercialEventOrigin) {
+  if (origin === "subastas") return "bg-indigo-100 text-indigo-700";
+  if (origin === "catalogo") return "bg-cyan-100 text-cyan-700";
+  if (origin === "tasaciones") return "bg-slate-100 text-slate-700";
+  if (origin === "mixto") return "bg-amber-100 text-amber-700";
+  return "bg-slate-100 text-slate-600";
 }
 
 function normalizeEditorConfigClient(
@@ -7564,6 +7594,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                             (id) => id === auction.id,
                           ).length;
                           const auctionHidden = hiddenHomeCategoryIds.has(auctionCategoryKey(auction.id));
+                          const auctionOrigin = getAuctionEventOrigin(auction);
                           return (
                             <article
                               key={auction.id}
@@ -7574,10 +7605,18 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                                   {auction.name}
                                 </p>
                               </div>
-                              <p className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600">
-                                {getAuctionEventType(auction) === "venta_directa" ? "Venta directa programada para " : "Remate programado para "}
-                                {formatAuctionWindowLabel(auction)}
-                              </p>
+                              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600">
+                                <span className="truncate">
+                                  {getAuctionEventType(auction) === "venta_directa" ? "Venta directa programada para " : "Remate programado para "}
+                                  {formatAuctionWindowLabel(auction)}
+                                </span>
+                                <span
+                                  className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold ${auctionOriginClass(auctionOrigin)}`}
+                                  title={auctionOriginLabel(auctionOrigin)}
+                                >
+                                  {auctionOriginLabel(auctionOrigin)}
+                                </span>
+                              </div>
                               <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                                 {count}
                               </div>
