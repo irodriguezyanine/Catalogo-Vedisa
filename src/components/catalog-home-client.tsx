@@ -2594,7 +2594,9 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
         if (configRes.ok) {
           const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
-          const shouldUseServerConfig = loggedIn || Boolean(payload.persisted) || !local;
+          // Home debe reflejar siempre la configuración sincronizada del servidor.
+          // Si priorizamos localStorage, podemos dejar eventos desfasados fuera del Home.
+          const shouldUseServerConfig = Boolean(payload.config);
           if (payload.config && shouldUseServerConfig) {
             const normalized = normalizeEditorConfigClient(payload.config);
             setConfig(normalized);
