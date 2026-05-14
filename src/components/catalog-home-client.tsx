@@ -212,6 +212,26 @@ function detectCommercialEventType(value?: string | null): CommercialEventType {
   return "remate";
 }
 
+function sanitizeAuctionTitle(value?: string | null): string {
+  const raw = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!raw) return "Sin título";
+  const parts = raw
+    .split(/\s*-\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) return raw;
+  const seen = new Set<string>();
+  const dedup: string[] = [];
+  for (const part of parts) {
+    const key = detectCommercialEventType(part) + part.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    dedup.push(part);
+    if (dedup.length >= 8) break;
+  }
+  return dedup.join(" - ") || raw;
+}
+
 function getAuctionEventType(auction: UpcomingAuction): CommercialEventType {
   if (auction.eventType === "venta_directa" || auction.eventType === "remate") {
     return auction.eventType;
@@ -311,6 +331,7 @@ function normalizeEditorConfigClient(
     vehicleDetails: migrated?.vehicleDetails ?? defaults.vehicleDetails,
     upcomingAuctions: (migrated?.upcomingAuctions ?? defaults.upcomingAuctions).map((auction) => ({
       ...auction,
+      name: sanitizeAuctionTitle(auction.name),
       eventType: getAuctionEventType(auction),
     })),
     vehicleUpcomingAuctionIds:
@@ -3004,10 +3025,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         auction,
         items: homeVisibleItems.filter((item) => {
           const key = getVehicleKey(item);
-          return (
-            (config.vehicleUpcomingAuctionIds[key] ?? "") === auction.id &&
-            (effectiveSectionVehicleIds["proximos-remates"] ?? []).includes(key)
-          );
+          return (config.vehicleUpcomingAuctionIds[key] ?? "") === auction.id;
         }),
       })),
     [sortedUpcomingAuctions, homeVisibleItems, config.vehicleUpcomingAuctionIds, effectiveSectionVehicleIds],
@@ -6697,16 +6715,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             </div>
             <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-4 text-sm">
               <p className="font-semibold text-indigo-950">Importar ficha desde Rainworx</p>
-              <p className="mt-1 text-xs text-indigo-900/80">
-                Pega la URL de un <strong>evento</strong> (<code className="rounded bg-white/80 px-1">…/Event/Details/…</code>) para
-                sincronizar todos los lotes cuya <strong>patente</strong> coincida con tu inventario, o la URL de un{" "}
-                <strong>lote</strong> (<code className="rounded bg-white/80 px-1">…/Event/LotDetails/…</code>). La
-                importación usa el mismo formato de datos que en cada ficha (técnico, fechas, pruebas SI/NO, etc.).
-              </p>
-              <p className="mt-1 text-xs text-indigo-900/75">
-                En eventos solo se actualizan unidades con patente en el inventario actual. Si una unidad no tiene patente,
-                importa su lote individualmente e indica el ID interno (UUID) en el campo opcional.
-              </p>
               <div className="mt-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-end">
                 <label className="flex min-w-0 flex-1 flex-col gap-1">
                   <span className="text-xs font-medium text-slate-600">URL Rainworx (evento o lote)</span>

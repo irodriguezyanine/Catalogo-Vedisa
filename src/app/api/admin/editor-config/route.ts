@@ -69,6 +69,26 @@ function inferEventName(row: SharedRemateRow) {
   return `Evento ${row.id.slice(0, 8)}`;
 }
 
+function sanitizeEventTitle(value: string | null | undefined): string {
+  const raw = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!raw) return "Sin título";
+  const parts = raw
+    .split(/\s*-\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) return raw;
+  const seen = new Set<string>();
+  const dedup: string[] = [];
+  for (const part of parts) {
+    const key = normalizeText(part);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    dedup.push(part);
+    if (dedup.length >= 8) break;
+  }
+  return dedup.join(" - ") || raw;
+}
+
 function readExtraString(
   extra: Record<string, unknown> | null | undefined,
   keys: string[],
@@ -218,9 +238,11 @@ async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<Editor
   const byId = new Map(config.upcomingAuctions.map((event) => [event.id, event]));
   for (const row of activeRows as SharedRemateRow[]) {
     const current = byId.get(row.id);
+    const currentName = sanitizeEventTitle(current?.name ?? "");
+    const fallbackName = sanitizeEventTitle(inferEventName(row));
     const merged = {
       id: row.id,
-      name: current?.name && current.name.trim().length > 0 ? current.name : inferEventName(row),
+      name: currentName && currentName !== "Sin título" ? currentName : fallbackName,
       date: current?.date || inferEventDate(row),
       startAt: current?.startAt ?? row.fecha_hora_inicio ?? undefined,
       endAt: current?.endAt ?? inferEventEndAt(row),
