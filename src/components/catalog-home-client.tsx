@@ -15,7 +15,9 @@ import Link from "next/link";
 import { CatalogCard } from "@/components/catalog-card";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { OfferRecord } from "@/types/offers";
+import { migrateEditorAuctionIds } from "@/lib/auction-id";
 import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
+import { cloudinaryRawPdfUrlForInlineDisplay, cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
 import {
   DEFAULT_EDITOR_CONFIG,
   type EditorConfig,
@@ -193,6 +195,7 @@ const managedCategoryKey = (categoryId: string) => `managed:${categoryId}`;
 function normalizeEditorConfigClient(
   value?: Partial<EditorConfig> | null,
 ): EditorConfig {
+  const migrated = migrateEditorAuctionIds(value);
   const defaults = DEFAULT_EDITOR_CONFIG;
   const legacyHeroTitles = new Set([
     "Inventario de vehículos para remate y venta directa",
@@ -205,105 +208,105 @@ function normalizeEditorConfigClient(
   const requestedPrimaryCta = "Ver vehículos disponibles";
   const requestedSecondaryCta = "Cómo participar en el remate";
   const requestedSecondaryHref = "#como-participar";
-  const incomingHeroTitle = value?.homeLayout?.heroTitle;
+  const incomingHeroTitle = migrated?.homeLayout?.heroTitle;
   const normalizedHeroTitle =
     !incomingHeroTitle || legacyHeroTitles.has(incomingHeroTitle.trim())
       ? requestedHeroTitle
       : incomingHeroTitle;
-  const incomingHeroDescription = value?.homeLayout?.heroDescription?.trim();
+  const incomingHeroDescription = migrated?.homeLayout?.heroDescription?.trim();
   const normalizedHeroDescription =
     !incomingHeroDescription ||
     incomingHeroDescription ===
       "Plataforma oficial de ofertas online en vedisaremates.cl. Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza."
       ? requestedHeroDescription
-      : value?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription;
-  const incomingPrimaryCta = value?.homeLayout?.heroPrimaryCtaLabel?.trim();
+      : migrated?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription;
+  const incomingPrimaryCta = migrated?.homeLayout?.heroPrimaryCtaLabel?.trim();
   const normalizedPrimaryCta =
     !incomingPrimaryCta || incomingPrimaryCta === "Ver catálogo completo"
       ? requestedPrimaryCta
-      : value?.homeLayout?.heroPrimaryCtaLabel ?? defaults.homeLayout.heroPrimaryCtaLabel;
-  const incomingSecondaryCta = value?.homeLayout?.heroSecondaryCtaLabel?.trim();
+      : migrated?.homeLayout?.heroPrimaryCtaLabel ?? defaults.homeLayout.heroPrimaryCtaLabel;
+  const incomingSecondaryCta = migrated?.homeLayout?.heroSecondaryCtaLabel?.trim();
   const normalizedSecondaryCta =
     !incomingSecondaryCta || incomingSecondaryCta === "Explorar secciones"
       ? requestedSecondaryCta
-      : value?.homeLayout?.heroSecondaryCtaLabel ?? defaults.homeLayout.heroSecondaryCtaLabel;
-  const incomingSecondaryHref = value?.homeLayout?.heroSecondaryCtaHref?.trim();
+      : migrated?.homeLayout?.heroSecondaryCtaLabel ?? defaults.homeLayout.heroSecondaryCtaLabel;
+  const incomingSecondaryHref = migrated?.homeLayout?.heroSecondaryCtaHref?.trim();
   const normalizedSecondaryHref =
     !incomingSecondaryHref || incomingSecondaryHref === "#proximos-remates"
       ? requestedSecondaryHref
-      : value?.homeLayout?.heroSecondaryCtaHref ?? defaults.homeLayout.heroSecondaryCtaHref;
+      : migrated?.homeLayout?.heroSecondaryCtaHref ?? defaults.homeLayout.heroSecondaryCtaHref;
   return {
     sectionVehicleIds: {
       "proximos-remates":
-        value?.sectionVehicleIds?.["proximos-remates"] ??
+        migrated?.sectionVehicleIds?.["proximos-remates"] ??
         defaults.sectionVehicleIds["proximos-remates"],
       "ventas-directas":
-        value?.sectionVehicleIds?.["ventas-directas"] ??
+        migrated?.sectionVehicleIds?.["ventas-directas"] ??
         defaults.sectionVehicleIds["ventas-directas"],
       novedades:
-        value?.sectionVehicleIds?.novedades ?? defaults.sectionVehicleIds.novedades,
-      catalogo: value?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
+        migrated?.sectionVehicleIds?.novedades ?? defaults.sectionVehicleIds.novedades,
+      catalogo: migrated?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
     },
-    hiddenVehicleIds: value?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
-    hiddenCategoryIds: value?.hiddenCategoryIds ?? defaults.hiddenCategoryIds,
-    soldVehicleIds: value?.soldVehicleIds ?? defaults.soldVehicleIds,
-    soldVehicleHistory: value?.soldVehicleHistory ?? defaults.soldVehicleHistory,
-    vehiclePrices: value?.vehiclePrices ?? defaults.vehiclePrices,
-    vehicleDetails: value?.vehicleDetails ?? defaults.vehicleDetails,
-    upcomingAuctions: value?.upcomingAuctions ?? defaults.upcomingAuctions,
+    hiddenVehicleIds: migrated?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
+    hiddenCategoryIds: migrated?.hiddenCategoryIds ?? defaults.hiddenCategoryIds,
+    soldVehicleIds: migrated?.soldVehicleIds ?? defaults.soldVehicleIds,
+    soldVehicleHistory: migrated?.soldVehicleHistory ?? defaults.soldVehicleHistory,
+    vehiclePrices: migrated?.vehiclePrices ?? defaults.vehiclePrices,
+    vehicleDetails: migrated?.vehicleDetails ?? defaults.vehicleDetails,
+    upcomingAuctions: migrated?.upcomingAuctions ?? defaults.upcomingAuctions,
     vehicleUpcomingAuctionIds:
-      value?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
+      migrated?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
     sectionTexts: {
       "proximos-remates":
-        value?.sectionTexts?.["proximos-remates"] ??
+        migrated?.sectionTexts?.["proximos-remates"] ??
         defaults.sectionTexts["proximos-remates"],
       "ventas-directas":
-        value?.sectionTexts?.["ventas-directas"] ??
+        migrated?.sectionTexts?.["ventas-directas"] ??
         defaults.sectionTexts["ventas-directas"],
-      novedades: value?.sectionTexts?.novedades ?? defaults.sectionTexts.novedades,
-      catalogo: value?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
+      novedades: migrated?.sectionTexts?.novedades ?? defaults.sectionTexts.novedades,
+      catalogo: migrated?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
     },
     homeLayout: {
-      heroKicker: value?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
+      heroKicker: migrated?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
       heroTitle: normalizedHeroTitle,
       heroDescription: normalizedHeroDescription,
       heroPrimaryCtaLabel: normalizedPrimaryCta,
       heroPrimaryCtaHref:
-        value?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref,
+        migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref,
       heroSecondaryCtaLabel: normalizedSecondaryCta,
       heroSecondaryCtaHref: normalizedSecondaryHref,
-      heroAlignment: value?.homeLayout?.heroAlignment ?? defaults.homeLayout.heroAlignment,
-      heroTheme: value?.homeLayout?.heroTheme ?? defaults.homeLayout.heroTheme,
-      heroMaxWidth: value?.homeLayout?.heroMaxWidth ?? defaults.homeLayout.heroMaxWidth,
-      showHeroChips: value?.homeLayout?.showHeroChips ?? defaults.homeLayout.showHeroChips,
-      showHeroCtas: value?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
+      heroAlignment: migrated?.homeLayout?.heroAlignment ?? defaults.homeLayout.heroAlignment,
+      heroTheme: migrated?.homeLayout?.heroTheme ?? defaults.homeLayout.heroTheme,
+      heroMaxWidth: migrated?.homeLayout?.heroMaxWidth ?? defaults.homeLayout.heroMaxWidth,
+      showHeroChips: migrated?.homeLayout?.showHeroChips ?? defaults.homeLayout.showHeroChips,
+      showHeroCtas: migrated?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
       showFeaturedStrip:
-        value?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
+        migrated?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
       showRecentPublications:
-        value?.homeLayout?.showRecentPublications ??
+        migrated?.homeLayout?.showRecentPublications ??
         defaults.homeLayout.showRecentPublications,
       showFavoritesSection:
-        value?.homeLayout?.showFavoritesSection ??
+        migrated?.homeLayout?.showFavoritesSection ??
         defaults.homeLayout.showFavoritesSection,
       showHowToSection:
-        (value?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
+        (migrated?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
         normalizedSecondaryHref === "#como-participar",
-      showSearchBar: value?.homeLayout?.showSearchBar ?? defaults.homeLayout.showSearchBar,
+      showSearchBar: migrated?.homeLayout?.showSearchBar ?? defaults.homeLayout.showSearchBar,
       showQuickFilters:
-        value?.homeLayout?.showQuickFilters ?? defaults.homeLayout.showQuickFilters,
+        migrated?.homeLayout?.showQuickFilters ?? defaults.homeLayout.showQuickFilters,
       showSortSelector:
-        value?.homeLayout?.showSortSelector ?? defaults.homeLayout.showSortSelector,
+        migrated?.homeLayout?.showSortSelector ?? defaults.homeLayout.showSortSelector,
       showStickySearchBar:
-        value?.homeLayout?.showStickySearchBar ?? defaults.homeLayout.showStickySearchBar,
+        migrated?.homeLayout?.showStickySearchBar ?? defaults.homeLayout.showStickySearchBar,
       showCommercialPanel:
-        value?.homeLayout?.showCommercialPanel ?? defaults.homeLayout.showCommercialPanel,
+        migrated?.homeLayout?.showCommercialPanel ?? defaults.homeLayout.showCommercialPanel,
       defaultCardDensity:
-        value?.homeLayout?.defaultCardDensity ?? defaults.homeLayout.defaultCardDensity,
-      sectionSpacing: value?.homeLayout?.sectionSpacing ?? defaults.homeLayout.sectionSpacing,
-      sectionOrder: value?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
+        migrated?.homeLayout?.defaultCardDensity ?? defaults.homeLayout.defaultCardDensity,
+      sectionSpacing: migrated?.homeLayout?.sectionSpacing ?? defaults.homeLayout.sectionSpacing,
+      sectionOrder: migrated?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
     },
-    manualPublications: value?.manualPublications ?? defaults.manualPublications,
-    managedCategories: value?.managedCategories ?? defaults.managedCategories,
+    manualPublications: migrated?.manualPublications ?? defaults.manualPublications,
+    managedCategories: migrated?.managedCategories ?? defaults.managedCategories,
   };
 }
 
@@ -776,8 +779,7 @@ function formatAuctionCountdownClock(diffMs: number): string {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-function formatAuctionCountdownHours(targetDate: Date | null, nowMs: number): string {
-  if (!targetDate) return "Próximo remate en 0 (Cuenta regresiva) horas";
+function formatAuctionCountdownHours(targetDate: Date, nowMs: number): string {
   const diffMs = targetDate.getTime() - nowMs;
   const diffHours = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60)));
   const clock = formatAuctionCountdownClock(diffMs);
@@ -1038,7 +1040,9 @@ function formatExtendedDescriptionHtml(value?: string | null): string {
     /&lt;[a-z][\s\S]*&gt;/i.test(normalized) && !/<[a-z][\s\S]*>/i.test(normalized)
       ? decodeBasicHtmlEntities(normalized)
       : normalized;
-  if (/<[a-z][\s\S]*>/i.test(maybeDecoded)) return sanitizeRichHtml(maybeDecoded);
+  if (/<[a-z][\s\S]*>/i.test(maybeDecoded)) {
+    return sanitizeRichHtml(cloudinaryRawUrlsInlineInHtml(maybeDecoded));
+  }
   return escapeHtml(normalized).replace(/\n/g, "<br />");
 }
 
@@ -1187,6 +1191,17 @@ function mapManualPublicationToCatalogItem(entry: ManualPublication): CatalogIte
       manual_id: entry.id,
     },
   };
+}
+
+function extractEstadoRetiroForSection(item: CatalogItem): string {
+  const raw = item.raw as Record<string, unknown>;
+  const candidate =
+    raw.estado_retiro ??
+    raw.estadoRetiro ??
+    raw.estado_remate ??
+    raw.estado ??
+    "";
+  return String(candidate).trim().toLowerCase();
 }
 
 function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): EditorVehicleDetails {
@@ -2712,6 +2727,33 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     });
   }, [visibleItems, homeSearchTerm]);
 
+  const effectiveSectionVehicleIds = useMemo<Record<SectionId, string[]>>(() => {
+    const sectionSets: Record<SectionId, Set<string>> = {
+      "proximos-remates": new Set(config.sectionVehicleIds["proximos-remates"] ?? []),
+      "ventas-directas": new Set(config.sectionVehicleIds["ventas-directas"] ?? []),
+      novedades: new Set(config.sectionVehicleIds.novedades ?? []),
+      catalogo: new Set(config.sectionVehicleIds.catalogo ?? []),
+    };
+
+    for (const item of items) {
+      const key = getVehicleKey(item);
+      const estadoRetiro = extractEstadoRetiroForSection(item);
+      if (!config.vehicleUpcomingAuctionIds[key] && estadoRetiro === "en_bodega_a_remate") {
+        sectionSets["proximos-remates"].add(key);
+      }
+      if (estadoRetiro === "en_bodega_a_venta_directa") {
+        sectionSets["ventas-directas"].add(key);
+      }
+    }
+
+    return {
+      "proximos-remates": Array.from(sectionSets["proximos-remates"]),
+      "ventas-directas": Array.from(sectionSets["ventas-directas"]),
+      novedades: Array.from(sectionSets.novedades),
+      catalogo: Array.from(sectionSets.catalogo),
+    };
+  }, [items, config.sectionVehicleIds, config.vehicleUpcomingAuctionIds]);
+
   const homeQuickFilteredItems = useMemo(() => {
     const byTopSection =
       topSectionFilter === "all"
@@ -2721,7 +2763,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             if (topSectionFilter === "proximos-remates") {
               return Boolean(config.vehicleUpcomingAuctionIds[key]);
             }
-            return (config.sectionVehicleIds[topSectionFilter] ?? []).includes(key);
+            return (effectiveSectionVehicleIds[topSectionFilter] ?? []).includes(key);
           });
     if (quickFilters.length === 0) return byTopSection;
     return byTopSection.filter((item) => {
@@ -2751,7 +2793,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     config.vehiclePrices,
     config.vehicleDetails,
     config.vehicleUpcomingAuctionIds,
-    config.sectionVehicleIds,
+    effectiveSectionVehicleIds,
   ]);
 
   const homeVisibleItems = useMemo(() => {
@@ -2811,7 +2853,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   );
 
   const getSectionItems = (sectionId: SectionId): CatalogItem[] => {
-    const selected = config.sectionVehicleIds[sectionId] ?? [];
+    const selected = effectiveSectionVehicleIds[sectionId] ?? [];
     return selected
       .map((id) => itemsByKey.get(id))
       .filter((item): item is CatalogItem => !!item)
@@ -2848,11 +2890,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
           const key = getVehicleKey(item);
           return (
             (config.vehicleUpcomingAuctionIds[key] ?? "") === auction.id &&
-            (config.sectionVehicleIds["proximos-remates"] ?? []).includes(key)
+            (effectiveSectionVehicleIds["proximos-remates"] ?? []).includes(key)
           );
         }),
       })),
-    [sortedUpcomingAuctions, homeVisibleItems, config.vehicleUpcomingAuctionIds, config.sectionVehicleIds],
+    [sortedUpcomingAuctions, homeVisibleItems, config.vehicleUpcomingAuctionIds, effectiveSectionVehicleIds],
   );
   const visibleUpcomingAuctionGroups = useMemo(
     () =>
@@ -3389,10 +3431,15 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     return () => window.clearInterval(timer);
   }, []);
 
-  const nextAuctionUrgencyLabel = useMemo(
-    () => formatAuctionCountdownHours(nextAuction?.date ?? null, countdownNowMs),
-    [nextAuction, countdownNowMs],
-  );
+  const heroAuctionCountdown = useMemo(() => {
+    if (!nextAuction?.date) return null;
+    const diffMs = nextAuction.date.getTime() - countdownNowMs;
+    if (diffMs <= 0) return null;
+    return {
+      label: formatAuctionCountdownHours(nextAuction.date, countdownNowMs),
+      name: nextAuction.auction.name,
+    };
+  }, [nextAuction, countdownNowMs]);
 
   const toggleQuickFilter = (filterId: QuickFilterId) => {
     trackEvent("quick_filter_toggle", { filterId });
@@ -4855,7 +4902,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       showSystemNotice("error", "Datos incompletos", "Debes completar nombre y fecha del remate.");
       return;
     }
-    const id = `remate-${crypto.randomUUID()}`;
+    const id = crypto.randomUUID();
     setConfig((prev) => ({
       ...prev,
       upcomingAuctions: [...prev.upcomingAuctions, { id, name, date }],
@@ -8722,17 +8769,15 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
               </a>
             </div>
             ) : null}
+            {heroAuctionCountdown ? (
             <div className={`mt-4 inline-flex w-fit flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 ${config.homeLayout.heroAlignment === "center" ? "mx-auto justify-center" : ""}`}>
-              <span>{nextAuctionUrgencyLabel}</span>
-              {nextAuction ? (
-                <>
-                  <span className="text-amber-800">-</span>
-                  <span>{nextAuction.auction.name}</span>
-                  <span className="text-amber-800">-</span>
-                  <span>{formatDateDash(new Date())}</span>
-                </>
-              ) : null}
+              <span>{heroAuctionCountdown.label}</span>
+              <span className="text-amber-800">-</span>
+              <span>{heroAuctionCountdown.name}</span>
+              <span className="text-amber-800">-</span>
+              <span>{formatDateDash(new Date())}</span>
             </div>
+            ) : null}
           </div>
           {config.homeLayout.showCommercialPanel ? (
           <div className="premium-panel lg:col-span-4">
@@ -9472,7 +9517,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                           {selectedVehicleLotDocuments.map((doc, idx) => (
                             <li key={`lot-doc-${doc.url}-${idx}`}>
                               <a
-                                href={doc.url}
+                                href={cloudinaryRawPdfUrlForInlineDisplay(doc.url)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 underline decoration-cyan-400 underline-offset-2 hover:text-cyan-800"

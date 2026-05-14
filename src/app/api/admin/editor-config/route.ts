@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
+import { syncEditorConfigToSharedTables } from "@/lib/catalog-shared-sync";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
 
 export async function GET() {
@@ -22,5 +23,15 @@ export async function PUT(req: Request) {
   if (!result.ok) {
     return Response.json({ ok: false, error: result.error }, { status: 400 });
   }
-  return Response.json({ ok: true });
+
+  try {
+    const sync = await syncEditorConfigToSharedTables(config);
+    return Response.json({ ok: true, sync });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Se guardó la configuración, pero falló la sincronización compartida.";
+    return Response.json({ ok: false, error: message }, { status: 500 });
+  }
 }

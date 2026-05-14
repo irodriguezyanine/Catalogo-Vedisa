@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { cloudinaryRawPdfUrlForInlineDisplay } from "@/lib/cloudinary-delivery";
 import type { RainworxDocumento } from "@/lib/rainworx-scrape";
 import { getRainworxOrigin } from "@/lib/rainworx-scrape";
 
@@ -97,7 +98,7 @@ async function uploadPdfBuffer(
   if (!res.ok || !payload.secure_url) {
     return null;
   }
-  return payload.secure_url;
+  return cloudinaryRawPdfUrlForInlineDisplay(payload.secure_url);
 }
 
 /**

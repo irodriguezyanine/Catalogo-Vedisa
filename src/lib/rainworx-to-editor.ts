@@ -1,5 +1,6 @@
 import type { EditorVehicleDetails } from "@/types/editor";
 import type { RainworxLotScraped } from "@/lib/rainworx-scrape";
+import { cloudinaryRawPdfUrlForInlineDisplay } from "@/lib/cloudinary-delivery";
 
 /** Igual que `getVehicleKey` del cliente: patente normalizada o vacío si no hay. */
 export function normalizePatenteKey(patente: string | undefined): string {
@@ -206,7 +207,7 @@ export function buildRainworxExtendedDescription(scraped: RainworxLotScraped): s
     const lis = scraped.documentos
       .map(
         (d) =>
-          `<li><a href="${escapeHtml(d.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(d.label)}</a></li>`,
+          `<li><a href="${escapeHtml(cloudinaryRawPdfUrlForInlineDisplay(d.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(d.label)}</a></li>`,
       )
       .join("");
     parts.push(`<h4>Documentos adicionales</h4><ul>${lis}</ul>`);

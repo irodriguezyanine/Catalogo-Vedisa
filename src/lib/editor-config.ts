@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { migrateEditorAuctionIds } from "@/lib/auction-id";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
 
 const EDITOR_TABLE = process.env.CATALOG_EDITOR_TABLE ?? "catalogo_editor_config";
@@ -14,107 +15,108 @@ function getServerSupabase() {
 }
 
 function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
+  const migrated = migrateEditorAuctionIds(config);
   const defaults = DEFAULT_EDITOR_CONFIG;
   const legacyHeroTitles = new Set([
     "Inventario de vehículos para remate y venta directa",
     "Inventario de vehiculos",
     "Inventario de vehículos",
   ]);
-  const incomingHeroTitle = config?.homeLayout?.heroTitle?.trim();
+  const incomingHeroTitle = migrated?.homeLayout?.heroTitle?.trim();
   const normalizedHeroTitle =
     !incomingHeroTitle || legacyHeroTitles.has(incomingHeroTitle)
       ? defaults.homeLayout.heroTitle
-      : config?.homeLayout?.heroTitle ?? defaults.homeLayout.heroTitle;
-  const incomingDescription = config?.homeLayout?.heroDescription?.trim();
+      : migrated?.homeLayout?.heroTitle ?? defaults.homeLayout.heroTitle;
+  const incomingDescription = migrated?.homeLayout?.heroDescription?.trim();
   const normalizedHeroDescription =
     !incomingDescription ||
     incomingDescription ===
       "Plataforma oficial de ofertas online en vedisaremates.cl. Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza."
       ? defaults.homeLayout.heroDescription
-      : config?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription;
-  const incomingPrimaryCta = config?.homeLayout?.heroPrimaryCtaLabel?.trim();
+      : migrated?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription;
+  const incomingPrimaryCta = migrated?.homeLayout?.heroPrimaryCtaLabel?.trim();
   const normalizedPrimaryCta =
     !incomingPrimaryCta || incomingPrimaryCta === "Ver catálogo completo"
       ? defaults.homeLayout.heroPrimaryCtaLabel
-      : config?.homeLayout?.heroPrimaryCtaLabel ?? defaults.homeLayout.heroPrimaryCtaLabel;
-  const incomingSecondaryCta = config?.homeLayout?.heroSecondaryCtaLabel?.trim();
+      : migrated?.homeLayout?.heroPrimaryCtaLabel ?? defaults.homeLayout.heroPrimaryCtaLabel;
+  const incomingSecondaryCta = migrated?.homeLayout?.heroSecondaryCtaLabel?.trim();
   const normalizedSecondaryCta =
     !incomingSecondaryCta || incomingSecondaryCta === "Explorar secciones"
       ? defaults.homeLayout.heroSecondaryCtaLabel
-      : config?.homeLayout?.heroSecondaryCtaLabel ?? defaults.homeLayout.heroSecondaryCtaLabel;
-  const incomingSecondaryHref = config?.homeLayout?.heroSecondaryCtaHref?.trim();
+      : migrated?.homeLayout?.heroSecondaryCtaLabel ?? defaults.homeLayout.heroSecondaryCtaLabel;
+  const incomingSecondaryHref = migrated?.homeLayout?.heroSecondaryCtaHref?.trim();
   const normalizedSecondaryHref =
     !incomingSecondaryHref || incomingSecondaryHref === "#proximos-remates"
       ? "#como-participar"
-      : config?.homeLayout?.heroSecondaryCtaHref ?? defaults.homeLayout.heroSecondaryCtaHref;
+      : migrated?.homeLayout?.heroSecondaryCtaHref ?? defaults.homeLayout.heroSecondaryCtaHref;
   return {
     sectionVehicleIds: {
       "proximos-remates":
-        config?.sectionVehicleIds?.["proximos-remates"] ??
+        migrated?.sectionVehicleIds?.["proximos-remates"] ??
         defaults.sectionVehicleIds["proximos-remates"],
       "ventas-directas":
-        config?.sectionVehicleIds?.["ventas-directas"] ??
+        migrated?.sectionVehicleIds?.["ventas-directas"] ??
         defaults.sectionVehicleIds["ventas-directas"],
-      novedades: config?.sectionVehicleIds?.novedades ?? defaults.sectionVehicleIds.novedades,
-      catalogo: config?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
+      novedades: migrated?.sectionVehicleIds?.novedades ?? defaults.sectionVehicleIds.novedades,
+      catalogo: migrated?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
     },
-    hiddenVehicleIds: config?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
-    hiddenCategoryIds: config?.hiddenCategoryIds ?? defaults.hiddenCategoryIds,
-    soldVehicleIds: config?.soldVehicleIds ?? defaults.soldVehicleIds,
-    soldVehicleHistory: config?.soldVehicleHistory ?? defaults.soldVehicleHistory,
-    vehiclePrices: config?.vehiclePrices ?? defaults.vehiclePrices,
-    vehicleDetails: config?.vehicleDetails ?? defaults.vehicleDetails,
-    upcomingAuctions: config?.upcomingAuctions ?? defaults.upcomingAuctions,
+    hiddenVehicleIds: migrated?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
+    hiddenCategoryIds: migrated?.hiddenCategoryIds ?? defaults.hiddenCategoryIds,
+    soldVehicleIds: migrated?.soldVehicleIds ?? defaults.soldVehicleIds,
+    soldVehicleHistory: migrated?.soldVehicleHistory ?? defaults.soldVehicleHistory,
+    vehiclePrices: migrated?.vehiclePrices ?? defaults.vehiclePrices,
+    vehicleDetails: migrated?.vehicleDetails ?? defaults.vehicleDetails,
+    upcomingAuctions: migrated?.upcomingAuctions ?? defaults.upcomingAuctions,
     vehicleUpcomingAuctionIds:
-      config?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
+      migrated?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
     sectionTexts: {
       "proximos-remates":
-        config?.sectionTexts?.["proximos-remates"] ?? defaults.sectionTexts["proximos-remates"],
+        migrated?.sectionTexts?.["proximos-remates"] ?? defaults.sectionTexts["proximos-remates"],
       "ventas-directas":
-        config?.sectionTexts?.["ventas-directas"] ?? defaults.sectionTexts["ventas-directas"],
-      novedades: config?.sectionTexts?.novedades ?? defaults.sectionTexts.novedades,
-      catalogo: config?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
+        migrated?.sectionTexts?.["ventas-directas"] ?? defaults.sectionTexts["ventas-directas"],
+      novedades: migrated?.sectionTexts?.novedades ?? defaults.sectionTexts.novedades,
+      catalogo: migrated?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
     },
     homeLayout: {
-      heroKicker: config?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
+      heroKicker: migrated?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
       heroTitle: normalizedHeroTitle,
       heroDescription: normalizedHeroDescription,
       heroPrimaryCtaLabel: normalizedPrimaryCta,
       heroPrimaryCtaHref:
-        config?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref,
+        migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref,
       heroSecondaryCtaLabel: normalizedSecondaryCta,
       heroSecondaryCtaHref: normalizedSecondaryHref,
-      heroAlignment: config?.homeLayout?.heroAlignment ?? defaults.homeLayout.heroAlignment,
-      heroTheme: config?.homeLayout?.heroTheme ?? defaults.homeLayout.heroTheme,
-      heroMaxWidth: config?.homeLayout?.heroMaxWidth ?? defaults.homeLayout.heroMaxWidth,
-      showHeroChips: config?.homeLayout?.showHeroChips ?? defaults.homeLayout.showHeroChips,
-      showHeroCtas: config?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
+      heroAlignment: migrated?.homeLayout?.heroAlignment ?? defaults.homeLayout.heroAlignment,
+      heroTheme: migrated?.homeLayout?.heroTheme ?? defaults.homeLayout.heroTheme,
+      heroMaxWidth: migrated?.homeLayout?.heroMaxWidth ?? defaults.homeLayout.heroMaxWidth,
+      showHeroChips: migrated?.homeLayout?.showHeroChips ?? defaults.homeLayout.showHeroChips,
+      showHeroCtas: migrated?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
       showFeaturedStrip:
-        config?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
+        migrated?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
       showRecentPublications:
-        config?.homeLayout?.showRecentPublications ??
+        migrated?.homeLayout?.showRecentPublications ??
         defaults.homeLayout.showRecentPublications,
       showFavoritesSection:
-        config?.homeLayout?.showFavoritesSection ?? defaults.homeLayout.showFavoritesSection,
+        migrated?.homeLayout?.showFavoritesSection ?? defaults.homeLayout.showFavoritesSection,
       showHowToSection:
-        (config?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
+        (migrated?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
         normalizedSecondaryHref === "#como-participar",
-      showSearchBar: config?.homeLayout?.showSearchBar ?? defaults.homeLayout.showSearchBar,
+      showSearchBar: migrated?.homeLayout?.showSearchBar ?? defaults.homeLayout.showSearchBar,
       showQuickFilters:
-        config?.homeLayout?.showQuickFilters ?? defaults.homeLayout.showQuickFilters,
+        migrated?.homeLayout?.showQuickFilters ?? defaults.homeLayout.showQuickFilters,
       showSortSelector:
-        config?.homeLayout?.showSortSelector ?? defaults.homeLayout.showSortSelector,
+        migrated?.homeLayout?.showSortSelector ?? defaults.homeLayout.showSortSelector,
       showStickySearchBar:
-        config?.homeLayout?.showStickySearchBar ?? defaults.homeLayout.showStickySearchBar,
+        migrated?.homeLayout?.showStickySearchBar ?? defaults.homeLayout.showStickySearchBar,
       showCommercialPanel:
-        config?.homeLayout?.showCommercialPanel ?? defaults.homeLayout.showCommercialPanel,
+        migrated?.homeLayout?.showCommercialPanel ?? defaults.homeLayout.showCommercialPanel,
       defaultCardDensity:
-        config?.homeLayout?.defaultCardDensity ?? defaults.homeLayout.defaultCardDensity,
-      sectionSpacing: config?.homeLayout?.sectionSpacing ?? defaults.homeLayout.sectionSpacing,
-      sectionOrder: config?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
+        migrated?.homeLayout?.defaultCardDensity ?? defaults.homeLayout.defaultCardDensity,
+      sectionSpacing: migrated?.homeLayout?.sectionSpacing ?? defaults.homeLayout.sectionSpacing,
+      sectionOrder: migrated?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
     },
-    manualPublications: config?.manualPublications ?? defaults.manualPublications,
-    managedCategories: config?.managedCategories ?? defaults.managedCategories,
+    manualPublications: migrated?.manualPublications ?? defaults.manualPublications,
+    managedCategories: migrated?.managedCategories ?? defaults.managedCategories,
   };
 }
 
