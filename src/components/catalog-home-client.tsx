@@ -2542,7 +2542,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
         if (configRes.ok) {
           const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
-          const shouldUseServerConfig = Boolean(payload.persisted) || !local;
+          const shouldUseServerConfig = loggedIn || Boolean(payload.persisted) || !local;
           if (payload.config && shouldUseServerConfig) {
             const normalized = normalizeEditorConfigClient(payload.config);
             setConfig(normalized);

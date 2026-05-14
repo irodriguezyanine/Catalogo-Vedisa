@@ -9,11 +9,11 @@ type SharedRemateRow = {
   id: string;
   numero_remate: string | null;
   descripcion: string | null;
-  tipo: "remate" | "venta_directa" | null;
-  fecha_hora_inicio: string | null;
-  fecha_hora_cierre: string | null;
-  fecha_hora_remate: string | null;
-  created_at: string | null;
+  tipo?: "remate" | "venta_directa" | null;
+  fecha_hora_inicio?: string | null;
+  fecha_hora_cierre?: string | null;
+  fecha_hora_remate?: string | null;
+  created_at?: string | null;
 };
 
 function normalizeText(value?: string | null) {
@@ -58,21 +58,57 @@ function inferEventName(row: SharedRemateRow) {
   return `Evento ${row.id.slice(0, 8)}`;
 }
 
-async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+function isMissingColumnError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const message = String((error as { message?: unknown }).message ?? "").toLowerCase();
+  const code = String((error as { code?: unknown }).code ?? "");
+  return code === "42703" || message.includes("column") && message.includes("does not exist");
+}
+
+function getServerSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceRole) return config;
+  if (!url || !serviceRole) return null;
+  return createClient(url, serviceRole, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
 
-  const supabase = createClient(supabaseUrl, serviceRole, { auth: { persistSession: false } });
-  const { data, error } = await supabase
-    .from("remates")
-    .select(
-      "id, numero_remate, descripcion, tipo, fecha_hora_inicio, fecha_hora_cierre, fecha_hora_remate, created_at",
-    )
-    .order("created_at", { ascending: false })
-    .limit(2000);
+async function fetchSharedRematesRows() {
+  const supabase = getServerSupabase();
+  if (!supabase) return [] as SharedRemateRow[];
 
-  if (error || !data) return config;
+  const runSelect = async (selectColumns: string) =>
+    supabase
+      .from("remates")
+      .select(selectColumns)
+      .order("created_at", { ascending: false })
+      .limit(2000);
+
+  const fullSelect =
+    "id, numero_remate, descripcion, tipo, fecha_hora_inicio, fecha_hora_cierre, fecha_hora_remate, created_at";
+  const baseSelect = "id, numero_remate, descripcion, fecha_hora_remate, created_at";
+
+  const first = await runSelect(fullSelect);
+  if (!first.error) {
+    return (first.data ?? []) as unknown as SharedRemateRow[];
+  }
+  if (!isMissingColumnError(first.error)) {
+    console.warn("No se pudo leer remates compartidos en Catálogo:", first.error);
+    return [] as SharedRemateRow[];
+  }
+
+  const fallback = await runSelect(baseSelect);
+  if (fallback.error) {
+    console.warn("No se pudo leer remates compartidos con fallback:", fallback.error);
+    return [] as SharedRemateRow[];
+  }
+  return (fallback.data ?? []) as unknown as SharedRemateRow[];
+}
+
+async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
+  const data = await fetchSharedRematesRows();
+  if (!data.length) return config;
 
   const byId = new Map(config.upcomingAuctions.map((event) => [event.id, event]));
   for (const row of data as SharedRemateRow[]) {
