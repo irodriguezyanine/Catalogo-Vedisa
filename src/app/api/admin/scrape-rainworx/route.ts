@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
+import { syncEditorConfigToSharedTables } from "@/lib/catalog-shared-sync";
 import {
   formatClpString,
   mergeEditorVehicleDetails,
@@ -206,6 +207,8 @@ export async function POST(request: Request) {
       );
     }
 
+    const sync = await syncEditorConfigToSharedTables(config);
+
     return Response.json({
       ok: true,
       count: items.length,
@@ -218,6 +221,7 @@ export async function POST(request: Request) {
         applied: [...applied],
         skipped,
       },
+      sync,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Error desconocido";
