@@ -189,6 +189,7 @@ const BASE_HOME_SECTION_ORDER: SectionId[] = [
   "novedades",
   "catalogo",
 ];
+const BASE_SECTION_IDS_IN_ADMIN: SectionId[] = ["novedades", "catalogo"];
 const sectionCategoryKey = (sectionId: SectionId) => `section:${sectionId}` as const;
 const auctionCategoryKey = (auctionId: string) => `auction:${auctionId}`;
 const managedCategoryKey = (categoryId: string) => `managed:${categoryId}`;
@@ -5074,6 +5075,32 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     if (assignCategoryId === categoryId) setAssignCategoryId(null);
   };
 
+  const deleteBaseSection = (sectionId: SectionId) => {
+    if (!window.confirm(`¿Eliminar la sección base "${SECTION_LABELS[sectionId]}" del home?`)) return;
+    setConfig((prev) => {
+      const hidden = new Set(prev.hiddenCategoryIds ?? []);
+      hidden.add(sectionCategoryKey(sectionId));
+      return {
+        ...prev,
+        sectionVehicleIds: {
+          ...prev.sectionVehicleIds,
+          [sectionId]: [],
+        },
+        sectionTexts: {
+          ...prev.sectionTexts,
+          [sectionId]: { ...DEFAULT_EDITOR_CONFIG.sectionTexts[sectionId] },
+        },
+        hiddenCategoryIds: Array.from(hidden),
+      };
+    });
+    if (editorGroupFilter === sectionId) setEditorGroupFilter("all");
+    showSystemNotice(
+      "success",
+      "Sección base eliminada",
+      `${SECTION_LABELS[sectionId]} quedó sin unidades y oculta del home.`,
+    );
+  };
+
   const toggleVehicleInManagedCategory = (categoryId: string, vehicleKey: string) => {
     setConfig((prev) => ({
       ...prev,
@@ -7375,7 +7402,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
                     Secciones base
                   </p>
-                  {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map(
+                  {BASE_SECTION_IDS_IN_ADMIN.map(
                     (sectionId) => {
                       const isEditingTexts = editingSectionTextId === sectionId;
                       const sectionHidden = hiddenHomeCategoryIds.has(sectionCategoryKey(sectionId));
@@ -7471,7 +7498,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                             type="button"
                             onClick={() => {
                               setEditorGroupFilter(sectionId);
-                              if (sectionId !== "proximos-remates") setAuctionFilterId("");
+                              setAuctionFilterId("");
                               setEditorPage(1);
                               setAdminTab("vehiculos");
                             }}
@@ -7483,19 +7510,28 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                               <path d="M10 4c4.5 0 7.8 3.16 8.9 5.5.13.28.13.62 0 .9C17.8 12.74 14.5 15.9 10 15.9S2.2 12.74 1.1 10.4a1.06 1.06 0 0 1 0-.9C2.2 7.16 5.5 4 10 4Zm0 2c-3.42 0-6.06 2.31-7.08 4 .99 1.69 3.64 4 7.08 4s6.09-2.31 7.08-4C16.06 8.31 13.42 6 10 6Zm0 1.5A2.5 2.5 0 1 1 7.5 10 2.5 2.5 0 0 1 10 7.5Z" />
                             </svg>
                           </button>
-                          {sectionId !== "proximos-remates" ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                openBatchAssignModal({ type: "section", sectionId: sectionId as "ventas-directas" | "novedades" | "catalogo" })
-                              }
-                              className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
-                              aria-label={`Agregar unidades a ${SECTION_LABELS[sectionId]}`}
-                              title="Agregar unidades"
-                            >
-                              +
-                            </button>
-                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openBatchAssignModal({ type: "section", sectionId: sectionId as "ventas-directas" | "novedades" | "catalogo" })
+                            }
+                            className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
+                            aria-label={`Agregar unidades a ${SECTION_LABELS[sectionId]}`}
+                            title="Agregar unidades"
+                          >
+                            +
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteBaseSection(sectionId)}
+                            className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
+                            aria-label={`Eliminar sección base ${SECTION_LABELS[sectionId]}`}
+                            title="Eliminar sección base"
+                          >
+                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Zm6 .5a.5.5 0 0 1 .5.5v.5h-7V3.5a.5.5 0 0 1 .5-.5h6ZM8 8.25a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3 0a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Z" />
+                            </svg>
+                          </button>
                         </div>
                       </article>
                       );
@@ -7504,12 +7540,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
 
                   {([
                     {
-                      title: "Remates creados",
+                      title: "Remates",
                       empty: "No hay remates creados.",
                       auctions: sortedRemateAuctions,
                     },
                     {
-                      title: "Ventas directas creadas",
+                      title: "Ventas Directas",
                       empty: "No hay ventas directas creadas.",
                       auctions: sortedVentaDirectaAuctions,
                     },
