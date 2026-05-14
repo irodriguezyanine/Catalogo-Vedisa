@@ -9,6 +9,10 @@ type SyncResult = {
   skipped: string[];
 };
 
+type SyncOptions = {
+  deletedRemateIds?: string[];
+};
+
 type RemateSyncRow = {
   id: string;
   fecha_hora_inicio: string;
@@ -279,6 +283,13 @@ async function findInventarioByPatent(
 }
 
 export async function syncEditorConfigToSharedTables(config: EditorConfig): Promise<SyncResult> {
+  return syncEditorConfigToSharedTablesWithOptions(config, {});
+}
+
+export async function syncEditorConfigToSharedTablesWithOptions(
+  config: EditorConfig,
+  options: SyncOptions,
+): Promise<SyncResult> {
   const supabase = getServerSupabase();
   if (!supabase) {
     return {
@@ -297,6 +308,25 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
     inventoryUpdated: 0,
     skipped: [],
   };
+
+  const deletedIds = [...new Set((options.deletedRemateIds ?? []).filter((id) => isUuid(id)))];
+  if (deletedIds.length > 0) {
+    const { error: delItemsError } = await supabase
+      .from(REMATES_ITEMS_TABLE)
+      .delete()
+      .in("remate_id", deletedIds);
+    if (delItemsError) {
+      result.skipped.push(`No se pudieron eliminar items de remates borrados: ${delItemsError.message}`);
+    }
+
+    const { error: delRematesError } = await supabase
+      .from(REMATES_TABLE)
+      .delete()
+      .in("id", deletedIds);
+    if (delRematesError) {
+      result.skipped.push(`No se pudieron eliminar remates borrados: ${delRematesError.message}`);
+    }
+  }
 
   const { remateAssignments, remateKeys, directSaleKeys } = buildSyncTargets(config);
   const eventByVehicle = new Map<string, string>();

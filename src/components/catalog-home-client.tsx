@@ -2256,6 +2256,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const manualObservationsEditorRef = useRef<HTMLDivElement | null>(null);
   const heroTitleEditorRef = useRef<HTMLDivElement | null>(null);
   const heroSubtitleEditorRef = useRef<HTMLDivElement | null>(null);
+  const deletedAuctionIdsRef = useRef<Set<string>>(new Set());
   const [observationsTemplateHtml, setObservationsTemplateHtml] = useState(
     DEFAULT_OBSERVATIONS_TEMPLATE_HTML,
   );
@@ -5405,6 +5406,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   };
 
   const removeUpcomingAuction = (auctionId: string) => {
+    deletedAuctionIdsRef.current.add(auctionId);
     setConfig((prev) => {
       const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
       for (const [vehicleKey, value] of Object.entries(nextAssignments)) {
@@ -5569,7 +5571,10 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     const response = await fetch("/api/admin/editor-config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ config: nextConfig }),
+      body: JSON.stringify({
+        config: nextConfig,
+        deletedAuctionIds: Array.from(deletedAuctionIdsRef.current),
+      }),
     });
     const payload = (await response.json().catch(() => ({}))) as {
       config?: EditorConfig;
@@ -5594,6 +5599,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       return;
     }
     setAutoSaveState("saved");
+    deletedAuctionIdsRef.current.clear();
     setLastAutoSaveAt(new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }));
     const configPersistida = payload.config ? normalizeEditorConfigClient(payload.config) : nextConfig;
     lastPersistedConfigRef.current = JSON.stringify(configPersistida);

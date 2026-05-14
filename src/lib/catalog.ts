@@ -5,7 +5,9 @@ import type { CatalogFeed, CatalogItem, CatalogSource } from "@/types/catalog";
 
 const DEFAULT_TABLE = process.env.CATALOG_SUPABASE_TABLE ?? "inventario";
 const DEFAULT_SELECT = process.env.CATALOG_SUPABASE_SELECT ?? "*";
-const DEFAULT_LIMIT = Number(process.env.CATALOG_LIMIT ?? "60");
+// Catálogo debe reflejar eventos sincronizados completos; 60 filas era insuficiente
+// para asignar vehículos de remates/vtas directas históricamente cargados.
+const DEFAULT_LIMIT = Number(process.env.CATALOG_LIMIT ?? "500");
 const DEFAULT_ORDER_BY = process.env.CATALOG_SUPABASE_ORDER_BY ?? "created_at";
 const AUTORED_API_URL = process.env.CATALOG_SOURCE_AUTORED_API_URL;
 const AUTORED_MAX_LOOKUPS = Number(process.env.CATALOG_AUTORED_MAX_LOOKUPS ?? "1000");

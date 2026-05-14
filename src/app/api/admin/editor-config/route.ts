@@ -2,8 +2,11 @@ import { cookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
-import { syncEditorConfigToSharedTables } from "@/lib/catalog-shared-sync";
+import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type SharedRemateRow = {
   id: string;
@@ -330,7 +333,10 @@ export async function PUT(req: Request) {
     return Response.json({ ok: false, error: "No autorizado." }, { status: 401 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { config?: EditorConfig };
+  const body = (await req.json().catch(() => ({}))) as {
+    config?: EditorConfig;
+    deletedAuctionIds?: string[];
+  };
   const config = body.config ?? DEFAULT_EDITOR_CONFIG;
   const result = await saveEditorConfig(config, session.email);
   if (!result.ok) {
@@ -340,7 +346,9 @@ export async function PUT(req: Request) {
   const mergedConfig = await mergeSharedEventsIntoConfig(normalizedConfig);
 
   try {
-    const sync = await syncEditorConfigToSharedTables(normalizedConfig);
+    const sync = await syncEditorConfigToSharedTablesWithOptions(normalizedConfig, {
+      deletedRemateIds: body.deletedAuctionIds ?? [],
+    });
     return Response.json({ ok: true, sync, config: mergedConfig, syncOk: true });
   } catch (error) {
     const message =
