@@ -2142,7 +2142,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const [leadMessage, setLeadMessage] = useState("");
   const [systemNotice, setSystemNotice] = useState<SystemNotice | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [adminTab, setAdminTab] = useState<AdminTabId>("vehiculos");
+  const [adminTab, setAdminTab] = useState<AdminTabId>("categorias");
   const [inventorySubtab, setInventorySubtab] = useState<InventorySubtabId>("actual");
   const [auctionFilterId, setAuctionFilterId] = useState("");
   const [editorGroupFilter, setEditorGroupFilter] = useState<EditorGroupFilter>("all");
@@ -2152,6 +2152,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     useState<EditorVehicleCategoryFilter>("all");
   const [showEditorFiltersMenu, setShowEditorFiltersMenu] = useState(false);
   const [editorPage, setEditorPage] = useState(1);
+  const [selectedInventoryKeys, setSelectedInventoryKeys] = useState<string[]>([]);
   const [editingVehicleKey, setEditingVehicleKey] = useState<string | null>(null);
   const [managingVehicleKey, setManagingVehicleKey] = useState<string | null>(null);
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
@@ -3041,9 +3042,27 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     [upcomingAuctionGroups, hiddenHomeCategoryIds],
   );
 
-  const hasUpcomingAuctionCategories =
-    sortedUpcomingAuctions.length > 0 &&
-    visibleUpcomingAuctionGroups.some((group) => group.items.length > 0);
+  const visibleUpcomingRemateGroups = useMemo(
+    () =>
+      visibleUpcomingAuctionGroups.filter(
+        (group) => getAuctionEventType(group.auction) === "remate",
+      ),
+    [visibleUpcomingAuctionGroups],
+  );
+  const visibleUpcomingVentaDirectaGroups = useMemo(
+    () =>
+      visibleUpcomingAuctionGroups.filter(
+        (group) => getAuctionEventType(group.auction) === "venta_directa",
+      ),
+    [visibleUpcomingAuctionGroups],
+  );
+
+  const hasUpcomingRemateCategories =
+    sortedRemateAuctions.length > 0 &&
+    visibleUpcomingRemateGroups.some((group) => group.items.length > 0);
+  const hasUpcomingVentaDirectaCategories =
+    sortedVentaDirectaAuctions.length > 0 &&
+    visibleUpcomingVentaDirectaGroups.some((group) => group.items.length > 0);
 
   const proximosRemates = getSectionItems("proximos-remates");
   const ventasDirectas = getSectionItems("ventas-directas");
@@ -3111,8 +3130,18 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   }, [config.homeLayout.sectionOrder, managedCategoryOrderEntries]);
   const homeSectionCountById = useMemo(() => {
     const map = new Map<HomeSectionOrderId, number>();
-    map.set("proximos-remates", hasUpcomingAuctionCategories ? visibleUpcomingAuctionGroups.reduce((acc, group) => acc + group.items.length, 0) : proximosRemates.length);
-    map.set("ventas-directas", ventasDirectas.length);
+    map.set(
+      "proximos-remates",
+      hasUpcomingRemateCategories
+        ? visibleUpcomingRemateGroups.reduce((acc, group) => acc + group.items.length, 0)
+        : proximosRemates.length,
+    );
+    map.set(
+      "ventas-directas",
+      hasUpcomingVentaDirectaCategories
+        ? visibleUpcomingVentaDirectaGroups.reduce((acc, group) => acc + group.items.length, 0)
+        : ventasDirectas.length,
+    );
     map.set("novedades", novedades.length);
     map.set("catalogo", filteredCatalogItems.length);
     for (const [managedId, count] of managedCategoryCountById.entries()) {
@@ -3120,8 +3149,10 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     }
     return map;
   }, [
-    hasUpcomingAuctionCategories,
-    visibleUpcomingAuctionGroups,
+    hasUpcomingRemateCategories,
+    visibleUpcomingRemateGroups,
+    hasUpcomingVentaDirectaCategories,
+    visibleUpcomingVentaDirectaGroups,
     proximosRemates.length,
     ventasDirectas.length,
     novedades.length,
@@ -3146,8 +3177,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
 
     const sections: CalendarPdfSection[] = [];
 
-    if (hasUpcomingAuctionCategories) {
-      for (const group of visibleUpcomingAuctionGroups) {
+    if (hasUpcomingRemateCategories) {
+      for (const group of visibleUpcomingRemateGroups) {
         if (group.items.length === 0) continue;
         sections.push({
           categoryTitle: `Remates disponibles - ${group.auction.name}`,
@@ -3163,7 +3194,16 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       });
     }
 
-    if (ventasDirectas.length > 0) {
+    if (hasUpcomingVentaDirectaCategories) {
+      for (const group of visibleUpcomingVentaDirectaGroups) {
+        if (group.items.length === 0) continue;
+        sections.push({
+          categoryTitle: `Ventas directas - ${group.auction.name}`,
+          categorySubtitle: formatAuctionWindowLabel(group.auction) || "Fecha por confirmar",
+          rows: group.items.map(buildRow),
+        });
+      }
+    } else if (ventasDirectas.length > 0) {
       sections.push({
         categoryTitle: "Ventas directas",
         categorySubtitle: config.sectionTexts["ventas-directas"].subtitle || "Stock disponible para cierre rápido.",
@@ -3187,8 +3227,10 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     }
     return sections;
   }, [
-    hasUpcomingAuctionCategories,
-    visibleUpcomingAuctionGroups,
+    hasUpcomingRemateCategories,
+    visibleUpcomingRemateGroups,
+    hasUpcomingVentaDirectaCategories,
+    visibleUpcomingVentaDirectaGroups,
     proximosRemates,
     ventasDirectas,
     homeVisibleItems,
@@ -4585,6 +4627,29 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     const start = (currentEditorPage - 1) * EDITOR_PAGE_SIZE;
     return filteredEditorItems.slice(start, start + EDITOR_PAGE_SIZE);
   }, [filteredEditorItems, currentEditorPage]);
+  const paginatedEditorKeys = useMemo(
+    () => paginatedEditorItems.map((item) => getVehicleKey(item)),
+    [paginatedEditorItems],
+  );
+  const selectedInventorySet = useMemo(
+    () => new Set(selectedInventoryKeys),
+    [selectedInventoryKeys],
+  );
+  const allPaginatedSelected =
+    paginatedEditorKeys.length > 0 && paginatedEditorKeys.every((key) => selectedInventorySet.has(key));
+
+  useEffect(() => {
+    // Limpia selección de inventario cuando cambia la vista base.
+    if (adminTab !== "vehiculos" || inventorySubtab !== "actual") {
+      setSelectedInventoryKeys([]);
+    }
+  }, [adminTab, inventorySubtab]);
+
+  useEffect(() => {
+    // Mantiene solo selección válida en el set actual filtrado.
+    const valid = new Set(filteredEditorItems.map((item) => getVehicleKey(item)));
+    setSelectedInventoryKeys((prev) => prev.filter((key) => valid.has(key)));
+  }, [filteredEditorItems]);
 
   const activeManagedCategory = useMemo(
     () =>
@@ -4648,6 +4713,186 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       }) satisfies Record<SectionId, number>,
     [config.vehicleUpcomingAuctionIds, config.sectionVehicleIds],
   );
+
+  const availableGroupFilterOptions = useMemo(() => {
+    const options: Array<{ value: EditorGroupFilter; label: string }> = [];
+    if (sectionVehicleCounts["proximos-remates"] > 0) options.push({ value: "proximos-remates", label: "Próximos remates" });
+    if (sectionVehicleCounts["ventas-directas"] > 0) options.push({ value: "ventas-directas", label: "Ventas directas" });
+    if (sectionVehicleCounts.novedades > 0) options.push({ value: "novedades", label: "Novedades" });
+    if (sectionVehicleCounts.catalogo > 0) options.push({ value: "catalogo", label: "Catálogo" });
+    for (const category of config.managedCategories ?? []) {
+      if ((category.vehicleIds ?? []).length > 0) {
+        options.push({ value: `managed:${category.id}` as EditorGroupFilter, label: category.name });
+      }
+    }
+    return options;
+  }, [config.managedCategories, sectionVehicleCounts]);
+
+  const applyBulkVisibility = useCallback(
+    (visible: boolean) => {
+      if (selectedInventoryKeys.length === 0) return;
+      setConfig((prev) => {
+        const set = new Set(prev.hiddenVehicleIds ?? []);
+        for (const key of selectedInventoryKeys) {
+          if (visible) set.delete(key);
+          else set.add(key);
+        }
+        const manualPublications = (prev.manualPublications ?? []).map((entry) => {
+          const key = `manual-${entry.id}`;
+          if (!selectedInventoryKeys.includes(key)) return entry;
+          return { ...entry, visible };
+        });
+        return { ...prev, hiddenVehicleIds: Array.from(set), manualPublications };
+      });
+      showSystemNotice("success", visible ? "Visibilidad masiva" : "Ocultado masivo", `${selectedInventoryKeys.length} unidad(es).`);
+    },
+    [selectedInventoryKeys, showSystemNotice],
+  );
+
+  const applyBulkDelete = useCallback(() => {
+    if (selectedInventoryKeys.length === 0) return;
+    if (!window.confirm(`¿Eliminar/ocultar ${selectedInventoryKeys.length} unidad(es) seleccionadas?`)) return;
+    setConfig((prev) => {
+      const selected = new Set(selectedInventoryKeys);
+      const hidden = new Set(prev.hiddenVehicleIds ?? []);
+      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      for (const key of selected) {
+        hidden.add(key);
+        delete nextAssignments[key];
+      }
+      const nextSectionVehicleIds = {
+        "proximos-remates": (prev.sectionVehicleIds["proximos-remates"] ?? []).filter((id) => !selected.has(id)),
+        "ventas-directas": (prev.sectionVehicleIds["ventas-directas"] ?? []).filter((id) => !selected.has(id)),
+        novedades: (prev.sectionVehicleIds.novedades ?? []).filter((id) => !selected.has(id)),
+        catalogo: (prev.sectionVehicleIds.catalogo ?? []).filter((id) => !selected.has(id)),
+      };
+      const nextManagedCategories = (prev.managedCategories ?? []).map((category) => ({
+        ...category,
+        vehicleIds: (category.vehicleIds ?? []).filter((id) => !selected.has(id)),
+      }));
+      const manualPublications = (prev.manualPublications ?? []).filter((entry) => !selected.has(`manual-${entry.id}`));
+      return {
+        ...prev,
+        hiddenVehicleIds: Array.from(hidden),
+        vehicleUpcomingAuctionIds: nextAssignments,
+        sectionVehicleIds: nextSectionVehicleIds,
+        managedCategories: nextManagedCategories,
+        manualPublications,
+      };
+    });
+    setSelectedInventoryKeys([]);
+    showSystemNotice("success", "Acción masiva aplicada", "Unidades eliminadas/ocultadas.");
+  }, [selectedInventoryKeys, showSystemNotice]);
+
+  const applyBulkSetVentaDirecta = useCallback(
+    (enabled: boolean) => {
+      if (selectedInventoryKeys.length === 0) return;
+      setConfig((prev) => {
+        const selected = new Set(selectedInventoryKeys);
+        const vdSet = new Set(prev.sectionVehicleIds["ventas-directas"] ?? []);
+        const proxSet = new Set(prev.sectionVehicleIds["proximos-remates"] ?? []);
+        const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+        for (const key of selected) {
+          if (enabled) {
+            vdSet.add(key);
+            proxSet.delete(key);
+            delete nextAssignments[key];
+          } else {
+            vdSet.delete(key);
+          }
+        }
+        return {
+          ...prev,
+          vehicleUpcomingAuctionIds: nextAssignments,
+          sectionVehicleIds: {
+            ...prev.sectionVehicleIds,
+            "ventas-directas": Array.from(vdSet),
+            "proximos-remates": Array.from(proxSet),
+          },
+        };
+      });
+      showSystemNotice("success", "Venta directa masiva", `${selectedInventoryKeys.length} unidad(es).`);
+    },
+    [selectedInventoryKeys, showSystemNotice],
+  );
+
+  const applyBulkAssignAuction = useCallback(() => {
+    if (selectedInventoryKeys.length === 0) return;
+    const options = sortedUpcomingAuctions.map((a, i) => `${i + 1}. ${a.name} (${formatAuctionWindowLabel(a)})`).join("\n");
+    if (!options) return;
+    const raw = window.prompt(`Seleccione remate (número):\n${options}`);
+    const idx = Number(raw);
+    if (!Number.isFinite(idx) || idx < 1 || idx > sortedUpcomingAuctions.length) return;
+    const target = sortedUpcomingAuctions[idx - 1];
+    setConfig((prev) => {
+      const selected = new Set(selectedInventoryKeys);
+      const proxSet = new Set(prev.sectionVehicleIds["proximos-remates"] ?? []);
+      const vdSet = new Set(prev.sectionVehicleIds["ventas-directas"] ?? []);
+      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      for (const key of selected) {
+        nextAssignments[key] = target.id;
+        proxSet.add(key);
+        vdSet.delete(key);
+      }
+      return {
+        ...prev,
+        vehicleUpcomingAuctionIds: nextAssignments,
+        sectionVehicleIds: {
+          ...prev.sectionVehicleIds,
+          "proximos-remates": Array.from(proxSet),
+          "ventas-directas": Array.from(vdSet),
+        },
+      };
+    });
+    showSystemNotice("success", "Remate asignado", `${selectedInventoryKeys.length} unidad(es) en ${target.name}.`);
+  }, [selectedInventoryKeys, showSystemNotice, sortedUpcomingAuctions]);
+
+  const applyBulkMoveCategory = useCallback(() => {
+    if (selectedInventoryKeys.length === 0) return;
+    const base = [
+      { id: "novedades", label: "Novedades" },
+      { id: "catalogo", label: "Catálogo" },
+    ];
+    const managed = (config.managedCategories ?? []).map((c) => ({ id: `managed:${c.id}`, label: c.name }));
+    const options = [...base, ...managed];
+    const menu = options.map((o, i) => `${i + 1}. ${o.label}`).join("\n");
+    const raw = window.prompt(`Mover a categoría (número):\n${menu}\n0. Quitar categoría`);
+    const idx = Number(raw);
+    if (!Number.isFinite(idx) || idx < 0 || idx > options.length) return;
+    const target = idx === 0 ? null : options[idx - 1];
+    setConfig((prev) => {
+      const selected = new Set(selectedInventoryKeys);
+      const nextSectionVehicleIds = {
+        ...prev.sectionVehicleIds,
+        novedades: (prev.sectionVehicleIds.novedades ?? []).filter((id) => !selected.has(id)),
+        catalogo: (prev.sectionVehicleIds.catalogo ?? []).filter((id) => !selected.has(id)),
+      };
+      const nextManagedCategories = (prev.managedCategories ?? []).map((category) => ({
+        ...category,
+        vehicleIds: (category.vehicleIds ?? []).filter((id) => !selected.has(id)),
+      }));
+      if (target?.id === "novedades" || target?.id === "catalogo") {
+        const set = new Set(nextSectionVehicleIds[target.id]);
+        for (const key of selected) set.add(key);
+        nextSectionVehicleIds[target.id] = Array.from(set);
+      } else if (target?.id?.startsWith("managed:")) {
+        const managedId = target.id.replace("managed:", "");
+        for (const category of nextManagedCategories) {
+          if (category.id === managedId) {
+            const set = new Set(category.vehicleIds ?? []);
+            for (const key of selected) set.add(key);
+            category.vehicleIds = Array.from(set);
+          }
+        }
+      }
+      return {
+        ...prev,
+        sectionVehicleIds: nextSectionVehicleIds,
+        managedCategories: nextManagedCategories,
+      };
+    });
+    showSystemNotice("success", "Categoría actualizada", `${selectedInventoryKeys.length} unidad(es).`);
+  }, [config.managedCategories, selectedInventoryKeys, showSystemNotice]);
 
   const toggleItemInSection = (sectionId: SectionId, itemKey: string) => {
     setConfig((prev) => {
@@ -6756,11 +7001,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             </div>
             <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
               {([
-                ["vehiculos", "Inventario"],
                 ["categorias", "Categorías"],
-                ["layout", "Editar Home"],
-                ["analytics", "Analytics"],
+                ["vehiculos", "Inventario"],
                 ["ofertas", "Ofertas recibidas"],
+                ["analytics", "Analytics"],
+                ["layout", "Editar Home"],
               ] as Array<[AdminTabId, string]>).map(([tabId, label]) => (
                 <button
                   key={tabId}
@@ -6892,14 +7137,10 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                             }}
                             className="ui-focus w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
                           >
-                            <option value="all">Todos los grupos</option>
-                            <option value="proximos-remates">Próximos remates</option>
-                            <option value="ventas-directas">Ventas directas</option>
-                            <option value="novedades">Novedades</option>
-                            <option value="catalogo">Catálogo</option>
-                            {(config.managedCategories ?? []).map((category) => (
-                              <option key={`group-filter-${category.id}`} value={`managed:${category.id}`}>
-                                {category.name}
+                            <option value="all">Todas las categorías</option>
+                            {availableGroupFilterOptions.map((option) => (
+                              <option key={`group-filter-${option.value}`} value={option.value}>
+                                {option.label}
                               </option>
                             ))}
                           </select>
@@ -6954,19 +7195,111 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     </span>
                   </button>
                 </div>
+                {selectedInventoryKeys.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => applyBulkVisibility(true)}
+                      className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
+                      title="Mostrar seleccionados"
+                      aria-label="Mostrar seleccionados"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16s-6.63-2-8.37-5.42a1.3 1.3 0 0 1 0-1.16C3.37 6 6.62 4 10 4Zm0 2c-2.6 0-5.16 1.5-6.71 4 .01.02.02.04.03.05C4.84 12.5 7.4 14 10 14s5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6Zm0 1.75A2.25 2.25 0 1 1 10 12.25 2.25 2.25 0 0 1 10 7.75Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyBulkVisibility(false)}
+                      className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-slate-300 bg-white text-slate-700"
+                      title="Ocultar seleccionados"
+                      aria-label="Ocultar seleccionados"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16c-1.72 0-3.42-.52-4.95-1.5l1.5-1.5c1.06.63 2.24.97 3.45.97 2.6 0 5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6c-1.2 0-2.38.34-3.43.96L5.1 5.49A9.85 9.85 0 0 1 10 4Zm7.2 13.6a.75.75 0 0 1-1.06 0l-13-13a.75.75 0 1 1 1.06-1.06l13 13a.75.75 0 0 1 0 1.06ZM10 7.75c.7 0 1.33.32 1.75.83L8.58 11.75A2.25 2.25 0 0 1 10 7.75Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyBulkMoveCategory}
+                      className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-indigo-300 bg-indigo-50 text-indigo-700"
+                      title="Cambiar categoría"
+                      aria-label="Cambiar categoría"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M4.5 3A1.5 1.5 0 0 0 3 4.5v11A1.5 1.5 0 0 0 4.5 17h11a1.5 1.5 0 0 0 1.5-1.5v-7a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 1 8 5.5v-1A1.5 1.5 0 0 0 6.5 3h-2Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyBulkAssignAuction}
+                      className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
+                      title="Mover a remate"
+                      aria-label="Mover a remate"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M4 3a1 1 0 0 0-1 1v2h14V4a1 1 0 1 0-2 0h-1a2 2 0 1 0-4 0H9a2 2 0 1 0-4 0H4Zm13 5H3v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyBulkSetVentaDirecta(true)}
+                      className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-amber-300 bg-amber-50 text-amber-700"
+                      title="Mover a venta directa"
+                      aria-label="Mover a venta directa"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M4 4h12v3H4V4Zm0 5h8v3H4V9Zm0 5h12v2H4v-2Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyBulkSetVentaDirecta(false)}
+                      className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-amber-300 bg-white text-amber-700"
+                      title="Sacar de venta directa"
+                      aria-label="Sacar de venta directa"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M16.7 3.3a1 1 0 0 0-1.4 0L10 8.6 4.7 3.3a1 1 0 0 0-1.4 1.4L8.6 10l-5.3 5.3a1 1 0 1 0 1.4 1.4L10 11.4l5.3 5.3a1 1 0 0 0 1.4-1.4L11.4 10l5.3-5.3a1 1 0 0 0 0-1.4Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyBulkDelete}
+                      className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
+                      title="Eliminar masivo"
+                      aria-label="Eliminar masivo"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Z" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : null}
                 <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-2">
                   {paginatedEditorItems.map((item) => {
                     const key = getVehicleKey(item);
                     const hidden = mergedHiddenVehicleIds.has(key);
-                    const isDirect = (config.sectionVehicleIds["ventas-directas"] ?? []).includes(key);
-                    const isNovelty = (config.sectionVehicleIds.novedades ?? []).includes(key);
-                    const isCatalog = (config.sectionVehicleIds.catalogo ?? []).includes(key);
                     const auctionLabel = upcomingAuctionByVehicleKey[key] ?? "Sin remate asignado";
                     return (
                       <article
                         key={`editor-${key}`}
-                        className="grid grid-cols-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-1.5 sm:grid-cols-[1.5fr_auto_1fr_auto]"
+                        className="grid grid-cols-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-1.5 sm:grid-cols-[auto_1.4fr_auto_1fr_auto]"
                       >
+                        <div className="flex items-center justify-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedInventorySet.has(key)}
+                            onChange={() =>
+                              setSelectedInventoryKeys((prev) =>
+                                prev.includes(key) ? prev.filter((entry) => entry !== key) : [...prev, key],
+                              )
+                            }
+                            className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                            aria-label={`Seleccionar ${getPatent(item)}`}
+                            title="Seleccionar"
+                          />
+                        </div>
                         <div className="min-w-0">
                           <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                             {getPatent(item)}
@@ -6982,15 +7315,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                           </p>
                           <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">
                             {getModel(item)}
-                          </p>
-                          <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">
-                            {[
-                              isDirect ? "Venta directa" : null,
-                              isNovelty ? "Novedad" : null,
-                              isCatalog ? "Catálogo" : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ") || "Sin canal asignado"}
                           </p>
                         </div>
                         <div className="mx-auto h-12 w-20 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
@@ -7080,6 +7404,29 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   <p className="text-xs text-slate-600">
                     Mostrando {paginatedEditorItems.length} de {filteredEditorItems.length} resultados.
                   </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (allPaginatedSelected) {
+                          setSelectedInventoryKeys((prev) =>
+                            prev.filter((key) => !paginatedEditorKeys.includes(key)),
+                          );
+                        } else {
+                          setSelectedInventoryKeys((prev) => Array.from(new Set([...prev, ...paginatedEditorKeys])));
+                        }
+                      }}
+                      className="ui-focus rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                      title={allPaginatedSelected ? "Deseleccionar página" : "Seleccionar página"}
+                    >
+                      {allPaginatedSelected ? "☑" : "☐"}
+                    </button>
+                    {selectedInventoryKeys.length > 0 ? (
+                      <span className="rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">
+                        {selectedInventoryKeys.length}
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -7565,9 +7912,17 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                               className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1fr)_72px_228px] md:items-center"
                             >
                               <div className="min-h-8 md:flex md:items-center">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                                  {auction.name}
-                                </p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                    {auction.name}
+                                  </p>
+                                  <span
+                                    className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold ${auctionOriginClass(auctionOrigin)}`}
+                                    title={auctionOriginLabel(auctionOrigin)}
+                                  >
+                                    {auctionOriginLabel(auctionOrigin)}
+                                  </span>
+                                </div>
                               </div>
                               <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                                 {count}
@@ -7668,7 +8023,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                       return (
                         <article
                           key={category.id}
-                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1.1fr)_minmax(300px,1.8fr)_72px_228px] md:items-center"
+                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1fr)_72px_228px] md:items-center"
                         >
                           <input
                             value={category.name}
@@ -7676,13 +8031,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                               updateManagedCategory(category.id, { name: event.target.value })
                             }
                             className="ui-focus rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold"
-                          />
-                          <input
-                            value={category.description}
-                            onChange={(event) =>
-                              updateManagedCategory(category.id, { description: event.target.value })
-                            }
-                            className="ui-focus rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm"
                           />
                           <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                             {category.vehicleIds.length}
@@ -9242,13 +9590,13 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             );
           }
           if (sectionId === "proximos-remates") {
-            if (proximosRemates.length === 0 && !hasUpcomingAuctionCategories) {
+            if (proximosRemates.length === 0 && !hasUpcomingRemateCategories) {
               return null;
             }
-            return hasUpcomingAuctionCategories ? (
+            return hasUpcomingRemateCategories ? (
               <UpcomingAuctionsSection
                 key="public-proximos-auctions"
-                groups={visibleUpcomingAuctionGroups}
+                groups={visibleUpcomingRemateGroups}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 favoriteKeys={favoriteKeys}
@@ -9277,8 +9625,21 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             );
           }
           if (sectionId === "ventas-directas") {
-            if (ventasDirectas.length === 0) return null;
-            return (
+            if (ventasDirectas.length === 0 && !hasUpcomingVentaDirectaCategories) return null;
+            return hasUpcomingVentaDirectaCategories ? (
+              <UpcomingAuctionsSection
+                key="public-ventas-directas-auctions"
+                groups={visibleUpcomingVentaDirectaGroups}
+                priceMap={config.vehiclePrices}
+                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={toggleFavorite}
+                compareKeys={compareKeys}
+                onToggleCompare={toggleCompare}
+                onOpenVehicle={openVehicleDetail}
+                cardDensity={cardDensity}
+              />
+            ) : (
               <Section
                 key="public-ventas-directas"
                 id="ventas-directas"
