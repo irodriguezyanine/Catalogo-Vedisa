@@ -222,6 +222,7 @@ function buildRemateItemPayload(
   vehicleKey: string,
   remateId: string,
   patente: string,
+  eventType: "remate" | "venta_directa",
 ): RemateItemSyncRow {
   const manualId = vehicleKey.startsWith("manual-") ? vehicleKey.slice("manual-".length) : "";
   const manual = manualId ? manualById(config).get(manualId) : undefined;
@@ -241,6 +242,8 @@ function buildRemateItemPayload(
     tipo_documento: "factura_exenta",
     extra_fields: {
       source_system: "catalogo",
+      event_type: eventType,
+      event_origin: eventType === "venta_directa" ? "catalogo_venta_directa" : "catalogo_remate",
       source_vehicle_key: vehicleKey,
       synced_at: new Date().toISOString(),
     },
@@ -421,7 +424,10 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
     }
     const patenteUpper = patentResolved.patente.trim().toUpperCase();
     desiredRemateItemKeys.add(`${remateId}|${patenteUpper}|factura_exenta`);
-    remateItemRows.push(buildRemateItemPayload(config, vehicleKey, remateId, patentResolved.patente));
+    const eventType: "remate" | "venta_directa" = rematesVentaDirecta.has(remateId)
+      ? "venta_directa"
+      : "remate";
+    remateItemRows.push(buildRemateItemPayload(config, vehicleKey, remateId, patentResolved.patente, eventType));
   }
 
   if (remateItemRows.length > 0) {
