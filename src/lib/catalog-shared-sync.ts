@@ -11,6 +11,8 @@ type SyncResult = {
 
 type RemateSyncRow = {
   id: string;
+  fecha_hora_inicio: string;
+  fecha_hora_cierre: string;
   fecha_hora_remate: string;
   descripcion: string;
   estado: "abierto";
@@ -44,6 +46,31 @@ const REMATES_ITEMS_TABLE = process.env.CATALOG_SYNC_REMATES_ITEMS_TABLE ?? "rem
 const ESTADO_RETIRO_REMATE = "en_bodega_a_remate";
 const ESTADO_RETIRO_VENTA_DIRECTA = "en_bodega_a_venta_directa";
 const ESTADO_RETIRO_DEFAULT = "en_tasacion";
+const DEFAULT_VENTA_DIRECTA_EVENT_ID = "6f4a7e7a-0c83-4e0a-8a7e-9d60f6797f11";
+const DEFAULT_VENTA_DIRECTA_EVENT_NAME = "Venta Directa - Catálogo";
+
+function isMissingRematesTipoColumn(error: unknown): boolean {
+  const code = String((error as { code?: unknown })?.code ?? "").toUpperCase();
+  const message = String((error as { message?: unknown })?.message ?? "").toLowerCase();
+  const details = String((error as { details?: unknown })?.details ?? "").toLowerCase();
+  const text = `${message} ${details}`;
+  return (
+    code === "PGRST204" ||
+    (text.includes("schema cache") && text.includes("tipo")) ||
+    (text.includes("column") && text.includes("tipo"))
+  );
+}
+
+function isMissingRematesEventWindowColumns(error: unknown): boolean {
+  const message = String((error as { message?: unknown })?.message ?? "").toLowerCase();
+  const details = String((error as { details?: unknown })?.details ?? "").toLowerCase();
+  const text = `${message} ${details}`;
+  return (
+    (text.includes("fecha_hora_inicio") && text.includes("column")) ||
+    (text.includes("fecha_hora_cierre") && text.includes("column")) ||
+    (text.includes("schema cache") && (text.includes("fecha_hora_inicio") || text.includes("fecha_hora_cierre")))
+  );
+}
 
 function getServerSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
@@ -84,6 +111,13 @@ function parseDateToRemateTimestamp(dateInput: string, remateName?: string): str
   const hh = String(hours).padStart(2, "0");
   const mm = String(minutes).padStart(2, "0");
   return `${date}T${hh}:${mm}:00.000Z`;
+}
+
+function parseIsoOrNull(value?: string | null): string | null {
+  if (!value?.trim()) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
 
 function isVentaDirectaEventName(value?: string | null): boolean {
@@ -257,9 +291,17 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
   };
 
   const { remateAssignments, remateKeys, directSaleKeys } = buildSyncTargets(config);
-  const rematesVentaDirecta = new Set<string>();
+  const eventByVehicle = new Map<string, string>();
   for (const [vehicleKey, remateId] of Object.entries(remateAssignments)) {
-    if (!isUuid(remateId)) continue;
+    if (isUuid(remateId)) eventByVehicle.set(vehicleKey, remateId);
+  }
+  for (const vehicleKey of directSaleKeys) {
+    if (!eventByVehicle.has(vehicleKey)) {
+      eventByVehicle.set(vehicleKey, DEFAULT_VENTA_DIRECTA_EVENT_ID);
+    }
+  }
+  const rematesVentaDirecta = new Set<string>();
+  for (const [vehicleKey, remateId] of eventByVehicle.entries()) {
     if (directSaleKeys.has(vehicleKey)) rematesVentaDirecta.add(remateId);
   }
 
@@ -269,25 +311,55 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
       result.skipped.push(`Remate omitido (ID legacy no UUID): ${auction.name}`);
       continue;
     }
-    const fechaHora = parseDateToRemateTimestamp(auction.date, auction.name);
-    if (!fechaHora) {
+    const fechaHoraCierre =
+      parseIsoOrNull(auction.endAt) ?? parseDateToRemateTimestamp(auction.date, auction.name);
+    if (!fechaHoraCierre) {
       result.skipped.push(`Remate omitido (fecha inválida): ${auction.name}`);
       continue;
     }
+    const fechaHoraInicio =
+      parseIsoOrNull(auction.startAt) ??
+      new Date(new Date(fechaHoraCierre).getTime() - 24 * 60 * 60 * 1000).toISOString();
     const nombre = auction.name.trim();
     const esVentaDirectaPorNombre = isVentaDirectaEventName(nombre);
     const esVentaDirecta = rematesVentaDirecta.has(auction.id) || esVentaDirectaPorNombre;
     remateRows.push({
       id: auction.id,
-      fecha_hora_remate: fechaHora,
+      fecha_hora_inicio: fechaHoraInicio,
+      fecha_hora_cierre: fechaHoraCierre,
+      fecha_hora_remate: fechaHoraCierre,
       descripcion: nombre,
       estado: "abierto",
       tipo: esVentaDirecta ? "venta_directa" : "remate",
     });
   }
 
+  if (directSaleKeys.size > 0 && !remateRows.some((r) => r.id === DEFAULT_VENTA_DIRECTA_EVENT_ID)) {
+    const now = new Date();
+    const end = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    remateRows.push({
+      id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
+      fecha_hora_inicio: now.toISOString(),
+      fecha_hora_cierre: end.toISOString(),
+      fecha_hora_remate: end.toISOString(),
+      descripcion: DEFAULT_VENTA_DIRECTA_EVENT_NAME,
+      estado: "abierto",
+      tipo: "venta_directa",
+    });
+  }
+
   if (remateRows.length > 0) {
-    const { error } = await supabase.from(REMATES_TABLE).upsert(remateRows, { onConflict: "id" });
+    let { error } = await supabase.from(REMATES_TABLE).upsert(remateRows, { onConflict: "id" });
+    if (error && isMissingRematesTipoColumn(error)) {
+      const remateRowsSinTipo = remateRows.map(({ tipo: _tipo, ...row }) => row);
+      ({ error } = await supabase.from(REMATES_TABLE).upsert(remateRowsSinTipo, { onConflict: "id" }));
+    }
+    if (error && isMissingRematesEventWindowColumns(error)) {
+      const remateRowsCompat = remateRows.map(
+        ({ fecha_hora_inicio: _ini, fecha_hora_cierre: _cier, tipo: _tipo, ...row }) => row,
+      );
+      ({ error } = await supabase.from(REMATES_TABLE).upsert(remateRowsCompat, { onConflict: "id" }));
+    }
     if (error) throw new Error(`No se pudieron sincronizar remates: ${error.message}`);
     result.rematesUpserted = remateRows.length;
   }
@@ -335,11 +407,7 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
   }
 
   const remateItemRows: RemateItemSyncRow[] = [];
-  for (const [vehicleKey, remateId] of Object.entries(remateAssignments)) {
-    if (!isUuid(remateId)) {
-      result.skipped.push(`Asignación omitida (remate legacy no UUID): ${vehicleKey}`);
-      continue;
-    }
+  for (const [vehicleKey, remateId] of eventByVehicle.entries()) {
     const patentResolved = resolveVehiclePatent(config, vehicleKey);
     if (!patentResolved) {
       result.skipped.push(`Asignación omitida sin patente: ${vehicleKey}`);

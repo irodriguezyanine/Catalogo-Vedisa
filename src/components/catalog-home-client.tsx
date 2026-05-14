@@ -704,6 +704,31 @@ function formatAuctionDateLabel(value?: string): string {
   });
 }
 
+function formatAuctionWindowLabel(auction: UpcomingAuction): string {
+  const inicio = auction.startAt ? new Date(auction.startAt) : null;
+  const cierre = auction.endAt ? new Date(auction.endAt) : null;
+  if (inicio && cierre && !Number.isNaN(inicio.getTime()) && !Number.isNaN(cierre.getTime())) {
+    const ini = inicio.toLocaleString("es-CL", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const fin = cierre.toLocaleString("es-CL", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    return `${ini} → ${fin}`;
+  }
+  return formatAuctionDateLabel(auction.date);
+}
+
 function formatDateDash(value: Date): string {
   const dd = String(value.getDate()).padStart(2, "0");
   const mm = String(value.getMonth() + 1).padStart(2, "0");
@@ -742,7 +767,27 @@ function buildDateInTimeZone(
   return new Date(utcMs);
 }
 
+function toChileIsoDateTime(dateYmd: string, timeHm: string): string | null {
+  const m = dateYmd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const hhmm = (timeHm || "00:00").match(/^(\d{1,2}):(\d{2})$/);
+  if (!hhmm) return null;
+  const d = buildDateInTimeZone(
+    Number(m[1]),
+    Number(m[2]),
+    Number(m[3]),
+    Number(hhmm[1]),
+    Number(hhmm[2]),
+    "America/Santiago",
+  );
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 function parseAuctionDateTime(auction: UpcomingAuction): Date | null {
+  if (auction.endAt) {
+    const end = new Date(auction.endAt);
+    if (!Number.isNaN(end.getTime())) return end;
+  }
   const rawDate = (auction.date ?? "").trim();
   if (!rawDate) return null;
   const dateMatch = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -1937,7 +1982,7 @@ function UpcomingAuctionsSection({
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2">
               <h3 className="text-base font-semibold text-indigo-900">{auction.name}</h3>
               <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-indigo-700">
-                {formatAuctionDateLabel(auction.date)} · {items.length} vehículos
+                {formatAuctionWindowLabel(auction)} · {items.length} vehículos
               </span>
             </div>
             <HorizontalCardsRail
@@ -2031,6 +2076,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
   const [newAuctionName, setNewAuctionName] = useState("");
   const [newAuctionDate, setNewAuctionDate] = useState("");
+  const [newAuctionStartTime, setNewAuctionStartTime] = useState("10:00");
+  const [newAuctionEndTime, setNewAuctionEndTime] = useState("15:00");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryDescription, setNewCategoryDescription] = useState("");
   const [showCreateCategoryForm, setShowCreateCategoryForm] = useState(false);
@@ -2868,7 +2915,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     for (const [vehicleKey, auctionId] of Object.entries(config.vehicleUpcomingAuctionIds ?? {})) {
       const auction = auctionsById.get(auctionId);
       if (!auction) continue;
-      const dateLabel = formatAuctionDateLabel(auction.date);
+      const dateLabel = formatAuctionWindowLabel(auction);
       labels[vehicleKey] = dateLabel ? `${auction.name} · ${dateLabel}` : auction.name;
     }
     return labels;
@@ -3014,7 +3061,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         if (group.items.length === 0) continue;
         sections.push({
           categoryTitle: `Remates disponibles - ${group.auction.name}`,
-          categorySubtitle: formatAuctionDateLabel(group.auction.date) || "Fecha por confirmar",
+          categorySubtitle: formatAuctionWindowLabel(group.auction) || "Fecha por confirmar",
           rows: group.items.map(buildRow),
         });
       }
@@ -4495,7 +4542,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     if (batchAssignTarget.type === "auction") {
       const auction = sortedUpcomingAuctions.find((entry) => entry.id === batchAssignTarget.auctionId);
       return auction
-        ? `${auction.name} (${formatAuctionDateLabel(auction.date)})`
+        ? `${auction.name} (${formatAuctionWindowLabel(auction)})`
         : "Remate seleccionado";
     }
     return SECTION_LABELS[batchAssignTarget.sectionId];
@@ -4898,17 +4945,29 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   const createUpcomingAuction = () => {
     const name = newAuctionName.trim();
     const date = newAuctionDate.trim();
+    const startAt = toChileIsoDateTime(date, newAuctionStartTime);
+    const endAt = toChileIsoDateTime(date, newAuctionEndTime);
     if (!name || !date) {
       showSystemNotice("error", "Datos incompletos", "Debes completar nombre y fecha del remate.");
+      return;
+    }
+    if (!startAt || !endAt) {
+      showSystemNotice("error", "Horario inválido", "Debes ingresar hora de inicio y cierre válidas.");
+      return;
+    }
+    if (new Date(endAt).getTime() <= new Date(startAt).getTime()) {
+      showSystemNotice("error", "Horario inválido", "La hora de cierre debe ser posterior a la hora de inicio.");
       return;
     }
     const id = crypto.randomUUID();
     setConfig((prev) => ({
       ...prev,
-      upcomingAuctions: [...prev.upcomingAuctions, { id, name, date }],
+      upcomingAuctions: [...prev.upcomingAuctions, { id, name, date, startAt, endAt }],
     }));
     setNewAuctionName("");
     setNewAuctionDate("");
+    setNewAuctionStartTime("10:00");
+    setNewAuctionEndTime("15:00");
   };
 
   const createManagedCategory = (openAssign = false) => {
@@ -6657,7 +6716,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                             <option value="">Todos los remates</option>
                             {sortedUpcomingAuctions.map((auction) => (
                               <option key={auction.id} value={auction.id}>
-                                {auction.name} ({formatAuctionDateLabel(auction.date)})
+                                {auction.name} ({formatAuctionWindowLabel(auction)})
                               </option>
                             ))}
                           </select>
@@ -7106,6 +7165,20 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                           onChange={(event) => setNewAuctionDate(event.target.value)}
                           className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
                         />
+                        <input
+                          type="time"
+                          value={newAuctionStartTime}
+                          onChange={(event) => setNewAuctionStartTime(event.target.value)}
+                          className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                          title="Hora de inicio"
+                        />
+                        <input
+                          type="time"
+                          value={newAuctionEndTime}
+                          onChange={(event) => setNewAuctionEndTime(event.target.value)}
+                          className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                          title="Hora de cierre"
+                        />
                         <button
                           type="button"
                           onClick={createUpcomingAuction}
@@ -7116,11 +7189,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                         <button
                           type="button"
                           onClick={() => {
-                            if (!newAuctionName.trim() || !newAuctionDate.trim()) {
+                            if (!newAuctionName.trim() || !newAuctionDate.trim() || !newAuctionStartTime.trim() || !newAuctionEndTime.trim()) {
                               showSystemNotice(
                                 "error",
                                 "Remate incompleto",
-                                "Ingresa nombre y fecha para crear el remate.",
+                                "Ingresa nombre, fecha, hora de inicio y cierre para crear el remate.",
                               );
                               return;
                             }
@@ -7348,7 +7421,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                             </p>
                           </div>
                           <p className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600">
-                            Remate programado para {formatAuctionDateLabel(auction.date)}
+                            Remate programado para {formatAuctionWindowLabel(auction)}
                           </p>
                           <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                             {count}
@@ -9865,7 +9938,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Finalizar remate</p>
                 <h3 className="text-lg font-bold text-slate-900">{finalizeAuction.name}</h3>
                 <p className="text-xs text-slate-500">
-                  Remate programado para {formatAuctionDateLabel(finalizeAuction.date)}
+                  Remate programado para {formatAuctionWindowLabel(finalizeAuction)}
                 </p>
               </div>
               <button
@@ -10212,7 +10285,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   <option value="">Sin remate</option>
                   {sortedUpcomingAuctions.map((auction) => (
                     <option key={auction.id} value={auction.id}>
-                      {auction.name} ({formatAuctionDateLabel(auction.date)})
+                      {auction.name} ({formatAuctionWindowLabel(auction)})
                     </option>
                   ))}
                 </select>
@@ -10740,7 +10813,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   <option value="">Sin remate</option>
                   {sortedUpcomingAuctions.map((auction) => (
                     <option key={auction.id} value={auction.id}>
-                      {auction.name} ({formatAuctionDateLabel(auction.date)})
+                      {auction.name} ({formatAuctionWindowLabel(auction)})
                     </option>
                   ))}
                 </select>

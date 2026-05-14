@@ -7,6 +7,8 @@ export type UpcomingAuction = {
   id: string;
   name: string;
   date: string;
+  startAt?: string;
+  endAt?: string;
 };
 
 export type SectionTextConfig = {
