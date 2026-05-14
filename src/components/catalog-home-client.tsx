@@ -7438,9 +7438,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 </div>
 
                 <div className="mt-3 space-y-2">
-                  <div className="hidden gap-2 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[minmax(170px,1.1fr)_minmax(300px,1.8fr)_72px_228px]">
+                  <div className="hidden gap-2 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[minmax(170px,1fr)_72px_228px]">
                     <span>Grupo</span>
-                    <span>Descripción / textos</span>
                     <span className="text-center">Unidades</span>
                     <span className="text-right">Acciones</span>
                   </div>
@@ -7455,63 +7454,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                       return (
                         <article
                           key={sectionId}
-                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1.1fr)_minmax(300px,1.8fr)_72px_228px] md:items-center"
+                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1fr)_72px_228px] md:items-center"
                         >
                           <div className="min-h-8 md:flex md:items-center">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
                               {SECTION_LABELS[sectionId]}
                             </p>
-                          </div>
-                          <div className="min-h-12 rounded-md border border-slate-200 bg-white px-2.5 py-1.5">
-                            {isEditingTexts ? (
-                              <div className="grid gap-1 md:grid-cols-[1fr_1fr_auto]">
-                                <input
-                                  value={config.sectionTexts[sectionId]?.title ?? ""}
-                                  onChange={(event) => setSectionText(sectionId, "title", event.target.value)}
-                                  placeholder="Título"
-                                  className="ui-focus rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
-                                />
-                                <input
-                                  value={config.sectionTexts[sectionId]?.subtitle ?? ""}
-                                  onChange={(event) => setSectionText(sectionId, "subtitle", event.target.value)}
-                                  placeholder="Descripción"
-                                  className="ui-focus rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingSectionTextId(null)}
-                                  className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
-                                  aria-label={`Cerrar edición de ${SECTION_LABELS[sectionId]}`}
-                                  title="Listo"
-                                >
-                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                    <path fillRule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.25a1 1 0 0 1-1.42.001l-3-3.015a1 1 0 1 1 1.418-1.41l2.29 2.3 6.49-6.534a1 1 0 0 1 1.416-.006Z" clipRule="evenodd" />
-                                  </svg>
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <p className="line-clamp-1 text-sm font-semibold text-slate-700">
-                                    {config.sectionTexts[sectionId]?.title ?? SECTION_LABELS[sectionId]}
-                                  </p>
-                                  <p className="line-clamp-1 text-xs text-slate-500">
-                                    {config.sectionTexts[sectionId]?.subtitle ?? "Sin descripción"}
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingSectionTextId(sectionId)}
-                                  className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-slate-300 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
-                                  aria-label={`Editar textos de ${SECTION_LABELS[sectionId]}`}
-                                  title="Editar textos"
-                                >
-                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                    <path d="M13.586 2.586a2 2 0 0 1 2.828 2.828l-8.2 8.2a1 1 0 0 1-.475.264l-3 0.75a1 1 0 0 1-1.212-1.213l.75-3a1 1 0 0 1 .264-.474l8.2-8.2ZM12.172 4 5.24 10.932l-.39 1.56 1.56-.39L13.344 5.17 12.172 4Z" />
-                                  </svg>
-                                </button>
-                              </div>
-                            )}
                           </div>
                         <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                           {sectionVehicleCounts[sectionId]}
@@ -7614,24 +7562,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                           return (
                             <article
                               key={auction.id}
-                              className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1.1fr)_minmax(300px,1.8fr)_72px_228px] md:items-center"
+                              className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1fr)_72px_228px] md:items-center"
                             >
                               <div className="min-h-8 md:flex md:items-center">
                                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
                                   {auction.name}
                                 </p>
-                              </div>
-                              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600">
-                                <span className="truncate">
-                                  {getAuctionEventType(auction) === "venta_directa" ? "Venta directa programada para " : "Remate programado para "}
-                                  {formatAuctionWindowLabel(auction)}
-                                </span>
-                                <span
-                                  className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold ${auctionOriginClass(auctionOrigin)}`}
-                                  title={auctionOriginLabel(auctionOrigin)}
-                                >
-                                  {auctionOriginLabel(auctionOrigin)}
-                                </span>
                               </div>
                               <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                                 {count}
