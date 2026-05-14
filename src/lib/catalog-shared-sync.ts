@@ -14,6 +14,7 @@ type RemateSyncRow = {
   fecha_hora_remate: string;
   descripcion: string;
   estado: "abierto";
+  tipo: "remate" | "venta_directa";
 };
 
 type RemateItemSyncRow = {
@@ -83,6 +84,21 @@ function parseDateToRemateTimestamp(dateInput: string, remateName?: string): str
   const hh = String(hours).padStart(2, "0");
   const mm = String(minutes).padStart(2, "0");
   return `${date}T${hh}:${mm}:00.000Z`;
+}
+
+function isVentaDirectaEventName(value?: string | null): boolean {
+  const normalized = String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  if (!normalized) return false;
+  return (
+    normalized.includes("ventadirecta") ||
+    normalized.includes("vtadirecta") ||
+    normalized.includes("vtdirecta") ||
+    normalized.includes("ventadir")
+  );
 }
 
 function manualById(config: EditorConfig): Map<string, ManualPublication> {
@@ -240,6 +256,13 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
     skipped: [],
   };
 
+  const { remateAssignments, remateKeys, directSaleKeys } = buildSyncTargets(config);
+  const rematesVentaDirecta = new Set<string>();
+  for (const [vehicleKey, remateId] of Object.entries(remateAssignments)) {
+    if (!isUuid(remateId)) continue;
+    if (directSaleKeys.has(vehicleKey)) rematesVentaDirecta.add(remateId);
+  }
+
   const remateRows: RemateSyncRow[] = [];
   for (const auction of config.upcomingAuctions ?? []) {
     if (!isUuid(auction.id)) {
@@ -251,11 +274,15 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
       result.skipped.push(`Remate omitido (fecha inválida): ${auction.name}`);
       continue;
     }
+    const nombre = auction.name.trim();
+    const esVentaDirectaPorNombre = isVentaDirectaEventName(nombre);
+    const esVentaDirecta = rematesVentaDirecta.has(auction.id) || esVentaDirectaPorNombre;
     remateRows.push({
       id: auction.id,
       fecha_hora_remate: fechaHora,
-      descripcion: auction.name.trim(),
+      descripcion: nombre,
       estado: "abierto",
+      tipo: esVentaDirecta ? "venta_directa" : "remate",
     });
   }
 
@@ -265,7 +292,6 @@ export async function syncEditorConfigToSharedTables(config: EditorConfig): Prom
     result.rematesUpserted = remateRows.length;
   }
 
-  const { remateAssignments, remateKeys, directSaleKeys } = buildSyncTargets(config);
   const inventoryStateByKey = new Map<string, string>();
   for (const key of remateKeys) inventoryStateByKey.set(key, ESTADO_RETIRO_REMATE);
   for (const key of directSaleKeys) {
