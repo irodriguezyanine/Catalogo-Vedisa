@@ -10,10 +10,16 @@ type SharedRemateRow = {
   numero_remate: string | null;
   descripcion: string | null;
   tipo?: "remate" | "venta_directa" | null;
+  estado?: string | null;
   fecha_hora_inicio?: string | null;
   fecha_hora_cierre?: string | null;
   fecha_hora_remate?: string | null;
   created_at?: string | null;
+};
+
+type SharedRemateItemRow = {
+  remate_id: string | null;
+  patente?: string | null;
 };
 
 function normalizeText(value?: string | null) {
@@ -50,12 +56,33 @@ function inferEventDate(row: SharedRemateRow) {
   return source.slice(0, 10);
 }
 
+function inferEventEndAt(row: SharedRemateRow) {
+  return row.fecha_hora_cierre ?? row.fecha_hora_remate ?? undefined;
+}
+
 function inferEventName(row: SharedRemateRow) {
   const descripcion = String(row.descripcion ?? "").trim();
   if (descripcion) return descripcion;
   const numero = String(row.numero_remate ?? "").trim();
   if (numero) return numero;
   return `Evento ${row.id.slice(0, 8)}`;
+}
+
+function normalizePatentKey(value?: string | null) {
+  return String(value ?? "")
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/-/g, "");
+}
+
+function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
+  const estado = String(row.estado ?? "").trim().toLowerCase();
+  if (estado === "cerrado") return false;
+  const endAt = inferEventEndAt(row);
+  if (!endAt) return true;
+  const endMs = Date.parse(endAt);
+  if (!Number.isFinite(endMs)) return true;
+  return endMs >= nowMs;
 }
 
 function isMissingColumnError(error: unknown) {
@@ -86,7 +113,7 @@ async function fetchSharedRematesRows() {
       .limit(2000);
 
   const fullSelect =
-    "id, numero_remate, descripcion, tipo, fecha_hora_inicio, fecha_hora_cierre, fecha_hora_remate, created_at";
+    "id, numero_remate, descripcion, tipo, estado, fecha_hora_inicio, fecha_hora_cierre, fecha_hora_remate, created_at";
   const baseSelect = "id, numero_remate, descripcion, fecha_hora_remate, created_at";
 
   const first = await runSelect(fullSelect);
@@ -106,32 +133,100 @@ async function fetchSharedRematesRows() {
   return (fallback.data ?? []) as unknown as SharedRemateRow[];
 }
 
+async function fetchSharedRemateItems(remateIds: string[]) {
+  if (!remateIds.length) return [] as SharedRemateItemRow[];
+  const supabase = getServerSupabase();
+  if (!supabase) return [] as SharedRemateItemRow[];
+
+  const { data, error } = await supabase
+    .from("remates_items")
+    .select("remate_id, patente")
+    .in("remate_id", remateIds)
+    .limit(10000);
+  if (error) {
+    console.warn("No se pudieron leer items compartidos de remates:", error);
+    return [] as SharedRemateItemRow[];
+  }
+  return (data ?? []) as unknown as SharedRemateItemRow[];
+}
+
 async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
   const data = await fetchSharedRematesRows();
   if (!data.length) return config;
+  const nowMs = Date.now();
+  const activeRows = data.filter((row) => isActiveSharedEvent(row, nowMs));
+  if (!activeRows.length) {
+    return {
+      ...config,
+      upcomingAuctions: (config.upcomingAuctions ?? []).filter((auction) => {
+        const endAt = auction.endAt;
+        if (!endAt) return true;
+        const endMs = Date.parse(endAt);
+        if (!Number.isFinite(endMs)) return true;
+        return endMs >= nowMs;
+      }),
+    };
+  }
+  const remateIds = activeRows.map((row) => row.id).filter((id) => id);
+  const sharedItems = await fetchSharedRemateItems(remateIds);
 
   const byId = new Map(config.upcomingAuctions.map((event) => [event.id, event]));
-  for (const row of data as SharedRemateRow[]) {
+  for (const row of activeRows as SharedRemateRow[]) {
     const current = byId.get(row.id);
     const merged = {
       id: row.id,
       name: current?.name && current.name.trim().length > 0 ? current.name : inferEventName(row),
       date: current?.date || inferEventDate(row),
       startAt: current?.startAt ?? row.fecha_hora_inicio ?? undefined,
-      endAt: current?.endAt ?? row.fecha_hora_cierre ?? row.fecha_hora_remate ?? undefined,
+      endAt: current?.endAt ?? inferEventEndAt(row),
       eventType: current?.eventType ?? inferEventType(row),
     };
     byId.set(row.id, merged);
   }
 
+  const upcomingAuctions = Array.from(byId.values()).filter((auction) => {
+    const endAt = auction.endAt;
+    if (!endAt) return true;
+    const endMs = Date.parse(endAt);
+    if (!Number.isFinite(endMs)) return true;
+    return endMs >= nowMs;
+  });
+
+  const visibleAuctionIds = new Set(upcomingAuctions.map((auction) => auction.id));
+  const nextVehicleUpcomingAuctionIds = { ...config.vehicleUpcomingAuctionIds };
+  const rematesSection = new Set(config.sectionVehicleIds["proximos-remates"] ?? []);
+  const ventaDirectaSection = new Set(config.sectionVehicleIds["ventas-directas"] ?? []);
+
+  for (const item of sharedItems) {
+    const auctionId = String(item.remate_id ?? "");
+    if (!auctionId || !visibleAuctionIds.has(auctionId)) continue;
+    const vehicleKey = normalizePatentKey(item.patente);
+    if (!vehicleKey) continue;
+
+    const auction = byId.get(auctionId);
+    const eventType = auction?.eventType ?? "remate";
+    nextVehicleUpcomingAuctionIds[vehicleKey] = auctionId;
+    if (eventType === "venta_directa") {
+      ventaDirectaSection.add(vehicleKey);
+    } else {
+      rematesSection.add(vehicleKey);
+    }
+  }
+
   return {
     ...config,
-    upcomingAuctions: Array.from(byId.values()).sort((a, b) => {
+    upcomingAuctions: upcomingAuctions.sort((a, b) => {
       const tA = Date.parse(a.date || "");
       const tB = Date.parse(b.date || "");
       if (!Number.isFinite(tA) || !Number.isFinite(tB)) return 0;
       return tA - tB;
     }),
+    vehicleUpcomingAuctionIds: nextVehicleUpcomingAuctionIds,
+    sectionVehicleIds: {
+      ...config.sectionVehicleIds,
+      "proximos-remates": Array.from(rematesSection),
+      "ventas-directas": Array.from(ventaDirectaSection),
+    },
   };
 }
 
