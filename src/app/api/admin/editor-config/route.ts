@@ -220,28 +220,51 @@ async function fetchSharedRemateItems(remateIds: string[]) {
 
 async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
   const data = await fetchSharedRematesRows();
-  if (!data.length) return config;
+  if (!data.length) {
+    const hiddenCategoryIds = (config.hiddenCategoryIds ?? []).filter(
+      (value) => !value.startsWith("auction:"),
+    );
+    const assignedKeys = new Set(Object.keys(config.vehicleUpcomingAuctionIds ?? {}));
+    return {
+      ...config,
+      upcomingAuctions: [],
+      vehicleUpcomingAuctionIds: {},
+      sectionVehicleIds: {
+        ...config.sectionVehicleIds,
+        "proximos-remates": (config.sectionVehicleIds["proximos-remates"] ?? []).filter(
+          (key) => !assignedKeys.has(key),
+        ),
+      },
+      hiddenCategoryIds,
+    };
+  }
   const nowMs = Date.now();
   const activeRows = data.filter((row) => isActiveSharedEvent(row, nowMs));
   if (!activeRows.length) {
+    const hiddenCategoryIds = (config.hiddenCategoryIds ?? []).filter(
+      (value) => !value.startsWith("auction:"),
+    );
+    const assignedKeys = new Set(Object.keys(config.vehicleUpcomingAuctionIds ?? {}));
     return {
       ...config,
-      upcomingAuctions: (config.upcomingAuctions ?? []).filter((auction) => {
-        const endAt = auction.endAt;
-        if (!endAt) return true;
-        const endMs = Date.parse(endAt);
-        if (!Number.isFinite(endMs)) return true;
-        return endMs >= nowMs;
-      }),
+      upcomingAuctions: [],
+      vehicleUpcomingAuctionIds: {},
+      sectionVehicleIds: {
+        ...config.sectionVehicleIds,
+        "proximos-remates": (config.sectionVehicleIds["proximos-remates"] ?? []).filter(
+          (key) => !assignedKeys.has(key),
+        ),
+      },
+      hiddenCategoryIds,
     };
   }
   const remateIds = activeRows.map((row) => row.id).filter((id) => id);
   const sharedItems = await fetchSharedRemateItems(remateIds);
 
-  const byId = new Map(config.upcomingAuctions.map((event) => [event.id, event]));
+  const byId = new Map<string, EditorConfig["upcomingAuctions"][number]>();
   for (const row of activeRows as SharedRemateRow[]) {
-    const current = byId.get(row.id);
-    const currentName = sanitizeEventTitle(current?.name ?? "");
+    const current = (config.upcomingAuctions ?? []).find((event) => event.id === row.id);
+    const currentName = sanitizeEventTitle(current?.name ?? row.descripcion ?? row.numero_remate ?? "");
     const fallbackName = sanitizeEventTitle(inferEventName(row));
     const merged = {
       id: row.id,
@@ -263,10 +286,27 @@ async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<Editor
   });
 
   const visibleAuctionIds = new Set(upcomingAuctions.map((auction) => auction.id));
-  const nextVehicleUpcomingAuctionIds = { ...config.vehicleUpcomingAuctionIds };
+  const oldAssignments = config.vehicleUpcomingAuctionIds ?? {};
+  const nextVehicleUpcomingAuctionIds = Object.fromEntries(
+    Object.entries(oldAssignments).filter(([, auctionId]) => visibleAuctionIds.has(auctionId)),
+  );
+  const oldAssignedKeys = new Set(Object.keys(oldAssignments));
+  const currentAssignedKeys = new Set(Object.keys(nextVehicleUpcomingAuctionIds));
+  const staleAssignedKeys = new Set(
+    [...oldAssignedKeys].filter((vehicleKey) => !currentAssignedKeys.has(vehicleKey)),
+  );
   const rematesSection = new Set(config.sectionVehicleIds["proximos-remates"] ?? []);
   const ventaDirectaSection = new Set(config.sectionVehicleIds["ventas-directas"] ?? []);
-  const hiddenCategoryIds = new Set(config.hiddenCategoryIds ?? []);
+  for (const vehicleKey of staleAssignedKeys) {
+    rematesSection.delete(vehicleKey);
+  }
+  const hiddenCategoryIds = new Set(
+    (config.hiddenCategoryIds ?? []).filter((value) => {
+      if (!value.startsWith("auction:")) return true;
+      const auctionId = value.slice("auction:".length);
+      return visibleAuctionIds.has(auctionId);
+    }),
+  );
   const sourcesByAuction = new Map<string, Set<string>>();
 
   // Mantiene visibles en Home las secciones comerciales sincronizadas.
