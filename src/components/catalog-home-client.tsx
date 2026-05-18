@@ -953,9 +953,13 @@ function resolveVehiclePriceRaw(
   const raw = item.raw as Record<string, unknown>;
   return pickFirstPriceValue([
     raw.precio_minimo_remate,
+    raw.precioMinimoRemate,
     raw.precio_minimo,
+    raw.precioMinimo,
     raw.valor_minimo,
+    raw.valorMinimo,
     raw.precio_base,
+    raw.precioBase,
     raw.base_price,
     raw.reference_price,
     raw.precio,

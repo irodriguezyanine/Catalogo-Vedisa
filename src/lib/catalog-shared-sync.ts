@@ -196,6 +196,8 @@ function buildInventarioPayload(
     details?.version ??
     "Sin Modelo";
   const valorMinimo =
+    parseClpAmount(details?.precioMinimoRemate) ??
+    parseClpAmount(manual?.precioMinimoRemate) ??
     parseClpAmount(config.vehiclePrices?.[vehicleKey]) ??
     parseClpAmount(details?.originalPrice) ??
     parseClpAmount(manual?.originalPrice);
@@ -204,6 +206,8 @@ function buildInventarioPayload(
     parseClpAmount(manual?.promoPrice) ??
     valorMinimo;
   const precioMinimoRemate =
+    parseClpAmount(details?.precioMinimoRemate) ??
+    parseClpAmount(manual?.precioMinimoRemate) ??
     parseClpAmount(config.vehiclePrices?.[vehicleKey]) ??
     parseClpAmount(details?.promoPrice) ??
     parseClpAmount(manual?.promoPrice) ??
@@ -238,7 +242,10 @@ function buildRemateItemPayload(
   const manualId = vehicleKey.startsWith("manual-") ? vehicleKey.slice("manual-".length) : "";
   const manual = manualId ? manualById(config).get(manualId) : undefined;
   const details = resolveVehicleDetails(config, vehicleKey);
-  const minimo = parseClpAmount(config.vehiclePrices?.[vehicleKey]);
+  const minimo =
+    parseClpAmount(details?.precioMinimoRemate) ??
+    parseClpAmount(manual?.precioMinimoRemate) ??
+    parseClpAmount(config.vehiclePrices?.[vehicleKey]);
 
   return {
     remate_id: remateId,

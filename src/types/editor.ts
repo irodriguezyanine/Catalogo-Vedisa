@@ -86,6 +86,7 @@ export type ManualPublication = {
   upcomingAuctionId?: string;
   visible: boolean;
   price?: string;
+  precioMinimoRemate?: string;
   originalPrice?: string;
   promoPrice?: string;
   promoEnabled?: boolean;
@@ -146,6 +147,7 @@ export type EditorVehicleDetails = {
   /** JSON: `[{"label":"…","url":"https://…"}]` documentos del lote (p. ej. PDF en Cloudinary). */
   lotDocumentsJson?: string;
   originalPrice?: string;
+  precioMinimoRemate?: string;
   promoPrice?: string;
   promoEnabled?: boolean;
 };
