@@ -928,6 +928,41 @@ function getPriceAmount(value?: string): number {
   return Number.isFinite(amount) && amount > 0 ? amount : Number.POSITIVE_INFINITY;
 }
 
+function pickFirstPriceValue(values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return String(Math.round(value));
+    }
+    if (typeof value === "string") {
+      const sample = value.trim();
+      if (sample && /\d/.test(sample)) return sample;
+    }
+  }
+  return null;
+}
+
+function resolveVehiclePriceRaw(
+  item: CatalogItem,
+  priceMap: Record<string, string>,
+): string | null {
+  const key = getVehicleKey(item);
+  const configured = priceMap[key];
+  if (typeof configured === "string" && configured.trim()) {
+    return configured.trim();
+  }
+  const raw = item.raw as Record<string, unknown>;
+  return pickFirstPriceValue([
+    raw.precio_minimo_remate,
+    raw.precio_minimo,
+    raw.valor_minimo,
+    raw.precio_base,
+    raw.base_price,
+    raw.reference_price,
+    raw.precio,
+    raw.monto,
+  ]);
+}
+
 function parseAnalyticsTimestamp(value: unknown): Date | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const date = new Date(value);
@@ -1947,7 +1982,7 @@ function HorizontalCardsRail({
           <div key={`${sectionKey}-${item.id}`} className="catalog-rail-item">
             <CatalogCard
               item={item}
-              priceLabel={formatPrice(priceMap[getVehicleKey(item)])}
+              priceLabel={formatPrice(resolveVehiclePriceRaw(item, priceMap) ?? undefined)}
               upcomingAuctionLabel={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
               density={cardDensity}
               onOpen={() => {
@@ -2568,7 +2603,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   useEffect(() => {
     if (!showOfferModal) return;
     const selectedKey = selectedVehicle ? getVehicleKey(selectedVehicle) : "";
-    const selectedPriceLabel = selectedKey ? formatPrice(config.vehiclePrices[selectedKey]) : null;
+    const selectedPriceLabel = selectedVehicle
+      ? formatPrice(resolveVehiclePriceRaw(selectedVehicle, config.vehiclePrices) ?? undefined)
+      : selectedKey
+        ? formatPrice(config.vehiclePrices[selectedKey])
+        : null;
     const selectedReferenceAmount = parseCurrencyAmount(selectedPriceLabel);
     if (selectedReferenceAmount <= 0) return;
     setOfferForm((prev) => {
@@ -2911,7 +2950,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         if (filter === "livianos" && vehicleType !== "livianos") return false;
         if (filter === "pesados" && vehicleType !== "pesados") return false;
         if (filter === "con3d" && !item.view3dUrl) return false;
-        if (filter === "conPrecio" && !formatPrice(config.vehiclePrices[key])) return false;
+        if (
+          filter === "conPrecio" &&
+          !formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)
+        ) {
+          return false;
+        }
         if (filter === "recientes" && !isRecentAuctionDate(item.auctionDate)) return false;
         if (filter === "manuales" && !isManual) return false;
         if (filter === "proximoRemate" && !config.vehicleUpcomingAuctionIds[key]) return false;
@@ -2935,7 +2979,9 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       sorted.sort((a, b) => {
         const score = (item: CatalogItem): number => {
           const key = getVehicleKey(item);
-          const hasPrice = formatPrice(config.vehiclePrices[key]) ? 1 : 0;
+          const hasPrice = formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)
+            ? 1
+            : 0;
           const has3d = item.view3dUrl ? 1 : 0;
           const isRecent = isRecentAuctionDate(item.auctionDate) ? 1 : 0;
           const isFav = favoriteKeys.includes(key) ? 1 : 0;
@@ -2956,16 +3002,16 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     if (homeSort === "precio-asc") {
       sorted.sort(
         (a, b) =>
-          getPriceAmount(config.vehiclePrices[getVehicleKey(a)]) -
-          getPriceAmount(config.vehiclePrices[getVehicleKey(b)]),
+          getPriceAmount(resolveVehiclePriceRaw(a, config.vehiclePrices) ?? undefined) -
+          getPriceAmount(resolveVehiclePriceRaw(b, config.vehiclePrices) ?? undefined),
       );
       return sorted;
     }
     if (homeSort === "precio-desc") {
       sorted.sort(
         (a, b) =>
-          getPriceAmount(config.vehiclePrices[getVehicleKey(b)]) -
-          getPriceAmount(config.vehiclePrices[getVehicleKey(a)]),
+          getPriceAmount(resolveVehiclePriceRaw(b, config.vehiclePrices) ?? undefined) -
+          getPriceAmount(resolveVehiclePriceRaw(a, config.vehiclePrices) ?? undefined),
       );
       return sorted;
     }
@@ -3171,7 +3217,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
           upcomingAuctionByVehicleKey[key] ??
           formatAuctionDateLabel(item.auctionDate) ??
           "Sin fecha de remate",
-        priceLabel: formatPrice(config.vehiclePrices[key]) ?? "Sin precio",
+        priceLabel:
+          formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ?? "Sin precio",
       };
     };
 
@@ -3678,8 +3725,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   );
 
   const selectedVehiclePriceLabel = useMemo(
-    () => (selectedVehicleKey ? formatPrice(config.vehiclePrices[selectedVehicleKey]) : null),
-    [config.vehiclePrices, selectedVehicleKey],
+    () =>
+      selectedVehicle
+        ? formatPrice(resolveVehiclePriceRaw(selectedVehicle, config.vehiclePrices) ?? undefined)
+        : null,
+    [config.vehiclePrices, selectedVehicle],
   );
   const selectedVehicleReferencePriceAmount = useMemo(
     () => parseCurrencyAmount(selectedVehiclePriceLabel),
@@ -7331,7 +7381,10 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                         </div>
                         <div className="min-w-0 text-xs text-slate-600 sm:text-right">
                           <p className="line-clamp-1 font-semibold text-slate-700">{auctionLabel}</p>
-                          <p className="line-clamp-1">{formatPrice(config.vehiclePrices[key]) ?? "Precio no definido"}</p>
+                          <p className="line-clamp-1">
+                            {formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ??
+                              "Precio no definido"}
+                          </p>
                         </div>
                         <div className="flex items-center justify-end gap-1.5">
                           <button
@@ -9511,7 +9564,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   key={`favorite-${item.id}`}
                   item={item}
                   density={cardDensity}
-                  priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
+                  priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
                   promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
                   originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
                   upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
@@ -9543,7 +9596,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   key={`latest-${item.id}`}
                   item={item}
                   density={cardDensity}
-                  priceLabel={formatPrice(config.vehiclePrices[getVehicleKey(item)])}
+                  priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
                   promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
                   originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
                   upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
@@ -10364,7 +10417,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                       ["Estado", (item: CatalogItem) => item.status ?? "Disponible"],
                       ["Ubicación", (item: CatalogItem) => item.location ?? "—"],
                       ["Remate", (item: CatalogItem) => upcomingAuctionByVehicleKey[getVehicleKey(item)] ?? "Sin asignar"],
-                      ["Precio", (item: CatalogItem) => formatPrice(config.vehiclePrices[getVehicleKey(item)]) ?? "No informado"],
+                      [
+                        "Precio",
+                        (item: CatalogItem) =>
+                          formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ??
+                          "No informado",
+                      ],
                       ["Tiene 3D", (item: CatalogItem) => (item.view3dUrl ? "Sí" : "No")],
                     ].map(([label, resolver]) => (
                       <tr key={String(label)} className="border-t border-slate-200">
@@ -10543,7 +10601,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                         </span>
                         <span className="line-clamp-1 flex-1">{getModel(item)}</span>
                         <span className="text-xs text-slate-500">
-                          {formatPrice(config.vehiclePrices[vehicleKey]) ?? "Precio no definido"}
+                          {formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ??
+                            "Precio no definido"}
                         </span>
                       </label>
                     );

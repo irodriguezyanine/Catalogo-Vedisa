@@ -32,6 +32,7 @@ type RemateItemSyncRow = {
   version: string | null;
   kilometraje: string | null;
   valor_minimo: number | null;
+  precio_minimo_remate: number | null;
   valor_esperado: number | null;
   tipo_documento: "factura_exenta";
   extra_fields: Record<string, unknown>;
@@ -202,6 +203,11 @@ function buildInventarioPayload(
     parseClpAmount(details?.promoPrice) ??
     parseClpAmount(manual?.promoPrice) ??
     valorMinimo;
+  const precioMinimoRemate =
+    parseClpAmount(config.vehiclePrices?.[vehicleKey]) ??
+    parseClpAmount(details?.promoPrice) ??
+    parseClpAmount(manual?.promoPrice) ??
+    valorMinimo;
   const descripcion = manual?.description ?? details?.description ?? details?.extendedDescription ?? null;
 
   return {
@@ -214,6 +220,7 @@ function buildInventarioPayload(
     kilometraje: details?.kilometraje ?? null,
     descripcion,
     valor_minimo: valorMinimo,
+    precio_minimo_remate: precioMinimoRemate,
     valor_esperado: valorEsperado,
     imagenes: manual?.images?.length ? manual.images : null,
     origen: manual ? "manual" : "manual",
@@ -242,6 +249,7 @@ function buildRemateItemPayload(
     version: details?.version ?? null,
     kilometraje: details?.kilometraje ?? null,
     valor_minimo: minimo,
+    precio_minimo_remate: minimo,
     valor_esperado: minimo,
     tipo_documento: "factura_exenta",
     extra_fields: {
