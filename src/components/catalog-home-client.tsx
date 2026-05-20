@@ -2060,7 +2060,32 @@ function Section({
   );
 }
 
+type UpcomingAuctionsSectionVariant = "remate" | "venta_directa";
+
+const UPCOMING_AUCTIONS_SECTION_COPY: Record<
+  UpcomingAuctionsSectionVariant,
+  { sectionId: string; kicker: string; title: string; subtitle: string; headerClass: string; badgeClass: string }
+> = {
+  remate: {
+    sectionId: "proximos-remates",
+    kicker: "Agenda de remates",
+    title: "Próximos remates",
+    subtitle: "Remates sincronizados desde Tasaciones y Subastas Vedisa.",
+    headerClass: "border-indigo-100 bg-indigo-50/50 text-indigo-900",
+    badgeClass: "text-indigo-700",
+  },
+  venta_directa: {
+    sectionId: "ventas-directas",
+    kicker: "Ventas directas",
+    title: "Venta directa",
+    subtitle: "Unidades publicadas en venta directa con precio y disponibilidad.",
+    headerClass: "border-emerald-100 bg-emerald-50/50 text-emerald-900",
+    badgeClass: "text-emerald-700",
+  },
+};
+
 type UpcomingAuctionsSectionProps = {
+  variant: UpcomingAuctionsSectionVariant;
   groups: Array<{ auction: UpcomingAuction; items: CatalogItem[] }>;
   priceMap: Record<string, string>;
   upcomingAuctionByVehicleKey: Record<string, string>;
@@ -2073,6 +2098,7 @@ type UpcomingAuctionsSectionProps = {
 };
 
 function UpcomingAuctionsSection({
+  variant,
   groups,
   priceMap,
   upcomingAuctionByVehicleKey,
@@ -2083,39 +2109,61 @@ function UpcomingAuctionsSection({
   onOpenVehicle,
   cardDensity,
 }: UpcomingAuctionsSectionProps) {
-  const visibleGroups = groups.filter((group) => group.items.length > 0);
-  if (visibleGroups.length === 0) return null;
+  if (groups.length === 0) return null;
+  const copy = UPCOMING_AUCTIONS_SECTION_COPY[variant];
+  const subastasUrl = process.env.NEXT_PUBLIC_SUBASTAS_URL ?? "https://vedisaremates.vercel.app";
 
   return (
-    <section id="proximos-remates" className="section-shell scroll-mt-24">
+    <section id={copy.sectionId} className="section-shell scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="premium-kicker">Agenda de remates</p>
-          <h2 className="text-2xl font-bold text-slate-900">Próximos remates</h2>
-          <p className="mt-1 text-sm text-slate-600">Cada remate funciona como categoría con fecha y vehículos asignados.</p>
+          <p className="premium-kicker">{copy.kicker}</p>
+          <h2 className="text-2xl font-bold text-slate-900">{copy.title}</h2>
+          <p className="mt-1 text-sm text-slate-600">{copy.subtitle}</p>
         </div>
       </header>
       <div className="space-y-8">
-        {visibleGroups.map(({ auction, items }) => (
+        {groups.map(({ auction, items }) => (
           <div key={auction.id}>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2">
-              <h3 className="text-base font-semibold text-indigo-900">{auction.name}</h3>
-              <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-indigo-700">
+            <div
+              className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 ${copy.headerClass}`}
+            >
+              <h3 className="text-base font-semibold">{auction.name}</h3>
+              <span className={`rounded-full bg-white px-3 py-1 text-xs font-semibold ${copy.badgeClass}`}>
                 {formatAuctionWindowLabel(auction)} · {items.length} vehículos
               </span>
             </div>
-            <HorizontalCardsRail
-              sectionKey={`proximos-remates-${auction.id}`}
-              items={items}
-              priceMap={priceMap}
-              upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-              favoriteKeys={favoriteKeys}
-              onToggleFavorite={onToggleFavorite}
-              compareKeys={compareKeys}
-              onToggleCompare={onToggleCompare}
-              onOpenVehicle={onOpenVehicle}
-              cardDensity={cardDensity}
-            />
+            {items.length > 0 ? (
+              <HorizontalCardsRail
+                sectionKey={`${copy.sectionId}-${auction.id}`}
+                items={items}
+                priceMap={priceMap}
+                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={onToggleFavorite}
+                compareKeys={compareKeys}
+                onToggleCompare={onToggleCompare}
+                onOpenVehicle={onOpenVehicle}
+                cardDensity={cardDensity}
+              />
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                <p>
+                  Este evento está activo en la base compartida. Los lotes se mostrarán aquí cuando estén
+                  vinculados al inventario del catálogo.
+                </p>
+                {variant === "remate" ? (
+                  <a
+                    href={subastasUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ui-focus mt-3 inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white"
+                  >
+                    Ir a la sala del remate
+                  </a>
+                ) : null}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -3073,17 +3121,33 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     [sortedUpcomingAuctions],
   );
 
-  const upcomingAuctionGroups = useMemo(
-    () =>
-      sortedUpcomingAuctions.map((auction) => ({
-        auction,
-        items: homeVisibleItems.filter((item) => {
-          const key = getVehicleKey(item);
-          return (config.vehicleUpcomingAuctionIds[key] ?? "") === auction.id;
-        }),
-      })),
-    [sortedUpcomingAuctions, homeVisibleItems, config.vehicleUpcomingAuctionIds, effectiveSectionVehicleIds],
-  );
+  const upcomingAuctionGroups = useMemo(() => {
+    const auctionsByType = (type: CommercialEventType) =>
+      sortedUpcomingAuctions.filter((auction) => getAuctionEventType(auction) === type);
+
+    return sortedUpcomingAuctions.map((auction) => {
+      const eventType = getAuctionEventType(auction);
+      const sectionId: SectionId = eventType === "venta_directa" ? "ventas-directas" : "proximos-remates";
+      const sectionKeys = new Set(effectiveSectionVehicleIds[sectionId] ?? []);
+      const soloEventoDelTipo = auctionsByType(eventType).length === 1;
+
+      const items = homeVisibleItems.filter((item) => {
+        const key = getVehicleKey(item);
+        const assignedId = config.vehicleUpcomingAuctionIds[key] ?? "";
+        if (assignedId === auction.id) return true;
+        if (assignedId) return false;
+        if (!sectionKeys.has(key)) return false;
+        return soloEventoDelTipo;
+      });
+
+      return { auction, items };
+    });
+  }, [
+    sortedUpcomingAuctions,
+    homeVisibleItems,
+    config.vehicleUpcomingAuctionIds,
+    effectiveSectionVehicleIds,
+  ]);
   const visibleUpcomingAuctionGroups = useMemo(
     () =>
       upcomingAuctionGroups.filter(
@@ -3107,12 +3171,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     [visibleUpcomingAuctionGroups],
   );
 
-  const hasUpcomingRemateCategories =
-    sortedRemateAuctions.length > 0 &&
-    visibleUpcomingRemateGroups.some((group) => group.items.length > 0);
-  const hasUpcomingVentaDirectaCategories =
-    sortedVentaDirectaAuctions.length > 0 &&
-    visibleUpcomingVentaDirectaGroups.some((group) => group.items.length > 0);
+  const hasUpcomingRemateCategories = visibleUpcomingRemateGroups.length > 0;
+  const hasUpcomingVentaDirectaCategories = visibleUpcomingVentaDirectaGroups.length > 0;
 
   const proximosRemates = getSectionItems("proximos-remates");
   const ventasDirectas = getSectionItems("ventas-directas");
@@ -3646,13 +3706,15 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
 
   const nextAuction = useMemo(() => {
     const today = new Date();
-    const upcoming = sortedUpcomingAuctions
+    const source =
+      sortedRemateAuctions.length > 0 ? sortedRemateAuctions : sortedUpcomingAuctions;
+    const upcoming = source
       .map((auction) => ({ auction, date: parseAuctionDateTime(auction) }))
       .filter((entry): entry is { auction: UpcomingAuction; date: Date } => !!entry.date)
       .filter((entry) => !Number.isNaN(entry.date.getTime()) && entry.date.getTime() >= today.getTime())
       .sort((a, b) => a.date.getTime() - b.date.getTime());
     return upcoming[0] ?? null;
-  }, [sortedUpcomingAuctions]);
+  }, [sortedRemateAuctions, sortedUpcomingAuctions]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -9653,6 +9715,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             return hasUpcomingRemateCategories ? (
               <UpcomingAuctionsSection
                 key="public-proximos-auctions"
+                variant="remate"
                 groups={visibleUpcomingRemateGroups}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
@@ -9686,6 +9749,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             return hasUpcomingVentaDirectaCategories ? (
               <UpcomingAuctionsSection
                 key="public-ventas-directas-auctions"
+                variant="venta_directa"
                 groups={visibleUpcomingVentaDirectaGroups}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}

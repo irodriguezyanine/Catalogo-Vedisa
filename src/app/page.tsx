@@ -3,7 +3,8 @@ import { CatalogHomeClient } from "@/components/catalog-home-client";
 import { getCatalogFeed } from "@/lib/catalog";
 import { getEditorConfig } from "@/lib/editor-config";
 
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function Home() {
   const feedPromise = getCatalogFeed();

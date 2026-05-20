@@ -122,6 +122,68 @@ function normalizePatentKey(value?: string | null) {
     .replace(/-/g, "");
 }
 
+const INVENTARIO_TABLE = process.env.CATALOG_SYNC_INVENTARIO_TABLE ?? "inventario";
+
+async function fetchInventoryVehicleKeyAliases(): Promise<Map<string, string>> {
+  const supabase = getServerSupabase();
+  if (!supabase) return new Map();
+
+  const { data, error } = await supabase
+    .from(INVENTARIO_TABLE)
+    .select("id, patente, stock_number")
+    .limit(10000);
+  if (error) {
+    console.warn("No se pudo leer inventario para cruce de patentes:", error);
+    return new Map();
+  }
+
+  const aliasToPreferredKey = new Map<string, string>();
+  for (const row of (data ?? []) as Array<{
+    id?: string | null;
+    patente?: string | null;
+    stock_number?: string | null;
+  }>) {
+    const patentKey = normalizePatentKey(row.patente);
+    const stockKey = normalizePatentKey(row.stock_number);
+    const preferredKey = patentKey || stockKey || String(row.id ?? "").trim();
+    if (!preferredKey) continue;
+
+    const aliases = [patentKey, stockKey, String(row.id ?? "").trim()].filter(Boolean);
+    for (const alias of aliases) {
+      aliasToPreferredKey.set(alias, preferredKey);
+    }
+  }
+  return aliasToPreferredKey;
+}
+
+function resolveCatalogVehicleKeys(
+  aliasToPreferredKey: Map<string, string>,
+  ...rawKeys: Array<string | null | undefined>
+): string[] {
+  const resolved = new Set<string>();
+  for (const raw of rawKeys) {
+    const normalized = normalizePatentKey(raw);
+    if (!normalized) continue;
+    const preferred = aliasToPreferredKey.get(normalized) ?? normalized;
+    resolved.add(preferred);
+    if (preferred !== normalized) resolved.add(normalized);
+  }
+  return [...resolved];
+}
+
+function assignVehicleToAuction(
+  assignments: Record<string, string>,
+  section: Set<string>,
+  vehicleKeys: string[],
+  auctionId: string,
+) {
+  for (const vehicleKey of vehicleKeys) {
+    if (!vehicleKey) continue;
+    assignments[vehicleKey] = auctionId;
+    section.add(vehicleKey);
+  }
+}
+
 function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
   const estado = String(row.estado ?? "").trim().toLowerCase();
   if (estado === "cerrado") return false;
@@ -259,7 +321,10 @@ async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<Editor
     };
   }
   const remateIds = activeRows.map((row) => row.id).filter((id) => id);
-  const sharedItems = await fetchSharedRemateItems(remateIds);
+  const [sharedItems, inventoryAliases] = await Promise.all([
+    fetchSharedRemateItems(remateIds),
+    fetchInventoryVehicleKeyAliases(),
+  ]);
 
   const byId = new Map<string, EditorConfig["upcomingAuctions"][number]>();
   for (const row of activeRows as SharedRemateRow[]) {
@@ -272,7 +337,7 @@ async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<Editor
       date: current?.date || inferEventDate(row),
       startAt: current?.startAt ?? row.fecha_hora_inicio ?? undefined,
       endAt: current?.endAt ?? inferEventEndAt(row),
-      eventType: current?.eventType ?? inferEventType(row),
+      eventType: row.tipo ?? current?.eventType ?? inferEventType(row),
     };
     byId.set(row.id, merged);
   }
@@ -319,21 +384,22 @@ async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<Editor
     const linkedId = readExtraString(extra, ["tasaciones_remate_id", "source_remate_id", "portal_remate_id"]);
     const auctionId = remateId && visibleAuctionIds.has(remateId) ? remateId : linkedId;
     if (!auctionId || !visibleAuctionIds.has(auctionId)) continue;
-    const vehicleKey = normalizePatentKey(item.patente);
     const source = readExtraString(extra, ["source_system", "origin_system"]).toLowerCase();
     if (!sourcesByAuction.has(auctionId)) sourcesByAuction.set(auctionId, new Set<string>());
     if (source) sourcesByAuction.get(auctionId)?.add(source);
-    if (!vehicleKey) continue;
+
+    const vehicleKeys = resolveCatalogVehicleKeys(
+      inventoryAliases,
+      item.patente,
+      readExtraString(extra, ["inventario_id", "inventory_id", "vehicle_id", "catalog_vehicle_id"]),
+    );
+    if (!vehicleKeys.length) continue;
 
     const auction = byId.get(auctionId);
     const eventType = auction?.eventType ?? "remate";
     hiddenCategoryIds.delete(`auction:${auctionId}`);
-    nextVehicleUpcomingAuctionIds[vehicleKey] = auctionId;
-    if (eventType === "venta_directa") {
-      ventaDirectaSection.add(vehicleKey);
-    } else {
-      rematesSection.add(vehicleKey);
-    }
+    const targetSection = eventType === "venta_directa" ? ventaDirectaSection : rematesSection;
+    assignVehicleToAuction(nextVehicleUpcomingAuctionIds, targetSection, vehicleKeys, auctionId);
   }
 
   return {
