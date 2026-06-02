@@ -16,6 +16,14 @@ import { CatalogCard } from "@/components/catalog-card";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { OfferRecord } from "@/types/offers";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
+import {
+  collectVehicleImageCandidates,
+  generateCatalogPdfDocument,
+  getPdfVehicleDisplay,
+  loadLogoForPdfAsDataUrl,
+  saveCatalogPdfDocument,
+  type CatalogPdfSection,
+} from "@/lib/catalog-pdf";
 import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
 import { cloudinaryRawPdfUrlForInlineDisplay, cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
 import {
@@ -74,18 +82,6 @@ type SoldFilterField = "all" | "patent" | "title" | "soldCategory" | "auctionNam
 type AnalyticsChartType = "bar" | "line" | "area";
 type AnalyticsTimelineMetric = "eventos" | "visitas" | "detalle" | "whatsapp" | "leads";
 type VehicleDetailTabId = "general" | "descripcion" | "tecnica" | "fotos";
-type CalendarPdfRow = {
-  title: string;
-  patent: string;
-  model: string;
-  auctionLabel: string;
-  priceLabel: string;
-};
-type CalendarPdfSection = {
-  categoryTitle: string;
-  categorySubtitle: string;
-  rows: CalendarPdfRow[];
-};
 type SystemNotice = {
   id: number;
   tone: "success" | "error" | "info";
@@ -537,33 +533,6 @@ function hasValue(value: unknown): boolean {
   if (typeof value === "string") return value.trim().length > 0;
   if (Array.isArray(value)) return value.length > 0;
   return true;
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error("No se pudo convertir el logo a DataURL."));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Error leyendo imagen."));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function loadLogoForPdfAsDataUrl(): Promise<string | null> {
-  const candidates = ["/vedisa-logo.png", "https://vedisaremates.vercel.app/vedisa-logo.png"];
-  for (const url of candidates) {
-    try {
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) continue;
-      const blob = await response.blob();
-      return await blobToDataUrl(blob);
-    } catch {
-      // intenta la siguiente URL sin interrumpir la descarga del PDF
-    }
-  }
-  return null;
 }
 
 function isBaseHomeSectionOrderId(value: string): value is SectionId {
@@ -3270,30 +3239,28 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     managedCategoryCountById,
   ]);
 
-  const calendarPdfSections = useMemo<CalendarPdfSection[]>(() => {
-    const buildRow = (item: CatalogItem): CalendarPdfRow => {
-      const key = getVehicleKey(item);
+  const calendarPdfSections = useMemo<CatalogPdfSection[]>(() => {
+    const buildRow = (item: CatalogItem) => {
+      const vehicleDisplay = getPdfVehicleDisplay(item);
       return {
-        title: item.title?.trim() || "Vehículo sin título",
+        vehiclePrimary: vehicleDisplay.primary,
+        vehicleSecondary: vehicleDisplay.secondary,
         patent: getPatent(item),
         model: getModel(item),
-        auctionLabel:
-          upcomingAuctionByVehicleKey[key] ??
-          formatAuctionDateLabel(item.auctionDate) ??
-          "Sin fecha de remate",
         priceLabel:
           formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ?? "Sin precio",
+        thumbnailUrls: collectVehicleImageCandidates(item),
       };
     };
 
-    const sections: CalendarPdfSection[] = [];
+    const sections: CatalogPdfSection[] = [];
 
     if (hasUpcomingRemateCategories) {
       for (const group of visibleUpcomingRemateGroups) {
         if (group.items.length === 0) continue;
         sections.push({
           categoryTitle: `Remates disponibles - ${group.auction.name}`,
-          categorySubtitle: formatAuctionWindowLabel(group.auction) || "Fecha por confirmar",
+          categorySubtitle: "Unidades disponibles para ofertar en remate.",
           rows: group.items.map(buildRow),
         });
       }
@@ -3310,7 +3277,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         if (group.items.length === 0) continue;
         sections.push({
           categoryTitle: `Ventas directas - ${group.auction.name}`,
-          categorySubtitle: formatAuctionWindowLabel(group.auction) || "Fecha por confirmar",
+          categorySubtitle:
+            config.sectionTexts["ventas-directas"].subtitle || "Stock disponible para cierre rapido.",
           rows: group.items.map(buildRow),
         });
       }
@@ -3345,7 +3313,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     proximosRemates,
     ventasDirectas,
     homeVisibleItems,
-    upcomingAuctionByVehicleKey,
     config.vehiclePrices,
     config.sectionTexts,
   ]);
@@ -3369,308 +3336,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     }
     setIsDownloadingCalendarPdf(true);
     try {
-      const [{ jsPDF }, logoDataUrl] = await Promise.all([
-        import("jspdf"),
-        loadLogoForPdfAsDataUrl(),
-      ]);
-      const doc = new jsPDF({ unit: "pt", format: "a4" });
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const marginX = 40;
-      const usableWidth = pageWidth - marginX * 2;
-      const now = new Date();
-      const y2 = String(now.getFullYear()).slice(-2);
-      const m2 = String(now.getMonth() + 1).padStart(2, "0");
-      const d2 = String(now.getDate()).padStart(2, "0");
-      const filenameDate = `${y2}${m2}${d2}`;
-      const exportFileName = `${filenameDate} CatalogoVedisa.PDF`;
-      const todayLabel = now.toLocaleString("es-CL", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const totalRows = calendarPdfSections.reduce((acc, section) => acc + section.rows.length, 0);
-      const BRAND = {
-        navy: [12, 28, 61] as const,
-        indigo: [67, 56, 202] as const,
-        cyan: [8, 145, 178] as const,
-        cyanSoft: [236, 254, 255] as const,
-        slateText: [30, 41, 59] as const,
-        slateMuted: [71, 85, 105] as const,
-        border: [203, 213, 225] as const,
-        borderSoft: [226, 232, 240] as const,
-        white: [255, 255, 255] as const,
-      };
-      const stats = [
-        { label: "Categorías visibles", value: String(calendarPdfSections.length) },
-        { label: "Publicaciones visibles", value: String(totalRows) },
-      ];
-
-      // Portada corporativa premium
-      doc.setFillColor(...BRAND.navy);
-      doc.rect(0, 0, pageWidth, pageHeight, "F");
-      doc.setFillColor(...BRAND.cyan);
-      doc.rect(0, 0, pageWidth, 14, "F");
-      doc.setFillColor(...BRAND.indigo);
-      doc.rect(0, pageHeight - 14, pageWidth, 14, "F");
-
-      doc.setDrawColor(36, 86, 167);
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(marginX, 72, usableWidth, pageHeight - 160, 14, 14, "FD");
-
-      if (logoDataUrl) {
-        const logoWidth = 210;
-        const logoHeight = 58;
-        doc.addImage(
-          logoDataUrl,
-          "PNG",
-          (pageWidth - logoWidth) / 2,
-          110,
-          logoWidth,
-          logoHeight,
-        );
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(30);
-      doc.setTextColor(...BRAND.navy);
-      doc.text("Catalogo Vedisa", pageWidth / 2, 230, { align: "center" });
-      doc.setFontSize(15);
-      doc.setTextColor(...BRAND.indigo);
-      doc.text("Reporte corporativo de publicaciones", pageWidth / 2, 258, { align: "center" });
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
-      doc.setTextColor(...BRAND.slateMuted);
-      const coverDate = now.toLocaleDateString("es-CL", {
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-      });
-      const coverTime = now.toLocaleTimeString("es-CL", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      doc.text(`Actualizado ${coverDate} · ${coverTime}`, pageWidth / 2, 282, { align: "center" });
-
-      const cardGap = 12;
-      const cardWidth = (usableWidth - cardGap * (stats.length - 1) - 16) / stats.length;
-      let cardX = marginX + 8;
-      for (const stat of stats) {
-        doc.setDrawColor(...BRAND.border);
-        doc.setFillColor(...BRAND.cyanSoft);
-        doc.roundedRect(cardX, 322, cardWidth, 92, 8, 8, "FD");
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        doc.setTextColor(...BRAND.slateMuted);
-        doc.text(stat.label, cardX + cardWidth / 2, 348, { align: "center" });
-        doc.setFont("helvetica", "bold");
-        const valueLines = doc.splitTextToSize(stat.value, cardWidth - 22);
-        doc.setFontSize(21);
-        doc.setTextColor(...BRAND.navy);
-        doc.text(valueLines, cardX + cardWidth / 2, 382, { align: "center" });
-        cardX += cardWidth + cardGap;
-      }
-
-      doc.setDrawColor(...BRAND.borderSoft);
-      doc.line(marginX + 20, 442, pageWidth - marginX - 20, 442);
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(10);
-      doc.setTextColor(...BRAND.slateMuted);
-      doc.text(
-        "Incluye exclusivamente: remates disponibles, ventas directas y otros remates visibles.",
-        pageWidth / 2,
-        464,
-        { align: "center" },
+      const logoDataUrl = await loadLogoForPdfAsDataUrl();
+      const { doc, exportFileName, totalRows } = await generateCatalogPdfDocument(
+        calendarPdfSections,
+        logoDataUrl,
       );
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.setTextColor(...BRAND.indigo);
-      doc.text("VEDISA REMATES", pageWidth / 2, pageHeight - 54, { align: "center" });
-
-      // Seccion detallada
-      doc.addPage();
-      let y = 42;
-
-      const drawPageHeader = () => {
-        doc.setFillColor(...BRAND.navy);
-        doc.rect(0, 0, pageWidth, 64, "F");
-        doc.setFillColor(...BRAND.cyan);
-        doc.rect(0, 58, pageWidth, 6, "F");
-        if (logoDataUrl) {
-          doc.addImage(logoDataUrl, "PNG", marginX, 16, 84, 22);
-        }
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(12);
-        doc.setTextColor(...BRAND.white);
-        doc.text("Detalle de publicaciones visibles", marginX + (logoDataUrl ? 96 : 0), 31);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(191, 219, 254);
-        doc.text(todayLabel, pageWidth - marginX, 31, { align: "right" });
-        y = 82;
-      };
-
-      const tableColumns = [
-        { key: "title" as const, label: "Publicación", width: Math.floor(usableWidth * 0.27), align: "left" as const },
-        { key: "patent" as const, label: "Patente", width: Math.floor(usableWidth * 0.12), align: "left" as const },
-        { key: "model" as const, label: "Modelo", width: Math.floor(usableWidth * 0.19), align: "left" as const },
-        { key: "auctionLabel" as const, label: "Calendario", width: Math.floor(usableWidth * 0.27), align: "left" as const },
-        { key: "priceLabel" as const, label: "Precio", width: 0, align: "right" as const },
-      ];
-      tableColumns[4].width = Math.floor(
-        usableWidth - tableColumns[0].width - tableColumns[1].width - tableColumns[2].width - tableColumns[3].width,
-      );
-
-      const drawTableHeader = () => {
-        doc.setFillColor(...BRAND.navy);
-        doc.rect(marginX, y, usableWidth, 20, "F");
-        let x = marginX;
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8);
-        doc.setTextColor(...BRAND.white);
-        for (const column of tableColumns) {
-          if (column.align === "right") {
-            doc.text(column.label, x + column.width - 8, y + 13, { align: "right" });
-          } else {
-            doc.text(column.label, x + 8, y + 13);
-          }
-          x += column.width;
-        }
-        y += 24;
-      };
-
-      const ensureSpace = (requiredHeight: number, drawHeaderIfNewPage = false) => {
-        if (y + requiredHeight <= pageHeight - 52) return;
-        doc.addPage();
-        drawPageHeader();
-        if (drawHeaderIfNewPage) drawTableHeader();
-      };
-
-      drawPageHeader();
-      for (const section of calendarPdfSections) {
-        const rawTitle = section.categoryTitle.trim();
-        const rematePrefix = "Remates disponibles - ";
-        const sectionTitlePrimary = rawTitle.startsWith(rematePrefix)
-          ? "Remates disponibles"
-          : rawTitle;
-        const sectionTitleSecondary = rawTitle.startsWith(rematePrefix)
-          ? rawTitle.slice(rematePrefix.length).trim()
-          : "";
-        const subtitle = section.categorySubtitle.trim();
-        const sectionDate = /^\d{2}-\d{2}-\d{4}$/.test(subtitle) ? subtitle : "";
-        const sectionSupportText = sectionDate ? "" : subtitle;
-        const headerHeight = sectionTitleSecondary ? 50 : 36;
-
-        ensureSpace(headerHeight + 26);
-        doc.setFillColor(...BRAND.cyanSoft);
-        doc.roundedRect(marginX, y, usableWidth, headerHeight, 6, 6, "F");
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(13);
-        doc.setTextColor(...BRAND.indigo);
-        doc.text(sectionTitlePrimary, marginX + 10, y + 19);
-        if (sectionTitleSecondary) {
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(12);
-          doc.setTextColor(...BRAND.navy);
-          doc.text(sectionTitleSecondary, marginX + 10, y + 37);
-        }
-
-        const countLabel = `${section.rows.length} pub.`;
-        const countWidth = Math.max(58, doc.getTextWidth(countLabel) + 16);
-        const countX = marginX + usableWidth - countWidth - 8;
-        doc.setFillColor(...BRAND.indigo);
-        doc.roundedRect(countX, y + 8, countWidth, 18, 5, 5, "F");
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(9);
-        doc.setTextColor(...BRAND.white);
-        doc.text(countLabel, countX + countWidth / 2, y + 20, { align: "center" });
-
-        if (sectionDate) {
-          const dateWidth = Math.max(84, doc.getTextWidth(sectionDate) + 14);
-          const dateX = marginX + usableWidth - dateWidth - 8;
-          doc.setFillColor(...BRAND.white);
-          doc.setDrawColor(...BRAND.border);
-          doc.roundedRect(dateX, y + headerHeight - 21, dateWidth, 16, 4, 4, "FD");
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(8.5);
-          doc.setTextColor(...BRAND.slateMuted);
-          doc.text(sectionDate, dateX + dateWidth / 2, y + headerHeight - 10, { align: "center" });
-        }
-
-        y += headerHeight + 8;
-
-        if (sectionSupportText) {
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(10);
-          doc.setTextColor(...BRAND.slateMuted);
-          const subtitleLines = doc.splitTextToSize(sectionSupportText, usableWidth);
-          ensureSpace(subtitleLines.length * 12 + 12);
-          doc.text(subtitleLines, marginX, y);
-          y += subtitleLines.length * 12 + 10;
-        }
-
-        drawTableHeader();
-        for (const [rowIndex, row] of section.rows.entries()) {
-          const linePaddingY = 5;
-          const lineHeight = 10;
-          const cellPaddingX = 8;
-          const values = tableColumns.map((column) =>
-            String(row[column.key] ?? "—"),
-          );
-          const linesByCol = values.map((value, index) =>
-            doc.splitTextToSize(value, Math.max(24, tableColumns[index].width - cellPaddingX * 2)),
-          );
-          const maxLines = Math.max(1, ...linesByCol.map((lines) => lines.length));
-          const rowHeight = Math.max(24, maxLines * lineHeight + linePaddingY * 2);
-
-          ensureSpace(rowHeight + 2, true);
-          const rowFill = rowIndex % 2 === 0 ? BRAND.white : BRAND.cyanSoft;
-          doc.setFillColor(rowFill[0], rowFill[1], rowFill[2]);
-          doc.rect(marginX, y, usableWidth, rowHeight, "F");
-          doc.setDrawColor(...BRAND.borderSoft);
-          doc.rect(marginX, y, usableWidth, rowHeight);
-
-          let cellX = marginX;
-          for (let i = 0; i < tableColumns.length; i += 1) {
-            if (i > 0) doc.line(cellX, y, cellX, y + rowHeight);
-            doc.setFont("helvetica", i === 0 ? "bold" : "normal");
-            doc.setFontSize(i === 3 ? 8.8 : 9.2);
-            doc.setTextColor(...BRAND.slateText);
-            if (tableColumns[i].align === "right") {
-              doc.text(
-                linesByCol[i],
-                cellX + tableColumns[i].width - cellPaddingX,
-                y + linePaddingY + 8,
-                { align: "right" },
-              );
-            } else {
-              doc.text(linesByCol[i], cellX + cellPaddingX, y + linePaddingY + 8);
-            }
-            cellX += tableColumns[i].width;
-          }
-          y += rowHeight;
-        }
-        y += 16;
-      }
-
-      const totalPages = doc.getNumberOfPages();
-      for (let page = 1; page <= totalPages; page += 1) {
-        doc.setPage(page);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
-        doc.setTextColor(...BRAND.slateMuted);
-        doc.text(
-          `CatalogoVedisa · Pagina ${page} de ${totalPages}`,
-          pageWidth / 2,
-          pageHeight - 18,
-          { align: "center" },
-        );
-      }
-
-      doc.save(exportFileName);
+      saveCatalogPdfDocument(doc, exportFileName);
       trackEvent("calendar_pdf_download", {
         categories: calendarPdfSections.length,
         publications: totalRows,
@@ -3681,7 +3352,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         "PDF generado",
         `Se descargó correctamente: ${exportFileName}`,
       );
-    } catch {
+    } catch (error) {
+      console.error("[catalog-pdf]", error);
       showSystemNotice(
         "error",
         "No se pudo generar el PDF",
