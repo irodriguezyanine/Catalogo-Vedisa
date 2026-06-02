@@ -110,8 +110,7 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       showRecentPublications:
         migrated?.homeLayout?.showRecentPublications ??
         defaults.homeLayout.showRecentPublications,
-      showFavoritesSection:
-        migrated?.homeLayout?.showFavoritesSection ?? defaults.homeLayout.showFavoritesSection,
+      showFavoritesSection: false,
       showHowToSection:
         (migrated?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
         normalizedSecondaryHref === "#como-participar",

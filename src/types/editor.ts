@@ -218,7 +218,7 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
     showHeroCtas: true,
     showFeaturedStrip: true,
     showRecentPublications: false,
-    showFavoritesSection: true,
+    showFavoritesSection: false,
     showHowToSection: true,
     showSearchBar: true,
     showQuickFilters: true,

@@ -9,10 +9,6 @@ type CatalogCardProps = {
   upcomingAuctionLabel?: string;
   density?: "compact" | "detailed";
   onOpen?: () => void;
-  isFavorite?: boolean;
-  onToggleFavorite?: () => void;
-  isCompared?: boolean;
-  onToggleCompare?: () => void;
   onWhatsappClick?: () => void;
 };
 
@@ -104,10 +100,6 @@ export function CatalogCard({
   upcomingAuctionLabel,
   density = "detailed",
   onOpen,
-  isFavorite,
-  onToggleFavorite,
-  isCompared,
-  onToggleCompare,
   onWhatsappClick,
 }: CatalogCardProps) {
   const raw = item.raw as Record<string, unknown>;
@@ -246,37 +238,7 @@ export function CatalogCard({
       </button>
 
       <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-        <div className="grid grid-cols-4 gap-2">
-          <button
-            type="button"
-            onClick={onToggleFavorite}
-            className={`ui-focus inline-flex items-center justify-center rounded-full border px-3 py-2 text-xs font-semibold transition ${
-              isFavorite
-                ? "border-amber-300 bg-amber-50 text-amber-700"
-                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-            aria-label={isFavorite ? `Quitar guardado ${item.title}` : `Guardar ${item.title}`}
-            title={isFavorite ? "Guardado" : "Guardar"}
-          >
-            <span aria-hidden="true" className="text-base leading-none">
-              {isFavorite ? "★" : "☆"}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={onToggleCompare}
-            className={`ui-focus inline-flex items-center justify-center rounded-full border px-3 py-2 text-xs font-semibold transition ${
-              isCompared
-                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-            aria-label={isCompared ? `Quitar comparación ${item.title}` : `Comparar ${item.title}`}
-            title={isCompared ? "Comparando" : "Comparar"}
-          >
-            <span aria-hidden="true" className="text-base leading-none">
-              {isCompared ? "✓" : "+"}
-            </span>
-          </button>
+        <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={async () => {

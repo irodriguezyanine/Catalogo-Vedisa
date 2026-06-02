@@ -47,7 +47,6 @@ import {
 } from "@/types/editor";
 
 const EDITOR_STORAGE_KEY = "vedisa_editor_config_local";
-const FAVORITES_STORAGE_KEY = "vedisa_client_favorites";
 const HOME_QUICK_FILTERS_STORAGE_KEY = "vedisa_home_quick_filters";
 const HOME_CARD_DENSITY_STORAGE_KEY = "vedisa_home_card_density";
 const EDITOR_PAGE_SIZE = 20;
@@ -140,7 +139,6 @@ const VEHICLE_CATEGORY_OPTIONS = [
 const WHATSAPP_CTA_URL =
   "https://api.whatsapp.com/send/?phone=56989323397&text=Hola%2C+quiero+asesor%C3%ADa+para+ofertar+en+VEDISA&type=phone_number&app_absent=0";
 const WHATSAPP_PHONE = "56989323397";
-const MAX_COMPARE_ITEMS = 4;
 const ANALYTICS_STORAGE_KEY = "vedisa_analytics_events";
 const ANALYTICS_VISITOR_ID_KEY = "vedisa_analytics_visitor_id";
 const ANALYTICS_SESSION_ID_KEY = "vedisa_analytics_session_id";
@@ -349,9 +347,7 @@ function normalizeEditorConfigClient(
       showRecentPublications:
         migrated?.homeLayout?.showRecentPublications ??
         defaults.homeLayout.showRecentPublications,
-      showFavoritesSection:
-        migrated?.homeLayout?.showFavoritesSection ??
-        defaults.homeLayout.showFavoritesSection,
+      showFavoritesSection: false,
       showHowToSection:
         (migrated?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
         normalizedSecondaryHref === "#como-participar",
@@ -1788,10 +1784,6 @@ type SectionProps = {
   items: CatalogItem[];
   priceMap: Record<string, string>;
   upcomingAuctionByVehicleKey?: Record<string, string>;
-  favoriteKeys: string[];
-  onToggleFavorite: (itemKey: string) => void;
-  compareKeys: string[];
-  onToggleCompare: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
 };
@@ -1801,10 +1793,6 @@ type HorizontalCardsRailProps = {
   items: CatalogItem[];
   priceMap: Record<string, string>;
   upcomingAuctionByVehicleKey?: Record<string, string>;
-  favoriteKeys: string[];
-  onToggleFavorite: (itemKey: string) => void;
-  compareKeys: string[];
-  onToggleCompare: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
 };
@@ -1814,10 +1802,6 @@ function HorizontalCardsRail({
   items,
   priceMap,
   upcomingAuctionByVehicleKey,
-  favoriteKeys,
-  onToggleFavorite,
-  compareKeys,
-  onToggleCompare,
   onOpenVehicle,
   cardDensity,
 }: HorizontalCardsRailProps) {
@@ -1950,10 +1934,6 @@ function HorizontalCardsRail({
                 if (draggedRef.current) return;
                 onOpenVehicle(item);
               }}
-              isFavorite={favoriteKeys.includes(getVehicleKey(item))}
-              onToggleFavorite={() => onToggleFavorite(getVehicleKey(item))}
-              isCompared={compareKeys.includes(getVehicleKey(item))}
-              onToggleCompare={() => onToggleCompare(getVehicleKey(item))}
               onWhatsappClick={() =>
                 trackEvent("whatsapp_click_card", {
                   section: sectionKey,
@@ -1975,10 +1955,6 @@ function Section({
   items,
   priceMap,
   upcomingAuctionByVehicleKey,
-  favoriteKeys,
-  onToggleFavorite,
-  compareKeys,
-  onToggleCompare,
   onOpenVehicle,
   cardDensity,
 }: SectionProps) {
@@ -2005,10 +1981,6 @@ function Section({
           items={items}
           priceMap={priceMap}
           upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-          favoriteKeys={favoriteKeys}
-          onToggleFavorite={onToggleFavorite}
-          compareKeys={compareKeys}
-          onToggleCompare={onToggleCompare}
           onOpenVehicle={onOpenVehicle}
           cardDensity={cardDensity}
         />
@@ -2046,10 +2018,6 @@ type UpcomingAuctionsSectionProps = {
   groups: Array<{ auction: UpcomingAuction; items: CatalogItem[] }>;
   priceMap: Record<string, string>;
   upcomingAuctionByVehicleKey: Record<string, string>;
-  favoriteKeys: string[];
-  onToggleFavorite: (itemKey: string) => void;
-  compareKeys: string[];
-  onToggleCompare: (itemKey: string) => void;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
 };
@@ -2059,10 +2027,6 @@ function UpcomingAuctionsSection({
   groups,
   priceMap,
   upcomingAuctionByVehicleKey,
-  favoriteKeys,
-  onToggleFavorite,
-  compareKeys,
-  onToggleCompare,
   onOpenVehicle,
   cardDensity,
 }: UpcomingAuctionsSectionProps) {
@@ -2096,10 +2060,6 @@ function UpcomingAuctionsSection({
                 items={items}
                 priceMap={priceMap}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={onToggleFavorite}
-                compareKeys={compareKeys}
-                onToggleCompare={onToggleCompare}
                 onOpenVehicle={onOpenVehicle}
                 cardDensity={cardDensity}
               />
@@ -2165,19 +2125,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       ? "compact"
       : "detailed";
   });
-  const [favoriteKeys, setFavoriteKeys] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [];
-    const saved = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
-    if (!saved) return [];
-    try {
-      const parsed = JSON.parse(saved) as string[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-  const [compareKeys, setCompareKeys] = useState<string[]>([]);
-  const [showComparePanel, setShowComparePanel] = useState(false);
   const [leadForm, setLeadForm] = useState<ClientLeadForm>({
     name: "",
     phone: "",
@@ -2660,10 +2607,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteKeys));
-  }, [favoriteKeys]);
-
-  useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(HOME_QUICK_FILTERS_STORAGE_KEY, JSON.stringify(quickFilters));
   }, [quickFilters]);
@@ -2987,14 +2930,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     if (homeSort === "recomendado") {
       sorted.sort((a, b) => {
         const score = (item: CatalogItem): number => {
-          const key = getVehicleKey(item);
           const hasPrice = formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)
             ? 1
             : 0;
           const has3d = item.view3dUrl ? 1 : 0;
           const isRecent = isRecentAuctionDate(item.auctionDate) ? 1 : 0;
-          const isFav = favoriteKeys.includes(key) ? 1 : 0;
-          return hasPrice * 3 + has3d * 2 + isRecent + isFav;
+          return hasPrice * 3 + has3d * 2 + isRecent;
         };
         return score(b) - score(a);
       });
@@ -3029,7 +2970,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       return sorted;
     }
     return sorted;
-  }, [homeQuickFilteredItems, homeSort, config.vehiclePrices, favoriteKeys]);
+  }, [homeQuickFilteredItems, homeSort, config.vehiclePrices]);
 
   const homeVisibleKeys = useMemo(
     () => new Set(homeVisibleItems.map((item) => getVehicleKey(item))),
@@ -3307,11 +3248,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
 
   const featuredItems = useMemo(() => homeVisibleItems.slice(0, 16), [homeVisibleItems]);
 
-  const favoritesItems = useMemo(
-    () => homeVisibleItems.filter((item) => favoriteKeys.includes(getVehicleKey(item))).slice(0, 12),
-    [homeVisibleItems, favoriteKeys],
-  );
-
   const downloadVisibleCalendarPdf = useCallback(async () => {
     if (isDownloadingCalendarPdf) return;
     if (calendarPdfSections.length === 0) {
@@ -3366,15 +3302,13 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
 
   const nextAuction = useMemo(() => {
     const today = new Date();
-    const source =
-      sortedRemateAuctions.length > 0 ? sortedRemateAuctions : sortedUpcomingAuctions;
-    const upcoming = source
+    const upcoming = sortedRemateAuctions
       .map((auction) => ({ auction, date: parseAuctionDateTime(auction) }))
       .filter((entry): entry is { auction: UpcomingAuction; date: Date } => !!entry.date)
       .filter((entry) => !Number.isNaN(entry.date.getTime()) && entry.date.getTime() >= today.getTime())
       .sort((a, b) => a.date.getTime() - b.date.getTime());
     return upcoming[0] ?? null;
-  }, [sortedRemateAuctions, sortedUpcomingAuctions]);
+  }, [sortedRemateAuctions]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -3390,6 +3324,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     return {
       label: formatAuctionCountdownHours(nextAuction.date, countdownNowMs),
       name: nextAuction.auction.name,
+      dateLabel: formatDateDash(nextAuction.date),
     };
   }, [nextAuction, countdownNowMs]);
 
@@ -3402,35 +3337,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       return Array.from(set) as QuickFilterId[];
     });
   };
-
-  const toggleFavorite = (itemKey: string) => {
-    trackEvent("favorite_toggle", { itemKey });
-    setFavoriteKeys((prev) => {
-      const set = new Set(prev);
-      if (set.has(itemKey)) set.delete(itemKey);
-      else set.add(itemKey);
-      return Array.from(set);
-    });
-  };
-
-  const toggleCompare = (itemKey: string) => {
-    trackEvent("compare_toggle", { itemKey });
-    setCompareKeys((prev) => {
-      const set = new Set(prev);
-      if (set.has(itemKey)) {
-        set.delete(itemKey);
-        return Array.from(set);
-      }
-      if (set.size >= MAX_COMPARE_ITEMS) return prev;
-      set.add(itemKey);
-      return Array.from(set);
-    });
-  };
-
-  const compareItems = useMemo(
-    () => homeVisibleItems.filter((item) => compareKeys.includes(getVehicleKey(item))),
-    [homeVisibleItems, compareKeys],
-  );
 
   const selectedVehicleLookup = useMemo(
     () =>
@@ -8876,10 +8782,9 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         <section className="relative z-10 mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8" aria-hidden="true">
           <div className="glass-soft rounded-xl p-4">
             <div className="mb-3 h-10 animate-pulse rounded-md bg-slate-200" />
-            <div className="flex gap-2">
-              <div className="h-7 w-20 animate-pulse rounded-full bg-slate-200" />
-              <div className="h-7 w-24 animate-pulse rounded-full bg-slate-200" />
-              <div className="h-7 w-28 animate-pulse rounded-full bg-slate-200" />
+            <div className="flex justify-end gap-2">
+              <div className="h-9 w-28 animate-pulse rounded-lg bg-slate-200" />
+              <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200" />
             </div>
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -8935,120 +8840,122 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-              <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                {homeVisibleItems.length} resultado(s)
-              </span>
-              <span className="sr-only" aria-live="polite">
-                {homeVisibleItems.length} resultados encontrados en catálogo.
-              </span>
-              {config.homeLayout.showSortSelector ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void downloadVisibleCalendarPdf();
+                }}
+                disabled={isDownloadingCalendarPdf}
+                className={`ui-focus inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                  isDownloadingCalendarPdf
+                    ? "cursor-wait border-slate-300 bg-slate-100 text-slate-500"
+                    : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
+                }`}
+                title="Descargar PDF profesional del calendario visible"
+              >
+                <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                  <path d="M10 3.5v8m0 0l-3-3m3 3l3-3M4.5 13.5v2h11v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {isDownloadingCalendarPdf ? "Generando PDF..." : "PDF Catalogo"}
+              </button>
+              {config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters ? (
                 <details className="relative">
                   <summary
-                    className="ui-focus flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    aria-label="Abrir opciones de orden"
-                    title="Ordenar resultados"
+                    className="ui-focus relative flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    aria-label="Abrir filtros y orden"
+                    title="Filtros y orden"
                   >
                     <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
                       <path d="M4 5h12M6 10h8M8 15h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                     </svg>
+                    {quickFilters.length > 0 ? (
+                      <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-slate-800 px-1 text-[10px] font-bold text-white">
+                        {quickFilters.length}
+                      </span>
+                    ) : null}
                   </summary>
-                  <div className="absolute right-0 z-50 mt-2 w-44 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
-                    {([
-                      ["recomendado", "Recomendado"],
-                      ["relevancia", "Relevancia"],
-                      ["fecha-remate", "Fecha remate"],
-                      ["precio-asc", "Precio menor"],
-                      ["precio-desc", "Precio mayor"],
-                      ["titulo", "Título A-Z"],
-                    ] as Array<[SortOption, string]>).map(([value, label]) => (
-                      <button
-                        key={`sort-${value}`}
-                        type="button"
-                        onClick={(event) => {
-                          setHomeSort(value);
-                          trackEvent("home_sort_change", { sort: value });
-                          const details = event.currentTarget.closest("details");
-                          if (details) details.removeAttribute("open");
-                        }}
-                        className={`ui-focus flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-medium ${
-                          homeSort === value
-                            ? "bg-slate-900 text-white"
-                            : "text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        <span>{label}</span>
-                        {homeSort === value ? <span>✓</span> : null}
-                      </button>
-                    ))}
+                  <div className="absolute right-0 z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+                    {config.homeLayout.showSortSelector ? (
+                      <div>
+                        <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          Ordenar
+                        </p>
+                        <div className="space-y-0.5">
+                          {([
+                            ["recomendado", "Recomendado"],
+                            ["relevancia", "Relevancia"],
+                            ["fecha-remate", "Fecha remate"],
+                            ["precio-asc", "Precio menor"],
+                            ["precio-desc", "Precio mayor"],
+                            ["titulo", "Título A-Z"],
+                          ] as Array<[SortOption, string]>).map(([value, label]) => (
+                            <button
+                              key={`sort-${value}`}
+                              type="button"
+                              onClick={(event) => {
+                                setHomeSort(value);
+                                trackEvent("home_sort_change", { sort: value });
+                                const details = event.currentTarget.closest("details");
+                                if (details) details.removeAttribute("open");
+                              }}
+                              className={`ui-focus flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-medium ${
+                                homeSort === value
+                                  ? "bg-slate-900 text-white"
+                                  : "text-slate-700 hover:bg-slate-50"
+                              }`}
+                            >
+                              <span>{label}</span>
+                              {homeSort === value ? <span>✓</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {config.homeLayout.showSortSelector && config.homeLayout.showQuickFilters ? (
+                      <div className="my-2 border-t border-slate-100" />
+                    ) : null}
+                    {config.homeLayout.showQuickFilters ? (
+                      <div>
+                        <div className="mb-1.5 flex items-center justify-between px-1">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            Etiquetas
+                          </p>
+                          {quickFilters.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setQuickFilters([])}
+                              className="ui-focus rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
+                            >
+                              Limpiar
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {Object.entries(QUICK_FILTER_LABELS).map(([id, label]) => (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => toggleQuickFilter(id as QuickFilterId)}
+                              className={`ui-focus rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
+                                quickFilters.includes(id as QuickFilterId)
+                                  ? "border-slate-700 bg-slate-800 text-white"
+                                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </details>
               ) : null}
+              <span className="sr-only" aria-live="polite">
+                {homeVisibleItems.length} resultados encontrados en catálogo.
+              </span>
             </div>
           </div>
-          {config.homeLayout.showQuickFilters ? (
-          <div className="mt-3 flex items-start gap-2 border-t border-slate-200 pt-3 pb-1">
-            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap md:flex-wrap md:overflow-visible md:whitespace-normal">
-              {config.homeLayout.showQuickFilters ? (
-                Object.entries(QUICK_FILTER_LABELS).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => toggleQuickFilter(id as QuickFilterId)}
-                    className={`ui-focus shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                      quickFilters.includes(id as QuickFilterId)
-                        ? "border-slate-700 bg-slate-800 text-white"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))
-              ) : null}
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                void downloadVisibleCalendarPdf();
-              }}
-              disabled={isDownloadingCalendarPdf}
-              className={`ui-focus ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                isDownloadingCalendarPdf
-                  ? "cursor-wait border-slate-300 bg-slate-100 text-slate-500"
-                  : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
-              }`}
-              title="Descargar PDF profesional del calendario visible"
-            >
-              <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
-                <path d="M10 3.5v8m0 0l-3-3m3 3l3-3M4.5 13.5v2h11v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              {isDownloadingCalendarPdf ? "Generando PDF..." : "PDF Catalogo"}
-            </button>
-          </div>
-          ) : null}
-          {config.homeLayout.showQuickFilters && quickFilters.length > 0 ? (
-            <div className="mt-3 flex items-center gap-2 overflow-x-auto border-t border-cyan-100 pt-3 whitespace-nowrap">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Filtros activos
-              </p>
-              {quickFilters.map((filterId) => (
-                <button
-                  key={`active-${filterId}`}
-                  type="button"
-                  onClick={() => toggleQuickFilter(filterId)}
-                  className="ui-focus shrink-0 rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800"
-                >
-                  {QUICK_FILTER_LABELS[filterId]} ×
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setQuickFilters([])}
-                className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-              >
-                Limpiar filtros
-              </button>
-            </div>
-          ) : null}
         </div>
       </section>
       ) : null}
@@ -9123,7 +9030,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
               <span className="text-amber-800">-</span>
               <span>{heroAuctionCountdown.name}</span>
               <span className="text-amber-800">-</span>
-              <span>{formatDateDash(new Date())}</span>
+              <span>{heroAuctionCountdown.dateLabel}</span>
             </div>
             ) : null}
           </div>
@@ -9273,43 +9180,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
           </div>
         </section>
         ) : null}
-        {config.homeLayout.showFavoritesSection && favoritesItems.length > 0 ? (
-          <section className="section-shell">
-            <header className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="premium-kicker">Guardados</p>
-                <h2 className="text-2xl font-bold text-slate-900">Tus favoritos</h2>
-              </div>
-              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
-                {favoritesItems.length} guardados
-              </span>
-            </header>
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {favoritesItems.map((item) => (
-                <CatalogCard
-                  key={`favorite-${item.id}`}
-                  item={item}
-                  density={cardDensity}
-                  priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
-                  promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
-                  originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
-                  upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
-                  onOpen={() => openVehicleDetail(item)}
-                  isFavorite={favoriteKeys.includes(getVehicleKey(item))}
-                  onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
-                  isCompared={compareKeys.includes(getVehicleKey(item))}
-                  onToggleCompare={() => toggleCompare(getVehicleKey(item))}
-                  onWhatsappClick={() =>
-                    trackEvent("whatsapp_click_card", {
-                      section: "favoritos",
-                      itemKey: getVehicleKey(item),
-                    })
-                  }
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
         {config.homeLayout.showRecentPublications && latestItems.length > 0 ? (
           <section className="section-shell">
             <header className="mb-4">
@@ -9327,10 +9197,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
                   upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
                   onOpen={() => openVehicleDetail(item)}
-                  isFavorite={favoriteKeys.includes(getVehicleKey(item))}
-                  onToggleFavorite={() => toggleFavorite(getVehicleKey(item))}
-                  isCompared={compareKeys.includes(getVehicleKey(item))}
-                  onToggleCompare={() => toggleCompare(getVehicleKey(item))}
                   onWhatsappClick={() =>
                     trackEvent("whatsapp_click_card", {
                       section: "recien-publicados",
@@ -9359,10 +9225,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 items={category.items}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={toggleFavorite}
-                compareKeys={compareKeys}
-                onToggleCompare={toggleCompare}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
               />
@@ -9379,10 +9241,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 groups={visibleUpcomingRemateGroups}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={toggleFavorite}
-                compareKeys={compareKeys}
-                onToggleCompare={toggleCompare}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
               />
@@ -9395,10 +9253,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 items={proximosRemates}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={toggleFavorite}
-                compareKeys={compareKeys}
-                onToggleCompare={toggleCompare}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
               />
@@ -9413,10 +9267,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 groups={visibleUpcomingVentaDirectaGroups}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={toggleFavorite}
-                compareKeys={compareKeys}
-                onToggleCompare={toggleCompare}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
               />
@@ -9429,10 +9279,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 items={ventasDirectas}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={toggleFavorite}
-                compareKeys={compareKeys}
-                onToggleCompare={toggleCompare}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
               />
@@ -9449,10 +9295,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 items={novedades}
                 priceMap={config.vehiclePrices}
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={toggleFavorite}
-                compareKeys={compareKeys}
-                onToggleCompare={toggleCompare}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
               />
@@ -9466,7 +9308,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   <p className="premium-kicker">Explora y decide</p>
                   <h2 className="text-2xl font-bold text-slate-900">{config.sectionTexts.catalogo.title}</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    {config.sectionTexts.catalogo.subtitle} Usa filtros y comparación para decidir más rápido.
+                    {config.sectionTexts.catalogo.subtitle} Usa filtros para encontrar la unidad que buscas.
                   </p>
                 </div>
                 {hasHomePreFilter ? null : (
@@ -9497,10 +9339,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   items={filteredCatalogItems}
                   priceMap={config.vehiclePrices}
                   upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                  favoriteKeys={favoriteKeys}
-                  onToggleFavorite={toggleFavorite}
-                  compareKeys={compareKeys}
-                  onToggleCompare={toggleCompare}
                   onOpenVehicle={openVehicleDetail}
                   cardDensity={cardDensity}
                 />
@@ -9660,32 +9498,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     }
                   >
                     Enviar mi precio
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleFavorite(selectedVehicleKey)}
-                    className={`ui-focus inline-flex h-9 w-9 items-center justify-center rounded-full border text-base transition ${
-                      favoriteKeys.includes(selectedVehicleKey)
-                        ? "border-amber-300 bg-amber-50 text-amber-700"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
-                    aria-label={favoriteKeys.includes(selectedVehicleKey) ? "Quitar de guardados" : "Guardar"}
-                    title={favoriteKeys.includes(selectedVehicleKey) ? "Quitar de guardados" : "Guardar"}
-                  >
-                    <span aria-hidden="true">{favoriteKeys.includes(selectedVehicleKey) ? "★" : "☆"}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleCompare(selectedVehicleKey)}
-                    className={`ui-focus inline-flex h-9 w-9 items-center justify-center rounded-full border text-base font-semibold transition ${
-                      compareKeys.includes(selectedVehicleKey)
-                        ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
-                    aria-label={compareKeys.includes(selectedVehicleKey) ? "Quitar de comparar" : "Comparar"}
-                    title={compareKeys.includes(selectedVehicleKey) ? "Quitar de comparar" : "Comparar"}
-                  >
-                    <span aria-hidden="true">+</span>
                   </button>
                   <button
                     type="button"
@@ -10078,96 +9890,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         </div>
       ) : null}
         </>
-      ) : null}
-
-      {showPublicHome && compareItems.length > 0 ? (
-        <div className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-2 shadow-lg">
-          <span className="text-xs font-semibold text-indigo-700">
-            Comparador: {compareItems.length}/{MAX_COMPARE_ITEMS}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setShowComparePanel(true);
-              trackEvent("compare_panel_open", { count: compareItems.length });
-            }}
-            className="ui-focus rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white"
-          >
-            Ver comparación
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setCompareKeys([]);
-              trackEvent("compare_clear");
-            }}
-            className="ui-focus rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-600"
-          >
-            Limpiar
-          </button>
-        </div>
-      ) : null}
-
-      {showComparePanel ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/70 p-4" onClick={() => setShowComparePanel(false)}>
-          <div role="dialog" aria-modal="true" aria-label="Comparador de vehículos" className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-4 shadow-2xl md:p-6" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-lg font-bold text-slate-900">Comparador de vehículos</h3>
-              <button
-                type="button"
-                className="ui-focus rounded-md border border-slate-300 px-3 py-1 text-xs text-slate-600"
-                onClick={() => setShowComparePanel(false)}
-              >
-                Cerrar
-              </button>
-            </div>
-            {compareItems.length === 0 ? (
-              <p className="text-sm text-slate-600">No hay vehículos seleccionados para comparar.</p>
-            ) : (
-              <div className="overflow-auto rounded-xl border border-slate-200">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-slate-100">
-                    <tr>
-                      <th className="px-3 py-2 text-xs font-semibold uppercase text-slate-500">Campo</th>
-                      {compareItems.map((item) => (
-                        <th key={`cmp-head-${item.id}`} className="px-3 py-2 text-xs font-semibold uppercase text-slate-700">
-                          {item.title}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      ["Patente", (item: CatalogItem) => getPatent(item)],
-                      ["Marca", (item: CatalogItem) => String((item.raw as Record<string, unknown>).marca ?? (item.raw as Record<string, unknown>).brand ?? "—")],
-                      ["Modelo", (item: CatalogItem) => getModel(item)],
-                      ["Año", (item: CatalogItem) => String((item.raw as Record<string, unknown>).ano ?? (item.raw as Record<string, unknown>).anio ?? (item.raw as Record<string, unknown>).year ?? "—")],
-                      ["Estado", (item: CatalogItem) => item.status ?? "Disponible"],
-                      ["Ubicación", (item: CatalogItem) => item.location ?? "—"],
-                      ["Remate", (item: CatalogItem) => upcomingAuctionByVehicleKey[getVehicleKey(item)] ?? "Sin asignar"],
-                      [
-                        "Precio",
-                        (item: CatalogItem) =>
-                          formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ??
-                          "No informado",
-                      ],
-                      ["Tiene 3D", (item: CatalogItem) => (item.view3dUrl ? "Sí" : "No")],
-                    ].map(([label, resolver]) => (
-                      <tr key={String(label)} className="border-t border-slate-200">
-                        <td className="px-3 py-2 font-semibold text-slate-700">{String(label)}</td>
-                        {compareItems.map((item) => (
-                          <td key={`cmp-${label}-${item.id}`} className="px-3 py-2 text-slate-600">
-                            {(resolver as (value: CatalogItem) => string)(item)}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
       ) : null}
 
       {isAdmin && pendingRevertSale ? (
