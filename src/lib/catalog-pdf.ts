@@ -582,14 +582,92 @@ export async function generateCatalogPdfDocument(
     { align: "center" },
   );
 
-  doc.setFont("helvetica", "italic");
+  const coverInfoRows = [
+    { label: "Oficinas", value: "Americo Vespucio 2880, Piso 7" },
+    { label: "Exhibicion", value: "Arturo Prat 6457, Noviciado, Pudahuel" },
+    {
+      label: "Horario",
+      value: "Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00 / Sab-Dom Cerrado",
+    },
+  ] as const;
+  const coverOnlineTitle = "Remates 100% Online";
+  const coverOnlineBody =
+    "Puede revisar las unidades pre-compra presencialmente en nuestra bodega sin necesidad de garantia.";
+
+  const infoCardW = Math.min(usableWidth - 56, 440);
+  const infoCardX = (pageWidth - infoCardW) / 2;
+  const infoPadX = 22;
+  const infoInnerW = infoCardW - infoPadX * 2;
+  const labelColW = 78;
+  const valueColW = infoInnerW - labelColW - 10;
+  const rowGap = 10;
+  const rowLineH = 11;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  const wrappedRows = coverInfoRows.map((row) => ({
+    ...row,
+    lines: doc.splitTextToSize(sanitizeTextForPdf(row.value), valueColW),
+  }));
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  const onlineBodyLines = doc.splitTextToSize(sanitizeTextForPdf(coverOnlineBody), infoInnerW - 16);
+
+  let infoContentH = 36;
+  for (const row of wrappedRows) {
+    infoContentH += Math.max(rowLineH, row.lines.length * rowLineH) + rowGap;
+  }
+  const onlineBlockPad = 12;
+  const onlineBlockH = 18 + onlineBodyLines.length * rowLineH + onlineBlockPad * 2;
+  infoContentH += onlineBlockH + 8;
+  const infoCardY = statsCardY + 108;
+
+  doc.setFillColor(...BRAND.white);
+  doc.setDrawColor(...BRAND.border);
+  doc.setLineWidth(0.9);
+  doc.roundedRect(infoCardX, infoCardY, infoCardW, infoContentH, 14, 14, "FD");
+  doc.setFillColor(...BRAND.cyan);
+  doc.roundedRect(infoCardX, infoCardY, 5, infoContentH, 2, 2, "F");
+
+  doc.setDrawColor(...BRAND.cyan);
+  doc.setLineWidth(1.2);
+  doc.line(infoCardX + infoPadX, infoCardY + 26, infoCardX + infoCardW - infoPadX, infoCardY + 26);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...BRAND.cyan);
+  doc.text("VISITANOS Y CONOCE NUESTRAS UNIDADES", pageWidth / 2, infoCardY + 18, { align: "center" });
+
+  let infoRowY = infoCardY + 40;
+  for (const row of wrappedRows) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(...BRAND.indigo);
+    doc.text(row.label, infoCardX + infoPadX, infoRowY + 8);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...BRAND.slateText);
+    doc.text(row.lines, infoCardX + infoPadX + labelColW, infoRowY + 8);
+
+    infoRowY += Math.max(rowLineH, row.lines.length * rowLineH) + rowGap;
+  }
+
+  const onlineY = infoRowY + 4;
+  doc.setFillColor(...BRAND.cyanSoft);
+  doc.setDrawColor(...BRAND.borderSoft);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(infoCardX + infoPadX, onlineY, infoInnerW, onlineBlockH, 10, 10, "FD");
+
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
+  doc.setTextColor(...BRAND.navy);
+  doc.text(coverOnlineTitle, infoCardX + infoPadX + 10, onlineY + onlineBlockPad + 10);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
   doc.setTextColor(...BRAND.slateMuted);
-  const coverNoteLines = doc.splitTextToSize(
-    "Documento comercial con fotos, patentes y precios visibles en el catalogo web.",
-    usableWidth - 48,
-  );
-  doc.text(coverNoteLines, pageWidth / 2, pageHeight - 82, { align: "center" });
+  doc.text(onlineBodyLines, infoCardX + infoPadX + 10, onlineY + onlineBlockPad + 24);
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(...BRAND.indigo);
