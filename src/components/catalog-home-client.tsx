@@ -17,6 +17,11 @@ import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { OfferRecord } from "@/types/offers";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
 import {
+  resolveCatalogHeroDescription,
+  resolveCatalogHeroKicker,
+  resolveCatalogHeroTitle,
+} from "@/lib/catalog-hero-copy";
+import {
   collectVehicleImageCandidates,
   generateCatalogPdfDocument,
   getPdfVehicleDisplay,
@@ -269,29 +274,12 @@ function normalizeEditorConfigClient(
 ): EditorConfig {
   const migrated = migrateEditorAuctionIds(value);
   const defaults = DEFAULT_EDITOR_CONFIG;
-  const legacyHeroTitles = new Set([
-    "Inventario de vehículos para remate y venta directa",
-    "Inventario de vehiculos",
-    "Inventario de vehículos",
-  ]);
-  const requestedHeroTitle = "Encuentra tu próximo vehículo al mejor precio";
-  const requestedHeroDescription =
-    "Catálogo oficial de Vedisa Remates con fotos, historial técnico y trazabilidad.";
+  const normalizedHeroTitle = resolveCatalogHeroTitle(migrated?.homeLayout?.heroTitle);
+  const normalizedHeroDescription = resolveCatalogHeroDescription(migrated?.homeLayout?.heroDescription);
+  const normalizedHeroKicker = resolveCatalogHeroKicker(migrated?.homeLayout?.heroKicker);
   const requestedPrimaryCta = "Ver vehículos disponibles";
   const requestedSecondaryCta = "Cómo participar en el remate";
   const requestedSecondaryHref = "#como-participar";
-  const incomingHeroTitle = migrated?.homeLayout?.heroTitle;
-  const normalizedHeroTitle =
-    !incomingHeroTitle || legacyHeroTitles.has(incomingHeroTitle.trim())
-      ? requestedHeroTitle
-      : incomingHeroTitle;
-  const incomingHeroDescription = migrated?.homeLayout?.heroDescription?.trim();
-  const normalizedHeroDescription =
-    !incomingHeroDescription ||
-    incomingHeroDescription ===
-      "Plataforma oficial de ofertas online en vedisaremates.cl. Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza."
-      ? requestedHeroDescription
-      : migrated?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription;
   const incomingPrimaryCta = migrated?.homeLayout?.heroPrimaryCtaLabel?.trim();
   const normalizedPrimaryCta =
     !incomingPrimaryCta || incomingPrimaryCta === "Ver catálogo completo"
@@ -343,7 +331,7 @@ function normalizeEditorConfigClient(
       catalogo: migrated?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
     },
     homeLayout: {
-      heroKicker: migrated?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
+      heroKicker: normalizedHeroKicker,
       heroTitle: normalizedHeroTitle,
       heroDescription: normalizedHeroDescription,
       heroPrimaryCtaLabel: normalizedPrimaryCta,

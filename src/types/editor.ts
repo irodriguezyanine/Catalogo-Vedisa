@@ -1,3 +1,5 @@
+import { CATALOG_HERO_COPY } from "@/lib/catalog-hero-copy";
+
 export type SectionId = "proximos-remates" | "ventas-directas" | "novedades" | "catalogo";
 export type HomeSectionOrderId = SectionId | `managed:${string}`;
 
@@ -202,10 +204,9 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
     },
   },
   homeLayout: {
-    heroKicker: "Catálogo oficial de Vedisa Remates",
-    heroTitle: "Encuentra tu próximo vehículo al mejor precio",
-    heroDescription:
-      "Catálogo oficial de Vedisa Remates con fotos, historial técnico y trazabilidad.",
+    heroKicker: CATALOG_HERO_COPY.kicker,
+    heroTitle: CATALOG_HERO_COPY.title,
+    heroDescription: CATALOG_HERO_COPY.description,
     heroPrimaryCtaLabel: "Ver vehículos disponibles",
     heroPrimaryCtaHref: "#catalogo",
     heroSecondaryCtaLabel: "Cómo participar en el remate",

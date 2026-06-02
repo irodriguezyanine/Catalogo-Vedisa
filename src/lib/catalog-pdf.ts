@@ -594,14 +594,13 @@ export async function generateCatalogPdfDocument(
   const coverOnlineBody =
     "Puede revisar las unidades pre-compra presencialmente en nuestra bodega sin necesidad de garantia.";
 
-  const infoCardW = Math.min(usableWidth - 56, 440);
-  const infoCardX = (pageWidth - infoCardW) / 2;
-  const infoPadX = 22;
-  const infoInnerW = infoCardW - infoPadX * 2;
-  const labelColW = 78;
-  const valueColW = infoInnerW - labelColW - 10;
-  const rowGap = 10;
+  const infoBlockW = Math.min(usableWidth - 72, 420);
+  const infoBlockX = (pageWidth - infoBlockW) / 2;
+  const labelColW = 72;
+  const valueColW = infoBlockW - labelColW - 8;
+  const rowGap = 12;
   const rowLineH = 11;
+  let infoStartY = statsCardY + 118;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
@@ -611,62 +610,44 @@ export async function generateCatalogPdfDocument(
   }));
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
-  const onlineBodyLines = doc.splitTextToSize(sanitizeTextForPdf(coverOnlineBody), infoInnerW - 16);
+  const onlineBodyLines = doc.splitTextToSize(sanitizeTextForPdf(coverOnlineBody), infoBlockW);
 
-  let infoContentH = 36;
-  for (const row of wrappedRows) {
-    infoContentH += Math.max(rowLineH, row.lines.length * rowLineH) + rowGap;
-  }
-  const onlineBlockPad = 12;
-  const onlineBlockH = 18 + onlineBodyLines.length * rowLineH + onlineBlockPad * 2;
-  infoContentH += onlineBlockH + 8;
-  const infoCardY = statsCardY + 108;
-
-  doc.setFillColor(...BRAND.white);
-  doc.setDrawColor(...BRAND.border);
-  doc.setLineWidth(0.9);
-  doc.roundedRect(infoCardX, infoCardY, infoCardW, infoContentH, 14, 14, "FD");
-  doc.setFillColor(...BRAND.cyan);
-  doc.roundedRect(infoCardX, infoCardY, 5, infoContentH, 2, 2, "F");
-
-  doc.setDrawColor(...BRAND.cyan);
-  doc.setLineWidth(1.2);
-  doc.line(infoCardX + infoPadX, infoCardY + 26, infoCardX + infoCardW - infoPadX, infoCardY + 26);
+  doc.setDrawColor(...BRAND.borderSoft);
+  doc.setLineWidth(0.5);
+  doc.line(infoBlockX, infoStartY - 10, infoBlockX + infoBlockW, infoStartY - 10);
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(...BRAND.cyan);
-  doc.text("VISITANOS Y CONOCE NUESTRAS UNIDADES", pageWidth / 2, infoCardY + 18, { align: "center" });
+  doc.setFontSize(8.5);
+  doc.setTextColor(...BRAND.navy);
+  doc.text("VISITANOS Y CONOCE NUESTRAS UNIDADES", pageWidth / 2, infoStartY + 6, { align: "center" });
 
-  let infoRowY = infoCardY + 40;
+  let infoRowY = infoStartY + 28;
   for (const row of wrappedRows) {
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(...BRAND.indigo);
-    doc.text(row.label, infoCardX + infoPadX, infoRowY + 8);
+    doc.setFontSize(8.5);
+    doc.setTextColor(...BRAND.navy);
+    doc.text(row.label, infoBlockX, infoRowY + 8);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(...BRAND.slateText);
-    doc.text(row.lines, infoCardX + infoPadX + labelColW, infoRowY + 8);
+    doc.text(row.lines, infoBlockX + labelColW, infoRowY + 8);
 
     infoRowY += Math.max(rowLineH, row.lines.length * rowLineH) + rowGap;
   }
 
-  const onlineY = infoRowY + 4;
-  doc.setFillColor(...BRAND.cyanSoft);
-  doc.setDrawColor(...BRAND.borderSoft);
-  doc.setLineWidth(0.6);
-  doc.roundedRect(infoCardX + infoPadX, onlineY, infoInnerW, onlineBlockH, 10, 10, "FD");
+  infoRowY += 6;
+  doc.line(infoBlockX, infoRowY, infoBlockX + infoBlockW, infoRowY);
+  infoRowY += 18;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
   doc.setTextColor(...BRAND.navy);
-  doc.text(coverOnlineTitle, infoCardX + infoPadX + 10, onlineY + onlineBlockPad + 10);
+  doc.text(coverOnlineTitle, pageWidth / 2, infoRowY, { align: "center" });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(...BRAND.slateMuted);
-  doc.text(onlineBodyLines, infoCardX + infoPadX + 10, onlineY + onlineBlockPad + 24);
+  doc.text(onlineBodyLines, pageWidth / 2, infoRowY + 14, { align: "center" });
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);

@@ -1,5 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
+import {
+  resolveCatalogHeroDescription,
+  resolveCatalogHeroKicker,
+  resolveCatalogHeroTitle,
+} from "@/lib/catalog-hero-copy";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
 
 const EDITOR_TABLE = process.env.CATALOG_EDITOR_TABLE ?? "catalogo_editor_config";
@@ -34,23 +39,9 @@ function getServerSupabase() {
 function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
   const migrated = migrateEditorAuctionIds(config);
   const defaults = DEFAULT_EDITOR_CONFIG;
-  const legacyHeroTitles = new Set([
-    "Inventario de vehículos para remate y venta directa",
-    "Inventario de vehiculos",
-    "Inventario de vehículos",
-  ]);
-  const incomingHeroTitle = migrated?.homeLayout?.heroTitle?.trim();
-  const normalizedHeroTitle =
-    !incomingHeroTitle || legacyHeroTitles.has(incomingHeroTitle)
-      ? defaults.homeLayout.heroTitle
-      : migrated?.homeLayout?.heroTitle ?? defaults.homeLayout.heroTitle;
-  const incomingDescription = migrated?.homeLayout?.heroDescription?.trim();
-  const normalizedHeroDescription =
-    !incomingDescription ||
-    incomingDescription ===
-      "Plataforma oficial de ofertas online en vedisaremates.cl. Revisa cada unidad con información clara, fotos y trazabilidad comercial para tomar decisiones con confianza."
-      ? defaults.homeLayout.heroDescription
-      : migrated?.homeLayout?.heroDescription ?? defaults.homeLayout.heroDescription;
+  const normalizedHeroTitle = resolveCatalogHeroTitle(migrated?.homeLayout?.heroTitle);
+  const normalizedHeroDescription = resolveCatalogHeroDescription(migrated?.homeLayout?.heroDescription);
+  const normalizedHeroKicker = resolveCatalogHeroKicker(migrated?.homeLayout?.heroKicker);
   const incomingPrimaryCta = migrated?.homeLayout?.heroPrimaryCtaLabel?.trim();
   const normalizedPrimaryCta =
     !incomingPrimaryCta || incomingPrimaryCta === "Ver catálogo completo"
@@ -101,7 +92,7 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       catalogo: migrated?.sectionTexts?.catalogo ?? defaults.sectionTexts.catalogo,
     },
     homeLayout: {
-      heroKicker: migrated?.homeLayout?.heroKicker ?? defaults.homeLayout.heroKicker,
+      heroKicker: normalizedHeroKicker,
       heroTitle: normalizedHeroTitle,
       heroDescription: normalizedHeroDescription,
       heroPrimaryCtaLabel: normalizedPrimaryCta,
