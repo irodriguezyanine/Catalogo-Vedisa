@@ -90,12 +90,12 @@ function VehicleListRow({
   const key = getVehicleKey(item);
   const coverCandidate = item.thumbnail ?? item.images[0];
   const cover = isLikelyImageUrl(coverCandidate) ? coverCandidate : "/placeholder-car.svg";
-  const detailHref = `/?vehiculo=${encodeURIComponent(key)}#catalogo`;
+  const detailHref = `/vehiculos/${encodeURIComponent(key)}`;
 
   return (
     <Link
       href={detailHref}
-      className="ui-focus group grid gap-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition hover:border-cyan-300 hover:shadow-md md:grid-cols-[220px_minmax(0,1fr)_auto] md:items-center md:p-4"
+      className="ui-focus group grid cursor-pointer gap-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition hover:border-cyan-300 hover:shadow-md md:grid-cols-[220px_minmax(0,1fr)_auto] md:items-center md:p-4"
     >
       <div className="relative h-40 overflow-hidden rounded-xl bg-slate-100 md:h-36">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -130,15 +130,12 @@ function VehicleListRow({
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-3 md:flex-col md:items-end md:justify-center md:text-right">
+      <div className="flex items-center justify-end md:flex-col md:items-end md:justify-center md:text-right">
         {priceLabel ? (
           <p className="text-lg font-bold text-cyan-700">{priceLabel}</p>
         ) : (
           <p className="text-sm font-medium text-slate-400">Precio no informado</p>
         )}
-        <span className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 transition group-hover:border-cyan-300 group-hover:bg-cyan-50 group-hover:text-cyan-800">
-          Ver detalle
-        </span>
       </div>
     </Link>
   );

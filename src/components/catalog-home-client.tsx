@@ -12,6 +12,7 @@ import {
 } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CatalogCard, type VehicleCommercialEventBadge } from "@/components/catalog-card";
 import { ShareIcon } from "@/components/share-icon";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
@@ -2177,9 +2178,18 @@ function UpcomingAuctionsSection({
 type Props = {
   feed: CatalogFeed;
   initialConfig: EditorConfig;
+  standaloneVehicleKey?: string;
+  standaloneBackHref?: string;
 };
 
-export function CatalogHomeClient({ feed, initialConfig }: Props) {
+export function CatalogHomeClient({
+  feed,
+  initialConfig,
+  standaloneVehicleKey,
+  standaloneBackHref: standaloneBackHrefProp = "/vehiculos",
+}: Props) {
+  const router = useRouter();
+  const isStandaloneDetailPage = Boolean(standaloneVehicleKey?.trim());
   const [config, setConfig] = useState<EditorConfig>(() =>
     normalizeEditorConfigClient(initialConfig),
   );
@@ -2601,20 +2611,28 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     setSelectedVehicle(null);
     updateVehicleUrlParam();
   }, [updateVehicleUrlParam]);
+  const navigateBackFromVehicleDetail = useCallback(() => {
+    if (isStandaloneDetailPage) {
+      router.push(standaloneBackHrefProp);
+      return;
+    }
+    closeSelectedVehicle();
+  }, [closeSelectedVehicle, isStandaloneDetailPage, router, standaloneBackHrefProp]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeSelectedVehicle();
+      if (event.key === "Escape") navigateBackFromVehicleDetail();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeSelectedVehicle]);
+  }, [navigateBackFromVehicleDetail]);
 
   useEffect(() => {
     setSelectedVehicleImageIndex(0);
   }, [selectedVehicle]);
 
   useEffect(() => {
+    if (isStandaloneDetailPage) return;
     if (!selectedVehicle || typeof window === "undefined") return;
     const scrollY = window.scrollY;
     const { style } = document.body;
@@ -2635,7 +2653,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       style.overflow = previous.overflow;
       window.scrollTo({ top: scrollY, behavior: "auto" });
     };
-  }, [selectedVehicle]);
+  }, [isStandaloneDetailPage, selectedVehicle]);
 
   useEffect(() => {
     if (selectedVehicle) return;
@@ -2876,6 +2894,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   );
 
   useEffect(() => {
+    if (isStandaloneDetailPage) return;
     if (typeof window === "undefined") return;
     if (itemsByKey.size === 0) return;
     if (selectedVehicle) return;
@@ -2887,7 +2906,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
       itemsByKey.get(requestedKey.toUpperCase()) ??
       itemsByKey.get(requestedKey.toLowerCase());
     if (normalizedMatch) setSelectedVehicle(normalizedMatch);
-  }, [itemsByKey, selectedVehicle]);
+  }, [isStandaloneDetailPage, itemsByKey, selectedVehicle]);
 
   const mergedHiddenVehicleIds = useMemo(() => {
     const set = new Set(config.hiddenVehicleIds);
@@ -2909,6 +2928,21 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     () => activeInventoryItems.filter((item) => !mergedHiddenVehicleIds.has(getVehicleKey(item))),
     [activeInventoryItems, mergedHiddenVehicleIds],
   );
+
+  useEffect(() => {
+    if (!isStandaloneDetailPage || !standaloneVehicleKey?.trim()) return;
+    if (visibleItems.length === 0) return;
+    const rawKey = decodeURIComponent(standaloneVehicleKey.trim());
+    const normalizedKey = normalizePatentToken(rawKey);
+    const visibleByKey = new Map(visibleItems.map((item) => [getVehicleKey(item), item] as const));
+    const directMatch =
+      visibleByKey.get(rawKey) ??
+      visibleByKey.get(rawKey.toUpperCase()) ??
+      visibleByKey.get(normalizedKey) ??
+      visibleItems.find((item) => normalizePatentToken(getVehicleKey(item)) === normalizedKey);
+    if (directMatch) setSelectedVehicle(directMatch);
+    else setSelectedVehicle(null);
+  }, [isStandaloneDetailPage, standaloneVehicleKey, visibleItems]);
 
   const homeFilteredItems = useMemo(() => {
     const query = normalizeText(homeSearchTerm);
@@ -3455,12 +3489,17 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   }, [selectedVehicle, selectedVehicleOverride]);
 
   const selectedVehicleShareUrl = useMemo(() => {
-    if (!selectedVehicle || typeof window === "undefined") return "";
+    if (!selectedVehicle) return "";
+    const vehiclePath = `/vehiculos/${encodeURIComponent(selectedVehicleKey)}`;
+    if (typeof window === "undefined") return vehiclePath;
+    if (isStandaloneDetailPage) {
+      return `${window.location.origin}${vehiclePath}`;
+    }
     const url = new URL(window.location.href);
     url.searchParams.set("vehiculo", selectedVehicleKey);
     if (!url.hash) url.hash = "catalogo";
     return url.toString();
-  }, [selectedVehicle, selectedVehicleKey]);
+  }, [isStandaloneDetailPage, selectedVehicle, selectedVehicleKey]);
 
   const selectedVehicleWhatsappUrl = useMemo(() => {
     if (!selectedVehicle) return "";
@@ -5886,8 +5925,8 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const showAdminEditor = isAdmin && adminView === "editor";
-  const showPublicHome = !isAdmin || adminView === "home";
+  const showAdminEditor = isAdmin && adminView === "editor" && !isStandaloneDetailPage;
+  const showPublicHome = (!isAdmin || adminView === "home") && !isStandaloneDetailPage;
   const hasActiveSearch = homeSearchTerm.trim().length > 0;
   const shouldShowHowToSection =
     config.homeLayout.showHowToSection ||
@@ -6520,7 +6559,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   );
 
   return (
-    <main className="premium-bg min-h-screen overflow-x-hidden text-slate-900">
+    <main
+      className={`${isStandaloneDetailPage ? "catalog-bg" : "premium-bg"} min-h-screen overflow-x-hidden text-slate-900`}
+    >
+      {!isStandaloneDetailPage ? (
+        <>
       <div className="premium-glow premium-glow-cyan" />
       <div className="premium-glow premium-glow-gold" />
       <script
@@ -6533,7 +6576,10 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         suppressHydrationWarning
         dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteSchema) }}
       />
+        </>
+      ) : null}
 
+      {!isStandaloneDetailPage ? (
       <section className="sticky top-0 z-30 border-b border-cyan-100/80 bg-white/88 shadow-[0_8px_24px_rgba(87,141,167,0.08)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 md:py-4 lg:px-8">
           <div className="flex items-center justify-between gap-3 md:gap-4">
@@ -6671,6 +6717,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
           ) : null}
         </div>
       </section>
+      ) : null}
 
       {showAdminEditor ? (
         <section className="relative z-10 mx-auto mt-6 max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -9534,11 +9581,61 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
         </div>
       </section>
 
+      {isStandaloneDetailPage && isBootstrapping && !selectedVehicle ? (
+        <div className="relative z-10 mx-auto flex min-h-[60vh] max-w-7xl items-center justify-center px-4 py-16">
+          <p className="text-sm font-medium text-slate-600">Cargando vehículo...</p>
+        </div>
+      ) : null}
+      {isStandaloneDetailPage && !isBootstrapping && !selectedVehicle ? (
+        <div className="relative z-10 mx-auto max-w-7xl px-4 py-16 text-center sm:px-6 lg:px-8">
+          <h1 className="text-2xl font-bold text-slate-900">Vehículo no encontrado</h1>
+          <p className="mt-2 text-sm text-slate-600">La unidad solicitada no está disponible en el inventario publicado.</p>
+          <Link
+            href={standaloneBackHrefProp}
+            className="ui-focus mt-6 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+              <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Volver a vehículos disponibles
+          </Link>
+        </div>
+      ) : null}
+
       {selectedVehicle ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm md:p-5" onClick={closeSelectedVehicle}>
+        <div
+          className={
+            isStandaloneDetailPage
+              ? "relative z-10 min-h-screen"
+              : "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm md:p-5"
+          }
+          onClick={isStandaloneDetailPage ? undefined : navigateBackFromVehicleDetail}
+        >
+          {isStandaloneDetailPage ? (
+            <section className="sticky top-0 z-30 border-b border-cyan-100/80 bg-white/88 shadow-[0_8px_24px_rgba(87,141,167,0.08)] backdrop-blur-xl">
+              <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
+                <Link
+                  href={standaloneBackHrefProp}
+                  className="ui-focus inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-50"
+                  aria-label="Volver a vehículos disponibles"
+                  title="Volver a vehículos disponibles"
+                >
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                    <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </Link>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Vehículos disponibles
+                  </p>
+                  <p className="truncate text-sm font-bold text-slate-900">{getPatent(selectedVehicle)}</p>
+                </div>
+              </div>
+            </section>
+          ) : (
           <button
             type="button"
-            onClick={closeSelectedVehicle}
+            onClick={navigateBackFromVehicleDetail}
             className="ui-focus fixed right-4 top-[calc(env(safe-area-inset-top)+10px)] z-[70] inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/40 bg-slate-900/30 text-white backdrop-blur-sm transition hover:bg-slate-900/50 md:hidden"
             aria-label="Cerrar detalle"
             title="Cerrar"
@@ -9547,8 +9644,19 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
               <path fillRule="evenodd" d="M4.22 4.22a.75.75 0 0 1 1.06 0L10 8.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L11.06 10l4.72 4.72a.75.75 0 0 1-1.06 1.06L10 11.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L8.94 10 4.22 5.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
             </svg>
           </button>
-          <div role="dialog" aria-modal="true" aria-label={`Detalle de ${selectedVehicle.title}`} className="max-h-[96vh] w-full max-w-7xl overflow-auto rounded-2xl border border-cyan-100 bg-gradient-to-br from-white via-white to-cyan-50/40 p-3 shadow-2xl md:rounded-3xl md:p-6" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-4 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm">
+          )}
+          <div
+            role="dialog"
+            aria-modal={!isStandaloneDetailPage}
+            aria-label={`Detalle de ${selectedVehicle.title}`}
+            className={
+              isStandaloneDetailPage
+                ? "mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8"
+                : "max-h-[96vh] w-full max-w-7xl overflow-auto rounded-2xl border border-cyan-100 bg-gradient-to-br from-white via-white to-cyan-50/40 p-3 shadow-2xl md:rounded-3xl md:p-6"
+            }
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={`mb-4 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm ${isStandaloneDetailPage ? "border-slate-200 bg-white" : ""}`}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
@@ -9604,9 +9712,21 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                       <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.46 1.33 4.96L2 22l5.3-1.38a9.83 9.83 0 0 0 4.74 1.21h.01c5.45 0 9.87-4.42 9.87-9.88A9.87 9.87 0 0 0 12.04 2Zm0 18.03h-.01a8.13 8.13 0 0 1-4.14-1.14l-.3-.18-3.15.82.84-3.07-.2-.31a8.13 8.13 0 0 1-1.25-4.3c0-4.51 3.69-8.2 8.22-8.2 4.53 0 8.21 3.68 8.21 8.2 0 4.53-3.69 8.2-8.22 8.2Zm4.49-6.19c-.25-.12-1.49-.73-1.72-.81-.23-.09-.4-.12-.57.12-.17.25-.65.81-.8.97-.15.17-.29.19-.54.06-.25-.12-1.04-.38-1.99-1.22-.74-.66-1.24-1.48-1.39-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.44.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.44-.06-.12-.57-1.37-.78-1.88-.21-.49-.42-.42-.57-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.09 0 1.23.9 2.42 1.03 2.58.12.17 1.77 2.71 4.29 3.8.6.26 1.07.42 1.43.54.6.19 1.15.16 1.59.1.49-.07 1.49-.61 1.7-1.2.21-.59.21-1.1.15-1.2-.06-.1-.23-.16-.48-.28Z" />
                     </svg>
                   </a>
+                  {isStandaloneDetailPage ? (
+                    <Link
+                      href={standaloneBackHrefProp}
+                      className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 text-slate-600 transition hover:bg-slate-50"
+                      aria-label="Volver a vehículos disponibles"
+                      title="Volver a vehículos disponibles"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                        <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </Link>
+                  ) : (
                   <button
                     className="ui-focus hidden h-9 w-9 items-center justify-center rounded-full border border-slate-300 text-slate-600 transition hover:bg-slate-50 md:inline-flex"
-                    onClick={closeSelectedVehicle}
+                    onClick={navigateBackFromVehicleDetail}
                     aria-label="Volver a resultados"
                     title="Volver a resultados"
                   >
@@ -9614,6 +9734,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                       <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -9624,7 +9745,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     <iframe
                       src={selectedVehicle.view3dUrl}
                       title={`Visor 3D ${selectedVehicle.title}`}
-                      className="h-[420px] w-full border-0"
+                      className={isStandaloneDetailPage ? "h-[min(72vh,760px)] w-full border-0" : "h-[420px] w-full border-0"}
                       allow="fullscreen; autoplay"
                     />
                   ) : (
@@ -9632,7 +9753,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     <img
                       src={selectedVehicleMainImage}
                       alt={selectedVehicle.title}
-                      className="h-[420px] w-full object-cover"
+                      className={isStandaloneDetailPage ? "h-[min(72vh,760px)] w-full object-cover" : "h-[420px] w-full object-cover"}
                     />
                   )}
                 </div>
@@ -9660,7 +9781,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   </div>
                 ) : null}
               </div>
-              <div className="h-[420px] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
+              <div className={`rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm ${isStandaloneDetailPage ? "min-h-[min(72vh,760px)]" : "h-[420px] overflow-y-auto"}`}>
                 <h4 className="mb-3 text-base font-semibold text-slate-900">Resumen del vehículo</h4>
                 <div className="mb-3 flex flex-wrap gap-2">
                   {selectedVehicleTabs.map((tab) => (
@@ -9937,7 +10058,13 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     <button
                       key={`similar-${item.id}`}
                       type="button"
-                      onClick={() => openVehicleDetail(item)}
+                      onClick={() => {
+                        if (isStandaloneDetailPage) {
+                          router.push(`/vehiculos/${encodeURIComponent(getVehicleKey(item))}`);
+                          return;
+                        }
+                        openVehicleDetail(item);
+                      }}
                       className="ui-focus rounded-lg border border-slate-200 bg-white p-2.5 text-left transition hover:border-cyan-300 hover:bg-cyan-50/30"
                     >
                       <div className="flex items-center justify-between gap-2">
