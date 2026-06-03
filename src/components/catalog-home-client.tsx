@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -2929,7 +2930,7 @@ export function CatalogHomeClient({
     [activeInventoryItems, mergedHiddenVehicleIds],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isStandaloneDetailPage || !standaloneVehicleKey?.trim()) return;
     if (visibleItems.length === 0) return;
     const rawKey = decodeURIComponent(standaloneVehicleKey.trim());
@@ -2940,8 +2941,7 @@ export function CatalogHomeClient({
       visibleByKey.get(rawKey.toUpperCase()) ??
       visibleByKey.get(normalizedKey) ??
       visibleItems.find((item) => normalizePatentToken(getVehicleKey(item)) === normalizedKey);
-    if (directMatch) setSelectedVehicle(directMatch);
-    else setSelectedVehicle(null);
+    setSelectedVehicle(directMatch ?? null);
   }, [isStandaloneDetailPage, standaloneVehicleKey, visibleItems]);
 
   const homeFilteredItems = useMemo(() => {
@@ -9580,13 +9580,15 @@ export function CatalogHomeClient({
           {leadMessage ? <p className="mt-2 text-xs font-semibold text-cyan-700">{leadMessage}</p> : null}
         </div>
       </section>
+        </>
+      ) : null}
 
-      {isStandaloneDetailPage && isBootstrapping && !selectedVehicle ? (
+      {isStandaloneDetailPage && !selectedVehicle && visibleItems.length === 0 ? (
         <div className="relative z-10 mx-auto flex min-h-[60vh] max-w-7xl items-center justify-center px-4 py-16">
           <p className="text-sm font-medium text-slate-600">Cargando vehículo...</p>
         </div>
       ) : null}
-      {isStandaloneDetailPage && !isBootstrapping && !selectedVehicle ? (
+      {isStandaloneDetailPage && !selectedVehicle && visibleItems.length > 0 ? (
         <div className="relative z-10 mx-auto max-w-7xl px-4 py-16 text-center sm:px-6 lg:px-8">
           <h1 className="text-2xl font-bold text-slate-900">Vehículo no encontrado</h1>
           <p className="mt-2 text-sm text-slate-600">La unidad solicitada no está disponible en el inventario publicado.</p>
@@ -10093,8 +10095,6 @@ export function CatalogHomeClient({
             </div>
           </div>
         </div>
-      ) : null}
-        </>
       ) : null}
 
       {isAdmin && pendingRevertSale ? (
