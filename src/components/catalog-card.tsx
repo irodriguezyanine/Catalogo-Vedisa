@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CatalogItem } from "@/types/catalog";
+import { ShareIcon } from "@/components/share-icon";
+
+export type VehicleCommercialEventBadge = {
+  kind: "remate" | "venta_directa";
+  label: string;
+};
 
 type CatalogCardProps = {
   item: CatalogItem;
   priceLabel?: string | null;
   promoEnabled?: boolean;
   originalPriceLabel?: string | null;
-  upcomingAuctionLabel?: string;
+  commercialEventBadge?: VehicleCommercialEventBadge;
   density?: "compact" | "detailed";
   onOpen?: () => void;
   onWhatsappClick?: () => void;
@@ -97,7 +103,7 @@ export function CatalogCard({
   priceLabel,
   promoEnabled: promoEnabledOverride,
   originalPriceLabel: originalPriceLabelOverride,
-  upcomingAuctionLabel,
+  commercialEventBadge,
   density = "detailed",
   onOpen,
   onWhatsappClick,
@@ -192,7 +198,7 @@ export function CatalogCard({
           </div>
 
           <div className="flex min-h-[2.6rem] min-w-0 flex-wrap content-start gap-2 text-xs text-slate-700">
-            {formattedDate ? (
+            {formattedDate && !commercialEventBadge ? (
               <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1">
                 Remate {formattedDate}
               </span>
@@ -202,9 +208,17 @@ export function CatalogCard({
                 {shortText(item.location, 35)}
               </span>
             ) : null}
-            {upcomingAuctionLabel ? (
-              <span className="max-w-full truncate rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700">
-                {shortText(`Remate: ${upcomingAuctionLabel}`, 38)}
+            {commercialEventBadge ? (
+              <span
+                className={`max-w-full truncate rounded-full px-2 py-1 font-semibold ${
+                  commercialEventBadge.kind === "venta_directa"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-indigo-100 text-indigo-700"
+                }`}
+              >
+                {commercialEventBadge.kind === "venta_directa"
+                  ? commercialEventBadge.label
+                  : shortText(`Remate: ${commercialEventBadge.label}`, 38)}
               </span>
             ) : null}
           </div>
@@ -261,8 +275,12 @@ export function CatalogCard({
             aria-label={`Compartir ${item.title}`}
             title={shareCopied ? "Copiado" : "Compartir"}
           >
-            <span aria-hidden="true" className="text-base leading-none">
-              {shareCopied ? "✓" : "↗"}
+            <span aria-hidden="true" className="inline-flex items-center justify-center">
+              {shareCopied ? (
+                <span className="text-base leading-none">✓</span>
+              ) : (
+                <ShareIcon className="h-4 w-4" />
+              )}
             </span>
           </button>
           <a

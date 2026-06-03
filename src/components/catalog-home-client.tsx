@@ -12,7 +12,8 @@ import {
 } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { CatalogCard } from "@/components/catalog-card";
+import { CatalogCard, type VehicleCommercialEventBadge } from "@/components/catalog-card";
+import { ShareIcon } from "@/components/share-icon";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { OfferRecord } from "@/types/offers";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
@@ -73,7 +74,11 @@ type QuickFilterId =
   | "furgon"
   | "minibus"
   | "deportivo"
-  | "city_car";
+  | "city_car"
+  | "tractocamion"
+  | "camion"
+  | "bus"
+  | "semiremolque";
 type CardDensity = "compact" | "detailed";
 type DetailEditorTabId = "general" | "tecnica";
 type ClientLeadForm = {
@@ -131,6 +136,10 @@ const QUICK_FILTER_LABELS: Record<QuickFilterId, string> = {
   minibus: "Minibús (Van)",
   deportivo: "Deportivo",
   city_car: "City car",
+  tractocamion: "Tractocamión",
+  camion: "Camión",
+  bus: "Buses",
+  semiremolque: "Semiremolques",
 };
 
 const QUICK_FILTER_IDS = Object.keys(QUICK_FILTER_LABELS) as QuickFilterId[];
@@ -150,6 +159,10 @@ const VEHICLE_BODY_TYPE_MATCHERS: Record<QuickFilterId, RegExp[]> = {
   minibus: [/\bminibus\b/, /\bmini\s*bus\b/, /\bvan\b/],
   deportivo: [/\bdeportivo\b/, /\bsport\s*car\b/, /\bcoche\s*deportivo\b/],
   sedan: [/\bsedan\b/, /\bberlina\b/, /\bsalon\b/],
+  tractocamion: [/\btractocamion\b/, /\btracto\s*camion\b/, /\btruck\s*tractor\b/],
+  camion: [/\bcamion\b/],
+  bus: [/\bbuses\b/, /\bbus\b/, /\bomnibus\b/, /\bmicrobus\b/],
+  semiremolque: [/\bsemiremolque\b/, /\bsemi\s*remolque\b/, /\bremolque\b/, /\brampla\b/, /\btrailer\b/],
 };
 
 const VEHICLE_CONDITION_OPTIONS = [
@@ -1852,7 +1865,7 @@ type SectionProps = {
   subtitle: string;
   items: CatalogItem[];
   priceMap: Record<string, string>;
-  upcomingAuctionByVehicleKey?: Record<string, string>;
+  upcomingAuctionByVehicleKey?: Record<string, VehicleCommercialEventBadge>;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
 };
@@ -1861,7 +1874,7 @@ type HorizontalCardsRailProps = {
   sectionKey: string;
   items: CatalogItem[];
   priceMap: Record<string, string>;
-  upcomingAuctionByVehicleKey?: Record<string, string>;
+  upcomingAuctionByVehicleKey?: Record<string, VehicleCommercialEventBadge>;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
 };
@@ -1997,7 +2010,7 @@ function HorizontalCardsRail({
             <CatalogCard
               item={item}
               priceLabel={formatPrice(resolveVehiclePriceRaw(item, priceMap) ?? undefined)}
-              upcomingAuctionLabel={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
+              commercialEventBadge={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
               density={cardDensity}
               onOpen={() => {
                 if (draggedRef.current) return;
@@ -2086,7 +2099,7 @@ type UpcomingAuctionsSectionProps = {
   variant: UpcomingAuctionsSectionVariant;
   groups: Array<{ auction: UpcomingAuction; items: CatalogItem[] }>;
   priceMap: Record<string, string>;
-  upcomingAuctionByVehicleKey: Record<string, string>;
+  upcomingAuctionByVehicleKey: Record<string, VehicleCommercialEventBadge>;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
 };
@@ -3038,15 +3051,24 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
   };
 
   const upcomingAuctionByVehicleKey = useMemo(() => {
-    const labels: Record<string, string> = {};
+    const labels: Record<string, VehicleCommercialEventBadge> = {};
     const auctionsById = new Map(
       (config.upcomingAuctions ?? []).map((auction) => [auction.id, auction] as const),
     );
     for (const [vehicleKey, auctionId] of Object.entries(config.vehicleUpcomingAuctionIds ?? {})) {
       const auction = auctionsById.get(auctionId);
       if (!auction) continue;
+      const eventType = getAuctionEventType(auction);
+      if (eventType === "venta_directa") {
+        labels[vehicleKey] = { kind: "venta_directa", label: "Venta directa" };
+        continue;
+      }
       const dateLabel = formatAuctionWindowLabel(auction);
-      labels[vehicleKey] = dateLabel ? `${auction.name} · ${dateLabel}` : auction.name;
+      const name = sanitizeAuctionTitle(auction.name);
+      labels[vehicleKey] = {
+        kind: "remate",
+        label: dateLabel ? `${name} · ${dateLabel}` : name,
+      };
     }
     return labels;
   }, [config.upcomingAuctions, config.vehicleUpcomingAuctionIds]);
@@ -7010,7 +7032,12 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   {paginatedEditorItems.map((item) => {
                     const key = getVehicleKey(item);
                     const hidden = mergedHiddenVehicleIds.has(key);
-                    const auctionLabel = upcomingAuctionByVehicleKey[key] ?? "Sin remate asignado";
+                    const eventBadge = upcomingAuctionByVehicleKey[key];
+                    const auctionLabel = eventBadge
+                      ? eventBadge.kind === "venta_directa"
+                        ? "Venta directa"
+                        : `Remate: ${eventBadge.label}`
+                      : "Sin evento asignado";
                     return (
                       <article
                         key={`editor-${key}`}
@@ -9243,7 +9270,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                   priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
                   promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
                   originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
-                  upcomingAuctionLabel={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                  commercialEventBadge={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
                   onOpen={() => openVehicleDetail(item)}
                   onWhatsappClick={() =>
                     trackEvent("whatsapp_click_card", {
@@ -9556,11 +9583,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                     aria-label="Compartir"
                     title="Compartir"
                   >
-                    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-                      <path d="M11.5 2.75H17.25V8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M10.5 9.5L17 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M8 4.75H6.5A2.75 2.75 0 0 0 3.75 7.5v6A2.75 2.75 0 0 0 6.5 16.25h6A2.75 2.75 0 0 0 15.25 13.5V12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+                    <ShareIcon className="h-4 w-4" />
                   </button>
                   <a
                     href={selectedVehicleWhatsappUrl}
@@ -9888,8 +9911,9 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                 onClick={() => {
                   void shareSelectedVehicle();
                 }}
-                className="ui-focus rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
+                className="ui-focus inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
               >
+                <ShareIcon className="h-3.5 w-3.5" />
                 Compartir
               </button>
             </div>
