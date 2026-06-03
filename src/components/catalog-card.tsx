@@ -107,7 +107,7 @@ function hasMeaningfulSiniestroNumber(value: unknown): boolean {
   return !/^(n\/a|na|sin|0|-+|none|s\/p|s\.?p\.?)$/i.test(trimmed);
 }
 
-function inferVehicleSiniestradoStatus(item: CatalogItem): SiniestradoStatus {
+export function inferVehicleSiniestradoStatus(item: CatalogItem): SiniestradoStatus {
   const raw = item.raw as Record<string, unknown>;
   const sample = normalizeLookupText(
     [
@@ -279,15 +279,9 @@ export function CatalogCard({
                 <span className="max-w-full truncate rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">
                   {commercialEventBadge.label}
                 </span>
-                {siniestradoStatus ? (
-                  <span
-                    className={`max-w-full truncate rounded-full px-2 py-1 text-[10px] font-bold tracking-wide ${
-                      siniestradoStatus === "siniestrado"
-                        ? "bg-amber-100 text-amber-900"
-                        : "bg-slate-100 text-slate-700"
-                    }`}
-                  >
-                    {siniestradoStatus === "siniestrado" ? "SINIESTRADO" : "NO SINIESTRADO"}
+                {siniestradoStatus === "siniestrado" ? (
+                  <span className="max-w-full truncate rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">
+                    SINIESTRADO
                   </span>
                 ) : null}
               </>

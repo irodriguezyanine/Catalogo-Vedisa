@@ -337,6 +337,11 @@ function normalizeEditorConfigClient(
     !incomingSecondaryHref || incomingSecondaryHref === "#proximos-remates"
       ? requestedSecondaryHref
       : migrated?.homeLayout?.heroSecondaryCtaHref ?? defaults.homeLayout.heroSecondaryCtaHref;
+  const incomingPrimaryHref = migrated?.homeLayout?.heroPrimaryCtaHref?.trim();
+  const normalizedPrimaryHref =
+    !incomingPrimaryHref || incomingPrimaryHref === "#catalogo"
+      ? defaults.homeLayout.heroPrimaryCtaHref
+      : migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref;
   return {
     sectionVehicleIds: {
       "proximos-remates":
@@ -377,8 +382,7 @@ function normalizeEditorConfigClient(
       heroTitle: normalizedHeroTitle,
       heroDescription: normalizedHeroDescription,
       heroPrimaryCtaLabel: normalizedPrimaryCta,
-      heroPrimaryCtaHref:
-        migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref,
+      heroPrimaryCtaHref: normalizedPrimaryHref,
       heroSecondaryCtaLabel: normalizedSecondaryCta,
       heroSecondaryCtaHref: normalizedSecondaryHref,
       heroAlignment: migrated?.homeLayout?.heroAlignment ?? defaults.homeLayout.heroAlignment,
@@ -9091,7 +9095,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             ) : null}
             {config.homeLayout.showHeroCtas ? (
             <div className={`mt-4 flex flex-wrap gap-3 border-t border-slate-200 pt-4 ${config.homeLayout.heroAlignment === "center" ? "justify-center" : ""}`}>
-              <a href={config.homeLayout.heroPrimaryCtaHref || "#catalogo"} className="premium-btn-primary ui-focus">
+              <a href={config.homeLayout.heroPrimaryCtaHref || "/vehiculos"} className="premium-btn-primary ui-focus">
                 {config.homeLayout.heroPrimaryCtaLabel || "Ver catálogo completo"}
               </a>
               <a href={config.homeLayout.heroSecondaryCtaHref || "#como-participar"} className="premium-btn-secondary ui-focus">
@@ -9422,6 +9426,11 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
           );
         })}
       </div>
+      {config.homeLayout.showFeaturedStrip ? (
+        <div className="relative z-10 mx-auto mb-14 max-w-7xl px-4 sm:px-6 lg:px-8">
+          <FeaturedStrip items={featuredItems} onOpenVehicle={openVehicleDetail} />
+        </div>
+      ) : null}
       <section className="relative z-10 mx-auto mb-14 grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="section-shell">
           <p className="premium-kicker">Confianza VEDISA</p>
@@ -9524,9 +9533,6 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
           {leadMessage ? <p className="mt-2 text-xs font-semibold text-cyan-700">{leadMessage}</p> : null}
         </div>
       </section>
-      {config.homeLayout.showFeaturedStrip ? (
-        <FeaturedStrip items={featuredItems} onOpenVehicle={openVehicleDetail} />
-      ) : null}
 
       {selectedVehicle ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm md:p-5" onClick={closeSelectedVehicle}>

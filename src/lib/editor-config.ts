@@ -57,6 +57,11 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
     !incomingSecondaryHref || incomingSecondaryHref === "#proximos-remates"
       ? "#como-participar"
       : migrated?.homeLayout?.heroSecondaryCtaHref ?? defaults.homeLayout.heroSecondaryCtaHref;
+  const incomingPrimaryHref = migrated?.homeLayout?.heroPrimaryCtaHref?.trim();
+  const normalizedPrimaryHref =
+    !incomingPrimaryHref || incomingPrimaryHref === "#catalogo"
+      ? defaults.homeLayout.heroPrimaryCtaHref
+      : migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref;
   return {
     sectionVehicleIds: {
       "proximos-remates":
@@ -96,8 +101,7 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       heroTitle: normalizedHeroTitle,
       heroDescription: normalizedHeroDescription,
       heroPrimaryCtaLabel: normalizedPrimaryCta,
-      heroPrimaryCtaHref:
-        migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref,
+      heroPrimaryCtaHref: normalizedPrimaryHref,
       heroSecondaryCtaLabel: normalizedSecondaryCta,
       heroSecondaryCtaHref: normalizedSecondaryHref,
       heroAlignment: migrated?.homeLayout?.heroAlignment ?? defaults.homeLayout.heroAlignment,

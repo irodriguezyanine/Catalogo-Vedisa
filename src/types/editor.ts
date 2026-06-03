@@ -208,7 +208,7 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
     heroTitle: CATALOG_HERO_COPY.title,
     heroDescription: CATALOG_HERO_COPY.description,
     heroPrimaryCtaLabel: "Ver vehículos disponibles",
-    heroPrimaryCtaHref: "#catalogo",
+    heroPrimaryCtaHref: "/vehiculos",
     heroSecondaryCtaLabel: "Cómo participar en el remate",
     heroSecondaryCtaHref: "#como-participar",
     heroAlignment: "left",
