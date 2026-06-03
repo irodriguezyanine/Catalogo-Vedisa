@@ -192,9 +192,6 @@ export function CatalogCard({
           </div>
 
           <div className="flex min-h-[2.6rem] min-w-0 flex-wrap content-start gap-2 text-xs text-slate-700">
-            {item.lot ? (
-              <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1">Lote {item.lot}</span>
-            ) : null}
             {formattedDate ? (
               <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1">
                 Remate {formattedDate}
