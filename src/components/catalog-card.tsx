@@ -98,6 +98,70 @@ function getConditionBadgeClasses(condition?: string | null): string {
   return "bg-indigo-600 text-white";
 }
 
+type SiniestradoStatus = "siniestrado" | "no_siniestrado";
+
+function hasMeaningfulSiniestroNumber(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return !/^(n\/a|na|sin|0|-+|none|s\/p|s\.?p\.?)$/i.test(trimmed);
+}
+
+function inferVehicleSiniestradoStatus(item: CatalogItem): SiniestradoStatus {
+  const raw = item.raw as Record<string, unknown>;
+  const sample = normalizeLookupText(
+    [
+      item.title,
+      item.subtitle,
+      item.status,
+      raw.descripcion,
+      raw.description,
+      raw.observaciones,
+      raw.descripcion_ampliada,
+    ]
+      .filter((entry) => typeof entry === "string" && entry.trim())
+      .join(" "),
+  );
+
+  if (
+    /\bno\s+siniestr/.test(sample) ||
+    /\bno\s+reg\.?\s*perdida/.test(sample) ||
+    /\bno\s+registra\s+perdida/.test(sample) ||
+    /\bsin\s+siniestr/.test(sample)
+  ) {
+    return "no_siniestrado";
+  }
+
+  const siniestroFields = [
+    raw.n_de_siniestro,
+    raw.numero_siniestro,
+    raw.numero_de_siniestro,
+    raw.n_siniestro,
+    raw.n_s,
+    raw.ns,
+  ];
+  if (siniestroFields.some(hasMeaningfulSiniestroNumber)) {
+    return "siniestrado";
+  }
+
+  if (
+    /\bsiniestrado\b/.test(sample) ||
+    /\breg\.?\s*perdida/.test(sample) ||
+    /\bperdida\s+total\b/.test(sample)
+  ) {
+    return "siniestrado";
+  }
+
+  return "no_siniestrado";
+}
+
+function normalizeLookupText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+}
+
 export function CatalogCard({
   item,
   priceLabel,
@@ -117,6 +181,8 @@ export function CatalogCard({
   const brandModel = getBrandModel(item);
   const itemKey = getVehicleKey(item);
   const conditionLabel = getVehicleCondition(item);
+  const siniestradoStatus =
+    commercialEventBadge?.kind === "venta_directa" ? inferVehicleSiniestradoStatus(item) : null;
   const promoEnabledFromRaw =
     raw.promo_enabled === true ||
     raw.promo_enabled === "true" ||
@@ -208,17 +274,26 @@ export function CatalogCard({
                 {shortText(item.location, 35)}
               </span>
             ) : null}
-            {commercialEventBadge ? (
-              <span
-                className={`max-w-full truncate rounded-full px-2 py-1 font-semibold ${
-                  commercialEventBadge.kind === "venta_directa"
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-indigo-100 text-indigo-700"
-                }`}
-              >
-                {commercialEventBadge.kind === "venta_directa"
-                  ? commercialEventBadge.label
-                  : shortText(`Remate: ${commercialEventBadge.label}`, 38)}
+            {commercialEventBadge?.kind === "venta_directa" ? (
+              <>
+                <span className="max-w-full truncate rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">
+                  {commercialEventBadge.label}
+                </span>
+                {siniestradoStatus ? (
+                  <span
+                    className={`max-w-full truncate rounded-full px-2 py-1 text-[10px] font-bold tracking-wide ${
+                      siniestradoStatus === "siniestrado"
+                        ? "bg-amber-100 text-amber-900"
+                        : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {siniestradoStatus === "siniestrado" ? "SINIESTRADO" : "NO SINIESTRADO"}
+                  </span>
+                ) : null}
+              </>
+            ) : commercialEventBadge ? (
+              <span className="max-w-full truncate rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700">
+                {shortText(`Remate: ${commercialEventBadge.label}`, 38)}
               </span>
             ) : null}
           </div>
