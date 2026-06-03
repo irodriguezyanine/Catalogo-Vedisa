@@ -60,14 +60,20 @@ type BatchAssignTarget =
   | { type: "auction"; auctionId: string };
 type SortOption = "recomendado" | "relevancia" | "fecha-remate" | "precio-asc" | "precio-desc" | "titulo";
 type QuickFilterId =
-  | "livianos"
-  | "pesados"
-  | "con3d"
-  | "conPrecio"
-  | "recientes"
-  | "manuales"
-  | "proximoRemate"
-  | "categoriaOtros";
+  | "sedan"
+  | "hatchback"
+  | "station_wagon"
+  | "coupe"
+  | "descapotable"
+  | "suv"
+  | "crossover"
+  | "todoterreno"
+  | "minivan"
+  | "camioneta"
+  | "furgon"
+  | "minibus"
+  | "deportivo"
+  | "city_car";
 type CardDensity = "compact" | "detailed";
 type DetailEditorTabId = "general" | "tecnica";
 type ClientLeadForm = {
@@ -111,14 +117,39 @@ type AnalyticsTimelineRow = {
 };
 
 const QUICK_FILTER_LABELS: Record<QuickFilterId, string> = {
-  livianos: "Livianos",
-  pesados: "Pesados",
-  con3d: "Con 3D",
-  conPrecio: "Con precio",
-  recientes: "Recientes",
-  manuales: "Manuales",
-  proximoRemate: "Próximo remate",
-  categoriaOtros: "Categoría: Otros",
+  sedan: "Sedán",
+  hatchback: "Hatchback",
+  station_wagon: "Station Wagon",
+  coupe: "Coupé",
+  descapotable: "Descapotable",
+  suv: "SUV",
+  crossover: "Crossover (CUV)",
+  todoterreno: "Todoterreno (4x4)",
+  minivan: "Minivan",
+  camioneta: "Camioneta (Pick-up)",
+  furgon: "Furgón",
+  minibus: "Minibús (Van)",
+  deportivo: "Deportivo",
+  city_car: "City car",
+};
+
+const QUICK_FILTER_IDS = Object.keys(QUICK_FILTER_LABELS) as QuickFilterId[];
+
+const VEHICLE_BODY_TYPE_MATCHERS: Record<QuickFilterId, RegExp[]> = {
+  city_car: [/\bcity\s*car\b/, /\bcitycar\b/, /\bauto\s*urbano\b/, /\bcompacto\s*urbano\b/],
+  hatchback: [/\bhatch\s*back\b/, /\bhatchback\b/],
+  station_wagon: [/\bstation\s*wagon\b/, /\bstation\b/, /\bwagon\b/, /\bfamiliar\b/, /\bbreak\b/],
+  coupe: [/\bcoupe\b/, /\bcupe\b/],
+  descapotable: [/\bdescapotable\b/, /\bconvertible\b/, /\bcabrio\b/, /\bcabriolet\b/, /\broadster\b/],
+  crossover: [/\bcrossover\b/, /\bcuv\b/],
+  suv: [/\bsuv\b/, /\bsport\s*utility\b/],
+  todoterreno: [/\btodoterreno\b/, /\b4x4\b/, /\b4wd\b/, /\boff\s*road\b/, /\boffroad\b/],
+  minivan: [/\bminivan\b/, /\bmini\s*van\b/],
+  camioneta: [/\bcamioneta\b/, /\bpick\s*up\b/, /\bpickup\b/, /\bpick\s*-\s*up\b/],
+  furgon: [/\bfurgon\b/, /\bfurgoneta\b/, /\bpanel\s*van\b/, /\bvan\s*comercial\b/],
+  minibus: [/\bminibus\b/, /\bmini\s*bus\b/, /\bvan\b/],
+  deportivo: [/\bdeportivo\b/, /\bsport\s*car\b/, /\bcoche\s*deportivo\b/],
+  sedan: [/\bsedan\b/, /\bberlina\b/, /\bsalon\b/],
 };
 
 const VEHICLE_CONDITION_OPTIONS = [
@@ -619,6 +650,44 @@ function inferVehicleType(item: CatalogItem): VehicleTypeId {
   if (/(auto|suv|sedan|hatch|pickup|camioneta|station)/.test(sample)) return "livianos";
   if (/\b(camion(?!eta)|bus|tracto|tolva|pesad|semi|rampla|grua)\b/.test(sample)) return "pesados";
   return "otros";
+}
+
+function getVehicleBodyTypeSample(
+  item: CatalogItem,
+  vehicleDetails?: Record<string, EditorVehicleDetails>,
+): string {
+  const raw = item.raw as Record<string, unknown>;
+  const lookup = buildVehicleLookup(raw);
+  const key = getVehicleKey(item);
+  const details = vehicleDetails?.[key];
+  const parts = [
+    item.title,
+    item.subtitle,
+    details?.tipo,
+    details?.tipoVehiculo,
+    getLookupValue(lookup, [
+      "tipo_de_vehiculo",
+      "tipo_vehiculo",
+      "vehicle_type",
+      "tipo",
+      "type",
+      "body_type",
+      "categoria",
+      "glo3d.tipo_de_vehiculo",
+      "glo3d.tipo_vehiculo",
+    ]),
+    raw.description,
+  ];
+  return normalizeText(parts.filter(Boolean).join(" "));
+}
+
+function matchesVehicleBodyTypeFilter(
+  item: CatalogItem,
+  filterId: QuickFilterId,
+  vehicleDetails: Record<string, EditorVehicleDetails>,
+): boolean {
+  const sample = getVehicleBodyTypeSample(item, vehicleDetails);
+  return VEHICLE_BODY_TYPE_MATCHERS[filterId].some((pattern) => pattern.test(sample));
 }
 
 function inferVehicleCategoryForAdmin(item: CatalogItem): EditorVehicleCategoryFilter {
@@ -2114,7 +2183,9 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
     try {
       const raw = window.localStorage.getItem(HOME_QUICK_FILTERS_STORAGE_KEY);
       const parsed = raw ? (JSON.parse(raw) as QuickFilterId[]) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((id): id is QuickFilterId => QUICK_FILTER_IDS.includes(id))
+        : [];
     } catch {
       return [];
     }
@@ -2890,36 +2961,13 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
             return (effectiveSectionVehicleIds[topSectionFilter] ?? []).includes(key);
           });
     if (quickFilters.length === 0) return byTopSection;
-    return byTopSection.filter((item) => {
-      const key = getVehicleKey(item);
-      const vehicleType = inferVehicleType(item);
-      const isManual = String((item.raw as Record<string, unknown>).source ?? "") === "manual";
-      const detailsCategory = normalizeVehicleCategoryValue(config.vehicleDetails[key]?.category);
-      const inferredCategory = inferVehicleCategoryForAdmin(item);
-      const isOtrosCategory =
-        detailsCategory.length > 0 ? detailsCategory === "otros" : inferredCategory === "otros";
-      for (const filter of quickFilters) {
-        if (filter === "livianos" && vehicleType !== "livianos") return false;
-        if (filter === "pesados" && vehicleType !== "pesados") return false;
-        if (filter === "con3d" && !item.view3dUrl) return false;
-        if (
-          filter === "conPrecio" &&
-          !formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)
-        ) {
-          return false;
-        }
-        if (filter === "recientes" && !isRecentAuctionDate(item.auctionDate)) return false;
-        if (filter === "manuales" && !isManual) return false;
-        if (filter === "proximoRemate" && !config.vehicleUpcomingAuctionIds[key]) return false;
-        if (filter === "categoriaOtros" && !isOtrosCategory) return false;
-      }
-      return true;
-    });
+    return byTopSection.filter((item) =>
+      quickFilters.some((filter) => matchesVehicleBodyTypeFilter(item, filter, config.vehicleDetails)),
+    );
   }, [
     homeFilteredItems,
     topSectionFilter,
     quickFilters,
-    config.vehiclePrices,
     config.vehicleDetails,
     config.vehicleUpcomingAuctionIds,
     effectiveSectionVehicleIds,
@@ -8918,7 +8966,7 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                       <div>
                         <div className="mb-1.5 flex items-center justify-between px-1">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                            Etiquetas
+                            Tipo de vehículo
                           </p>
                           {quickFilters.length > 0 ? (
                             <button
@@ -8931,18 +8979,18 @@ export function CatalogHomeClient({ feed, initialConfig }: Props) {
                           ) : null}
                         </div>
                         <div className="flex flex-wrap gap-1.5">
-                          {Object.entries(QUICK_FILTER_LABELS).map(([id, label]) => (
+                          {QUICK_FILTER_IDS.map((id) => (
                             <button
                               key={id}
                               type="button"
-                              onClick={() => toggleQuickFilter(id as QuickFilterId)}
+                              onClick={() => toggleQuickFilter(id)}
                               className={`ui-focus rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
-                                quickFilters.includes(id as QuickFilterId)
+                                quickFilters.includes(id)
                                   ? "border-slate-700 bg-slate-800 text-white"
                                   : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                               }`}
                             >
-                              {label}
+                              {QUICK_FILTER_LABELS[id]}
                             </button>
                           ))}
                         </div>
