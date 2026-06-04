@@ -244,8 +244,12 @@ async function fetchFromTasacionesApi(): Promise<CatalogItem[] | null> {
   );
   endpoint.searchParams.set(
     "incluir_historicos",
-    process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
+    process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "false",
   );
+  const estadoFilter = process.env.CATALOG_SOURCE_API_ESTADO?.trim();
+  if (estadoFilter) {
+    endpoint.searchParams.set("estado", estadoFilter);
+  }
 
   const response = await fetch(endpoint.toString(), {
     method: "GET",

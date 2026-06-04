@@ -32,6 +32,8 @@ import {
   saveCatalogPdfDocument,
   type CatalogPdfSection,
 } from "@/lib/catalog-pdf";
+import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
+import { isCatalogPublishedVehicle } from "@/lib/catalog-publication-rules";
 import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
 import { cloudinaryRawPdfUrlForInlineDisplay, cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
 import {
@@ -2925,10 +2927,7 @@ export function CatalogHomeClient({
     [items, soldVehicleIdsSet],
   );
 
-  const visibleItems = useMemo(
-    () => activeInventoryItems.filter((item) => !mergedHiddenVehicleIds.has(getVehicleKey(item))),
-    [activeInventoryItems, mergedHiddenVehicleIds],
-  );
+  const visibleItems = useMemo(() => getVisibleCatalogItems(feed, config), [feed, config]);
 
   useLayoutEffect(() => {
     if (!isStandaloneDetailPage || !standaloneVehicleKey?.trim()) return;
@@ -2983,6 +2982,7 @@ export function CatalogHomeClient({
 
     for (const item of items) {
       const key = getVehicleKey(item);
+      if (!isCatalogPublishedVehicle(item, config)) continue;
       const estadoRetiro = extractEstadoRetiroForSection(item);
       if (!config.vehicleUpcomingAuctionIds[key] && estadoRetiro === "en_bodega_a_remate") {
         sectionSets["proximos-remates"].add(key);
@@ -2998,7 +2998,7 @@ export function CatalogHomeClient({
       novedades: Array.from(sectionSets.novedades),
       catalogo: Array.from(sectionSets.catalogo),
     };
-  }, [items, config.sectionVehicleIds, config.vehicleUpcomingAuctionIds]);
+  }, [items, config]);
 
   const homeQuickFilteredItems = useMemo(() => {
     const byTopSection =

@@ -1,6 +1,10 @@
 import type { VehicleCommercialEventBadge } from "@/components/catalog-card";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { EditorConfig, EditorVehicleDetails, ManualPublication, UpcomingAuction } from "@/types/editor";
+import {
+  extractEstadoRetiro,
+  isCatalogPublishedVehicle,
+} from "@/lib/catalog-publication-rules";
 
 type CommercialEventType = "remate" | "venta_directa";
 
@@ -231,15 +235,8 @@ function mapManualPublicationToCatalogItem(entry: ManualPublication): CatalogIte
   };
 }
 
-function extractEstadoRetiro(item: CatalogItem): string {
-  const raw = item.raw as Record<string, unknown>;
-  const candidate =
-    raw.estado_retiro ??
-    raw.estadoRetiro ??
-    raw.estado_remate ??
-    raw.estado ??
-    "";
-  return String(candidate).trim().toLowerCase();
+function extractEstadoRetiroFromItem(item: CatalogItem): string {
+  return extractEstadoRetiro(item);
 }
 
 export function buildCommercialEventByVehicleKey(
@@ -275,7 +272,7 @@ export function resolveCommercialEventBadge(
   const key = getVehicleKey(item);
   if (assignedBadges[key]) return assignedBadges[key];
 
-  const estadoRetiro = extractEstadoRetiro(item);
+  const estadoRetiro = extractEstadoRetiroFromItem(item);
   if (estadoRetiro === "en_bodega_a_venta_directa") {
     return { kind: "venta_directa", label: "Venta directa" };
   }
@@ -302,6 +299,7 @@ export function getVisibleCatalogItems(feed: CatalogFeed, config: EditorConfig):
 
   return items.filter((item) => {
     const key = getVehicleKey(item);
-    return !soldSet.has(key) && !mergedHidden.has(key);
+    if (soldSet.has(key) || mergedHidden.has(key)) return false;
+    return isCatalogPublishedVehicle(item, config);
   });
 }
