@@ -1239,6 +1239,16 @@ function parseLotDocumentsJson(json: string | undefined | null): LotDocumentLink
   }
 }
 
+function stripRainworxAttributionHtml(html: string): string {
+  return html
+    .replace(
+      /<p[^>]*>\s*(?:<strong>\s*)?Informaci[oó]n importada desde Rainworx(?:\s*<\/strong>)?\s*(?:·|&middot;|&#183;)?\s*<a[^>]*>\s*Ver ficha original\s*<\/a>\s*<\/p>\s*/gi,
+      "",
+    )
+    .replace(/<p[^>]*>\s*Informaci[oó]n importada desde Rainworx[^<]*<\/p>\s*/gi, "")
+    .trim();
+}
+
 function formatExtendedDescriptionHtml(value?: string | null): string {
   const normalized = String(value ?? "")
     .replace(/\/n/g, "\n")
@@ -1249,7 +1259,7 @@ function formatExtendedDescriptionHtml(value?: string | null): string {
       ? decodeBasicHtmlEntities(normalized)
       : normalized;
   if (/<[a-z][\s\S]*>/i.test(maybeDecoded)) {
-    return sanitizeRichHtml(cloudinaryRawUrlsInlineInHtml(maybeDecoded));
+    return sanitizeRichHtml(cloudinaryRawUrlsInlineInHtml(stripRainworxAttributionHtml(maybeDecoded)));
   }
   return escapeHtml(normalized).replace(/\n/g, "<br />");
 }
@@ -2284,7 +2294,7 @@ export function CatalogHomeClient({
   const [selectedVehicleLightboxIndex, setSelectedVehicleLightboxIndex] = useState<number | null>(null);
   const [selectedVehicleLightboxZoom, setSelectedVehicleLightboxZoom] = useState(1);
   const [detailEditorTab, setDetailEditorTab] = useState<DetailEditorTabId>("general");
-  const [selectedVehicleTab, setSelectedVehicleTab] = useState<VehicleDetailTabId>("general");
+  const [selectedVehicleTab, setSelectedVehicleTab] = useState<VehicleDetailTabId>("descripcion");
   const [revalidating, setRevalidating] = useState(false);
   const [rainworxLotUrl, setRainworxLotUrl] = useState("");
   const [rainworxCatalogId, setRainworxCatalogId] = useState("");
@@ -3611,8 +3621,8 @@ export function CatalogHomeClient({
   const selectedVehicleTabs = useMemo(
     () => {
       const tabs: Array<{ id: VehicleDetailTabId; label: string }> = [
-        { id: "general", label: "Información del vehículo" },
         { id: "descripcion", label: "Descripción" },
+        { id: "general", label: "Información del vehículo" },
         { id: "tecnica", label: "Detalles técnicos" },
       ];
       if (selectedVehicleGalleryImages.length > 0) {
@@ -3678,7 +3688,7 @@ export function CatalogHomeClient({
 
   useEffect(() => {
     if (selectedVehicle) {
-      setSelectedVehicleTab("general");
+      setSelectedVehicleTab("descripcion");
       setSelectedVehicleLightboxIndex(null);
       setSelectedVehicleLightboxZoom(1);
     }

@@ -193,9 +193,6 @@ function inferCategoryFromRainworx(tipoVehiculo?: string, tipo?: string): string
 
 export function buildRainworxExtendedDescription(scraped: RainworxLotScraped): string {
   const parts: string[] = [];
-  parts.push(
-    `<p><strong>Información importada desde Rainworx</strong> · <a href="${escapeHtml(scraped.sourceUrl)}" target="_blank" rel="noopener noreferrer">Ver ficha original</a></p>`,
-  );
   if (scraped.descripcionHtml?.trim()) {
     parts.push(scraped.descripcionHtml.trim());
   }
