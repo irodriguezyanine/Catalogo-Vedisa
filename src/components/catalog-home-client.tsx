@@ -9622,7 +9622,14 @@ export function CatalogHomeClient({
               ? "relative z-10 min-h-screen"
               : "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm md:p-5"
           }
-          onClick={isStandaloneDetailPage ? undefined : navigateBackFromVehicleDetail}
+          onClick={
+            isStandaloneDetailPage
+              ? undefined
+              : (event) => {
+                  if (event.target !== event.currentTarget) return;
+                  navigateBackFromVehicleDetail();
+                }
+          }
         >
           {isStandaloneDetailPage ? (
             <section className="sticky top-0 z-30 border-b border-cyan-100/80 bg-white/88 shadow-[0_8px_24px_rgba(87,141,167,0.08)] backdrop-blur-xl">
@@ -10037,7 +10044,10 @@ export function CatalogHomeClient({
                 isStandaloneDetailPage ? "px-4 sm:px-6 lg:px-8" : "px-3 md:px-6"
               }`}
             >
-              <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
+              <div
+                className="pointer-events-auto flex flex-wrap items-center justify-end gap-2"
+                onClick={(event) => event.stopPropagation()}
+              >
               <button
                 type="button"
                 onClick={openOfferModal}
