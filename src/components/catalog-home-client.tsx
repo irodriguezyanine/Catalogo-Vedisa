@@ -9654,8 +9654,8 @@ export function CatalogHomeClient({
             aria-label={`Detalle de ${selectedVehicle.title}`}
             className={
               isStandaloneDetailPage
-                ? "mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8"
-                : "max-h-[96vh] w-full max-w-7xl overflow-auto rounded-2xl border border-cyan-100 bg-gradient-to-br from-white via-white to-cyan-50/40 p-3 shadow-2xl md:rounded-3xl md:p-6"
+                ? "mx-auto w-full max-w-7xl px-4 py-6 pb-28 sm:px-6 lg:px-8"
+                : "max-h-[96vh] w-full max-w-7xl overflow-auto rounded-2xl border border-cyan-100 bg-gradient-to-br from-white via-white to-cyan-50/40 p-3 pb-28 shadow-2xl md:rounded-3xl md:p-6 md:pb-28"
             }
             onClick={(event) => event.stopPropagation()}
           >
@@ -9675,69 +9675,6 @@ export function CatalogHomeClient({
                       </span>
                     ) : null}
                   </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 max-md:w-full">
-                  <button
-                    type="button"
-                    onClick={openOfferModal}
-                    disabled={selectedVehicleReferencePriceAmount <= 0}
-                    className="ui-focus inline-flex h-9 items-center justify-center rounded-full border border-cyan-300 bg-cyan-50 px-3 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    aria-label="Enviar mi precio"
-                    title={
-                      selectedVehicleReferencePriceAmount > 0
-                        ? "Enviar mi precio"
-                        : "No hay precio referencial disponible"
-                    }
-                  >
-                    Enviar mi precio
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void shareSelectedVehicle();
-                    }}
-                    className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-50"
-                    aria-label="Compartir"
-                    title="Compartir"
-                  >
-                    <ShareIcon className="h-4 w-4" />
-                  </button>
-                  <a
-                    href={selectedVehicleWhatsappUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => trackEvent("whatsapp_click_modal", { itemKey: selectedVehicleKey })}
-                    className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#25D366] text-white transition hover:brightness-95"
-                    aria-label={selectedVehiclePrimaryCtaLabel}
-                    title={selectedVehiclePrimaryCtaLabel}
-                  >
-                    <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="currentColor" aria-hidden="true">
-                      <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.46 1.33 4.96L2 22l5.3-1.38a9.83 9.83 0 0 0 4.74 1.21h.01c5.45 0 9.87-4.42 9.87-9.88A9.87 9.87 0 0 0 12.04 2Zm0 18.03h-.01a8.13 8.13 0 0 1-4.14-1.14l-.3-.18-3.15.82.84-3.07-.2-.31a8.13 8.13 0 0 1-1.25-4.3c0-4.51 3.69-8.2 8.22-8.2 4.53 0 8.21 3.68 8.21 8.2 0 4.53-3.69 8.2-8.22 8.2Zm4.49-6.19c-.25-.12-1.49-.73-1.72-.81-.23-.09-.4-.12-.57.12-.17.25-.65.81-.8.97-.15.17-.29.19-.54.06-.25-.12-1.04-.38-1.99-1.22-.74-.66-1.24-1.48-1.39-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.44.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.44-.06-.12-.57-1.37-.78-1.88-.21-.49-.42-.42-.57-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.09 0 1.23.9 2.42 1.03 2.58.12.17 1.77 2.71 4.29 3.8.6.26 1.07.42 1.43.54.6.19 1.15.16 1.59.1.49-.07 1.49-.61 1.7-1.2.21-.59.21-1.1.15-1.2-.06-.1-.23-.16-.48-.28Z" />
-                    </svg>
-                  </a>
-                  {isStandaloneDetailPage ? (
-                    <Link
-                      href={standaloneBackHrefProp}
-                      className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 text-slate-600 transition hover:bg-slate-50"
-                      aria-label="Volver a vehículos disponibles"
-                      title="Volver a vehículos disponibles"
-                    >
-                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-                        <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </Link>
-                  ) : (
-                  <button
-                    className="ui-focus hidden h-9 w-9 items-center justify-center rounded-full border border-slate-300 text-slate-600 transition hover:bg-slate-50 md:inline-flex"
-                    onClick={navigateBackFromVehicleDetail}
-                    aria-label="Volver a resultados"
-                    title="Volver a resultados"
-                  >
-                    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-                      <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -9981,27 +9918,6 @@ export function CatalogHomeClient({
                 </div>
               </div>
             ) : null}
-            <div className="sticky bottom-0 z-20 mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 p-2 shadow md:hidden">
-              <a
-                href={selectedVehicleWhatsappUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => trackEvent("whatsapp_click_modal_mobile", { itemKey: selectedVehicleKey })}
-                className="ui-focus inline-flex flex-1 items-center justify-center rounded-lg bg-[#25D366] px-3 py-2 text-xs font-semibold text-white"
-              >
-                WhatsApp
-              </a>
-              <button
-                type="button"
-                onClick={() => {
-                  void shareSelectedVehicle();
-                }}
-                className="ui-focus inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
-              >
-                <ShareIcon className="h-3.5 w-3.5" />
-                Compartir
-              </button>
-            </div>
             <CatalogVehicleHighlightStrip item={selectedVehicle} override={selectedVehicleOverride} />
             <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="grid md:grid-cols-2">
@@ -10100,6 +10016,75 @@ export function CatalogHomeClient({
                     </button>
                   ))}
               </div>
+            </div>
+          </div>
+          <div
+            className="pointer-events-none fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-[76] flex justify-end md:inset-x-auto md:right-5 md:bottom-5"
+            aria-label="Acciones del vehículo"
+          >
+            <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200/90 bg-white/95 p-2 shadow-[0_10px_40px_rgba(15,23,42,0.14)] backdrop-blur-md">
+              <button
+                type="button"
+                onClick={openOfferModal}
+                disabled={selectedVehicleReferencePriceAmount <= 0}
+                className="ui-focus inline-flex h-10 items-center justify-center rounded-full border border-cyan-300 bg-cyan-50 px-4 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Enviar mi precio"
+                title={
+                  selectedVehicleReferencePriceAmount > 0
+                    ? "Enviar mi precio"
+                    : "No hay precio referencial disponible"
+                }
+              >
+                Enviar mi precio
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void shareSelectedVehicle();
+                }}
+                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-50"
+                aria-label="Compartir"
+                title="Compartir"
+              >
+                <ShareIcon className="h-4 w-4" />
+              </button>
+              <a
+                href={selectedVehicleWhatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => trackEvent("whatsapp_click_modal", { itemKey: selectedVehicleKey })}
+                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white transition hover:brightness-95"
+                aria-label={selectedVehiclePrimaryCtaLabel}
+                title={selectedVehiclePrimaryCtaLabel}
+              >
+                <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="currentColor" aria-hidden="true">
+                  <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.46 1.33 4.96L2 22l5.3-1.38a9.83 9.83 0 0 0 4.74 1.21h.01c5.45 0 9.87-4.42 9.87-9.88A9.87 9.87 0 0 0 12.04 2Zm0 18.03h-.01a8.13 8.13 0 0 1-4.14-1.14l-.3-.18-3.15.82.84-3.07-.2-.31a8.13 8.13 0 0 1-1.25-4.3c0-4.51 3.69-8.2 8.22-8.2 4.53 0 8.21 3.68 8.21 8.2 0 4.53-3.69 8.2-8.22 8.2Zm4.49-6.19c-.25-.12-1.49-.73-1.72-.81-.23-.09-.4-.12-.57.12-.17.25-.65.81-.8.97-.15.17-.29.19-.54.06-.25-.12-1.04-.38-1.99-1.22-.74-.66-1.24-1.48-1.39-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.44.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.44-.06-.12-.57-1.37-.78-1.88-.21-.49-.42-.42-.57-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.09 0 1.23.9 2.42 1.03 2.58.12.17 1.77 2.71 4.29 3.8.6.26 1.07.42 1.43.54.6.19 1.15.16 1.59.1.49-.07 1.49-.61 1.7-1.2.21-.59.21-1.1.15-1.2-.06-.1-.23-.16-.48-.28Z" />
+                </svg>
+              </a>
+              {isStandaloneDetailPage ? (
+                <Link
+                  href={standaloneBackHrefProp}
+                  className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50"
+                  aria-label="Volver a vehículos disponibles"
+                  title="Volver a vehículos disponibles"
+                >
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                    <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="ui-focus hidden h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 md:inline-flex"
+                  onClick={navigateBackFromVehicleDetail}
+                  aria-label="Volver a resultados"
+                  title="Volver a resultados"
+                >
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                    <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -10881,7 +10866,7 @@ export function CatalogHomeClient({
           </div>
         </div>
       ) : null}
-      {showPublicHome ? (
+      {showPublicHome && !selectedVehicle ? (
         <a
           href={WHATSAPP_CTA_URL}
           target="_blank"
