@@ -10029,15 +10029,20 @@ export function CatalogHomeClient({
             </div>
           </div>
           <div
-            className="pointer-events-none fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-[76] flex justify-end md:inset-x-auto md:right-5 md:bottom-5"
+            className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-[76] md:bottom-5"
             aria-label="Acciones del vehículo"
           >
-            <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200/90 bg-white/95 p-2 shadow-[0_10px_40px_rgba(15,23,42,0.14)] backdrop-blur-md">
+            <div
+              className={`mx-auto flex w-full max-w-7xl justify-end ${
+                isStandaloneDetailPage ? "px-4 sm:px-6 lg:px-8" : "px-3 md:px-6"
+              }`}
+            >
+              <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={openOfferModal}
                 disabled={selectedVehicleReferencePriceAmount <= 0}
-                className="ui-focus inline-flex h-10 items-center justify-center rounded-full border border-cyan-300 bg-cyan-50 px-4 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-focus inline-flex h-10 items-center justify-center rounded-full border border-cyan-300 bg-cyan-50 px-4 text-xs font-semibold text-cyan-700 shadow-md transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Enviar mi precio"
                 title={
                   selectedVehicleReferencePriceAmount > 0
@@ -10052,7 +10057,7 @@ export function CatalogHomeClient({
                 onClick={() => {
                   void shareSelectedVehicle();
                 }}
-                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-50"
+                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 shadow-md transition hover:bg-slate-50"
                 aria-label="Compartir"
                 title="Compartir"
               >
@@ -10063,7 +10068,7 @@ export function CatalogHomeClient({
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => trackEvent("whatsapp_click_modal", { itemKey: selectedVehicleKey })}
-                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white transition hover:brightness-95"
+                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white shadow-md transition hover:brightness-95"
                 aria-label={selectedVehiclePrimaryCtaLabel}
                 title={selectedVehiclePrimaryCtaLabel}
               >
@@ -10074,7 +10079,7 @@ export function CatalogHomeClient({
               {isStandaloneDetailPage ? (
                 <Link
                   href={standaloneBackHrefProp}
-                  className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50"
+                  className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md transition hover:bg-slate-50"
                   aria-label="Volver a vehículos disponibles"
                   title="Volver a vehículos disponibles"
                 >
@@ -10085,7 +10090,7 @@ export function CatalogHomeClient({
               ) : (
                 <button
                   type="button"
-                  className="ui-focus hidden h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 md:inline-flex"
+                  className="ui-focus hidden h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md transition hover:bg-slate-50 md:inline-flex"
                   onClick={navigateBackFromVehicleDetail}
                   aria-label="Volver a resultados"
                   title="Volver a resultados"
@@ -10095,6 +10100,7 @@ export function CatalogHomeClient({
                   </svg>
                 </button>
               )}
+              </div>
             </div>
           </div>
         </div>
