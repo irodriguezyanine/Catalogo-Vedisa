@@ -15,6 +15,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CatalogCard, type VehicleCommercialEventBadge } from "@/components/catalog-card";
+import { CatalogVehicleHighlightStrip } from "@/components/catalog-vehicle-highlight-strip";
 import { ShareIcon } from "@/components/share-icon";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { OfferRecord } from "@/types/offers";
@@ -9783,7 +9784,7 @@ export function CatalogHomeClient({
                   </div>
                 ) : null}
               </div>
-              <div className={`rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm ${isStandaloneDetailPage ? "min-h-[min(72vh,760px)]" : "h-[420px] overflow-y-auto"}`}>
+              <div className={`flex flex-col rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm ${isStandaloneDetailPage ? "min-h-[min(72vh,760px)]" : "h-[420px]"}`}>
                 <h4 className="mb-3 text-base font-semibold text-slate-900">Resumen del vehículo</h4>
                 <div className="mb-3 flex flex-wrap gap-2">
                   {selectedVehicleTabs.map((tab) => (
@@ -9801,6 +9802,7 @@ export function CatalogHomeClient({
                     </button>
                   ))}
                 </div>
+                <div className="min-h-0 flex-1 overflow-y-auto">
                 {selectedVehicleTab === "fotos" ? (
                   selectedVehicleGalleryImages.length === 0 ? (
                     <p className="rounded-md border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">
@@ -9862,53 +9864,6 @@ export function CatalogHomeClient({
                     ))}
                   </dl>
                 )}
-                {selectedVehicleTab === "general" ? (
-                  <>
-                    <div className="mt-2 rounded-md border border-cyan-100 bg-cyan-50/60 p-3">
-                      <p className="text-xs uppercase tracking-wide text-cyan-700">Precio referencial</p>
-                      {selectedVehiclePromoMeta.promoEnabled &&
-                      selectedVehiclePromoMeta.originalPriceLabel &&
-                      selectedVehiclePriceLabel ? (
-                        <p className="mt-1 text-sm font-semibold text-slate-400 line-through">
-                          {selectedVehiclePromoMeta.originalPriceLabel}
-                        </p>
-                      ) : null}
-                      <p className={`mt-1 text-lg font-bold ${selectedVehiclePromoMeta.promoEnabled ? "text-rose-700" : "text-slate-900"}`}>
-                        {selectedVehiclePriceLabel ?? "No informado"}
-                      </p>
-                      {selectedVehiclePromoMeta.promoEnabled ? (
-                        <p className="mt-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-                          Precio promocional
-                        </p>
-                      ) : null}
-                      <p className="mt-1 text-xs text-slate-600">
-                        Valor + gastos de impuesto y transferencia.
-                      </p>
-                    </div>
-                    {selectedVehicleLotDocuments.length > 0 ? (
-                      <div className="mt-2 rounded-md border border-slate-200 bg-white p-3">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Documentación</p>
-                        <ul className="mt-2 list-none space-y-2 p-0">
-                          {selectedVehicleLotDocuments.map((doc, idx) => (
-                            <li key={`lot-doc-${doc.url}-${idx}`}>
-                              <a
-                                href={cloudinaryRawPdfUrlForInlineDisplay(doc.url)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 underline decoration-cyan-400 underline-offset-2 hover:text-cyan-800"
-                              >
-                                <span className="inline-block rounded bg-red-50 px-1 py-0.5 text-[10px] font-bold text-red-700">
-                                  PDF
-                                </span>
-                                {doc.label}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
                 {selectedVehicleTab === "descripcion" ? (
                   <div className="mt-2 rounded-md border border-slate-200 bg-white p-3">
                     <p className="text-xs uppercase tracking-wide text-slate-500">Descripción ampliada</p>
@@ -9920,6 +9875,52 @@ export function CatalogHomeClient({
                     />
                   </div>
                 ) : null}
+                </div>
+                <div className="mt-3 shrink-0 space-y-3">
+                  <div className="rounded-md border border-cyan-100 bg-cyan-50/60 p-3 shadow-sm">
+                    <p className="text-xs uppercase tracking-wide text-cyan-700">Precio referencial</p>
+                    {selectedVehiclePromoMeta.promoEnabled &&
+                    selectedVehiclePromoMeta.originalPriceLabel &&
+                    selectedVehiclePriceLabel ? (
+                      <p className="mt-1 text-sm font-semibold text-slate-400 line-through">
+                        {selectedVehiclePromoMeta.originalPriceLabel}
+                      </p>
+                    ) : null}
+                    <p className={`mt-1 text-lg font-bold ${selectedVehiclePromoMeta.promoEnabled ? "text-rose-700" : "text-slate-900"}`}>
+                      {selectedVehiclePriceLabel ?? "No informado"}
+                    </p>
+                    {selectedVehiclePromoMeta.promoEnabled ? (
+                      <p className="mt-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                        Precio promocional
+                      </p>
+                    ) : null}
+                    <p className="mt-1 text-xs text-slate-600">
+                      Valor + gastos de impuesto y transferencia.
+                    </p>
+                  </div>
+                {selectedVehicleLotDocuments.length > 0 ? (
+                  <div className="rounded-md border border-slate-200 bg-white p-3 shadow-sm">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Documentación</p>
+                    <ul className="mt-2 list-none space-y-2 p-0">
+                      {selectedVehicleLotDocuments.map((doc, idx) => (
+                        <li key={`lot-doc-${doc.url}-${idx}`}>
+                          <a
+                            href={cloudinaryRawPdfUrlForInlineDisplay(doc.url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 underline decoration-cyan-400 underline-offset-2 hover:text-cyan-800"
+                          >
+                            <span className="inline-block rounded bg-red-50 px-1 py-0.5 text-[10px] font-bold text-red-700">
+                              PDF
+                            </span>
+                            {doc.label}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                </div>
               </div>
             </div>
             {selectedVehicleLightboxImage ? (
@@ -10046,6 +10047,7 @@ export function CatalogHomeClient({
                 Compartir
               </button>
             </div>
+            <CatalogVehicleHighlightStrip item={selectedVehicle} override={selectedVehicleOverride} />
             <div className="mt-4">
               <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Vehículos similares</h4>
               <div className="grid gap-3 md:grid-cols-3">
