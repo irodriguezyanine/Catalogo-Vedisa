@@ -1,7 +1,6 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
-import { getEditorConfig } from "@/lib/editor-config";
-import { syncEditorConfigToSharedTables } from "@/lib/catalog-shared-sync";
+import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 
 export async function POST() {
   const cookieStore = await cookies();
@@ -11,15 +10,20 @@ export async function POST() {
     return Response.json({ ok: false, error: "No autorizado." }, { status: 401 });
   }
 
-  const loaded = await getEditorConfig();
   try {
-    const sync = await syncEditorConfigToSharedTables(loaded.config);
-    return Response.json({ ok: true, sync, syncOk: true, persisted: loaded.persisted });
+    const result = await reconcileSharedPlatforms(session.email ?? "admin@catalogo");
+    return Response.json({
+      ok: true,
+      sync: result.sync,
+      syncOk: true,
+      persisted: result.persisted,
+      config: result.mergedConfig,
+    });
   } catch (error) {
     const message =
       error instanceof Error
         ? error.message
         : "No se pudo reintentar la sincronización compartida.";
-    return Response.json({ ok: false, error: message, syncOk: false, persisted: loaded.persisted }, { status: 500 });
+    return Response.json({ ok: false, error: message, syncOk: false }, { status: 500 });
   }
 }

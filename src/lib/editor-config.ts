@@ -159,6 +159,13 @@ export async function getEditorConfig(): Promise<EditorConfigLoadResult> {
   };
 }
 
+export async function getMergedEditorConfig(): Promise<EditorConfigLoadResult> {
+  const { mergeSharedEventsIntoConfig } = await import("@/lib/catalog-shared-merge");
+  const loaded = await getEditorConfig();
+  const merged = await mergeSharedEventsIntoConfig(loaded.config);
+  return { config: merged, persisted: loaded.persisted };
+}
+
 export async function saveEditorConfig(
   config: EditorConfig,
   updatedBy: string,

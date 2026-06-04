@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { syncEditorConfigToSharedTables } from "@/lib/catalog-shared-sync";
+import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import {
   formatClpString,
   mergeEditorVehicleDetails,
@@ -208,7 +209,8 @@ export async function POST(request: Request) {
     }
 
     const normalizedConfig = saved.normalizedConfig ?? config;
-    const sync = await syncEditorConfigToSharedTables(normalizedConfig);
+    const mergedConfig = await mergeSharedEventsIntoConfig(normalizedConfig);
+    const sync = await syncEditorConfigToSharedTables(mergedConfig);
 
     return Response.json({
       ok: true,
