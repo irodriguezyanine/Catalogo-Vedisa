@@ -9748,7 +9748,7 @@ export function CatalogHomeClient({
                     <iframe
                       src={selectedVehicle.view3dUrl}
                       title={`Visor 3D ${selectedVehicle.title}`}
-                      className={isStandaloneDetailPage ? "h-[min(72vh,760px)] w-full border-0" : "h-[420px] w-full border-0"}
+                      className={isStandaloneDetailPage ? "h-[min(72vh,760px)] w-full border-0" : "h-[min(52vh,560px)] w-full border-0"}
                       allow="fullscreen; autoplay"
                     />
                   ) : (
@@ -9756,7 +9756,7 @@ export function CatalogHomeClient({
                     <img
                       src={selectedVehicleMainImage}
                       alt={selectedVehicle.title}
-                      className={isStandaloneDetailPage ? "h-[min(72vh,760px)] w-full object-cover" : "h-[420px] w-full object-cover"}
+                      className={isStandaloneDetailPage ? "h-[min(72vh,760px)] w-full object-cover" : "h-[min(52vh,560px)] w-full object-cover"}
                     />
                   )}
                 </div>
@@ -9784,7 +9784,7 @@ export function CatalogHomeClient({
                   </div>
                 ) : null}
               </div>
-              <div className={`flex flex-col rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm ${isStandaloneDetailPage ? "min-h-[min(72vh,760px)]" : "h-[420px]"}`}>
+              <div className={`flex flex-col rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm ${isStandaloneDetailPage ? "min-h-[min(72vh,760px)]" : "h-[min(52vh,560px)]"}`}>
                 <h4 className="mb-3 text-base font-semibold text-slate-900">Resumen del vehículo</h4>
                 <div className="mb-3 flex flex-wrap gap-2">
                   {selectedVehicleTabs.map((tab) => (
@@ -9819,7 +9819,7 @@ export function CatalogHomeClient({
                         <img
                           src={selectedVehicleMainImage}
                           alt={`Foto principal de ${selectedVehicle.title}`}
-                          className="h-52 w-full object-cover"
+                          className="h-64 w-full object-cover"
                         />
                       </button>
                       <div className="grid grid-cols-3 gap-2">
@@ -9841,7 +9841,7 @@ export function CatalogHomeClient({
                             <img
                               src={imageUrl}
                               alt={`${selectedVehicle.title} foto ${index + 1}`}
-                              className="h-20 w-full object-cover"
+                              className="h-24 w-full object-cover"
                             />
                           </button>
                         ))}
@@ -9873,51 +9873,6 @@ export function CatalogHomeClient({
                         __html: formatExtendedDescriptionHtml(selectedVehicleExpandedDescription),
                       }}
                     />
-                  </div>
-                ) : null}
-                </div>
-                <div className="mt-3 shrink-0 space-y-3">
-                  <div className="rounded-md border border-cyan-100 bg-cyan-50/60 p-3 shadow-sm">
-                    <p className="text-xs uppercase tracking-wide text-cyan-700">Precio referencial</p>
-                    {selectedVehiclePromoMeta.promoEnabled &&
-                    selectedVehiclePromoMeta.originalPriceLabel &&
-                    selectedVehiclePriceLabel ? (
-                      <p className="mt-1 text-sm font-semibold text-slate-400 line-through">
-                        {selectedVehiclePromoMeta.originalPriceLabel}
-                      </p>
-                    ) : null}
-                    <p className={`mt-1 text-lg font-bold ${selectedVehiclePromoMeta.promoEnabled ? "text-rose-700" : "text-slate-900"}`}>
-                      {selectedVehiclePriceLabel ?? "No informado"}
-                    </p>
-                    {selectedVehiclePromoMeta.promoEnabled ? (
-                      <p className="mt-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-                        Precio promocional
-                      </p>
-                    ) : null}
-                    <p className="mt-1 text-xs text-slate-600">
-                      Valor + gastos de impuesto y transferencia.
-                    </p>
-                  </div>
-                {selectedVehicleLotDocuments.length > 0 ? (
-                  <div className="rounded-md border border-slate-200 bg-white p-3 shadow-sm">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">Documentación</p>
-                    <ul className="mt-2 list-none space-y-2 p-0">
-                      {selectedVehicleLotDocuments.map((doc, idx) => (
-                        <li key={`lot-doc-${doc.url}-${idx}`}>
-                          <a
-                            href={cloudinaryRawPdfUrlForInlineDisplay(doc.url)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 underline decoration-cyan-400 underline-offset-2 hover:text-cyan-800"
-                          >
-                            <span className="inline-block rounded bg-red-50 px-1 py-0.5 text-[10px] font-bold text-red-700">
-                              PDF
-                            </span>
-                            {doc.label}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
                   </div>
                 ) : null}
                 </div>
@@ -10048,6 +10003,57 @@ export function CatalogHomeClient({
               </button>
             </div>
             <CatalogVehicleHighlightStrip item={selectedVehicle} override={selectedVehicleOverride} />
+            <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="grid md:grid-cols-2">
+                <div className="border-b border-slate-200 bg-gradient-to-br from-cyan-50/90 via-cyan-50/40 to-white p-5 md:border-b-0 md:border-r">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Precio referencial</p>
+                  {selectedVehiclePromoMeta.promoEnabled &&
+                  selectedVehiclePromoMeta.originalPriceLabel &&
+                  selectedVehiclePriceLabel ? (
+                    <p className="mt-2 text-base font-semibold text-slate-400 line-through">
+                      {selectedVehiclePromoMeta.originalPriceLabel}
+                    </p>
+                  ) : null}
+                  <p className={`mt-1 text-3xl font-bold tracking-tight ${selectedVehiclePromoMeta.promoEnabled ? "text-rose-700" : "text-slate-900"}`}>
+                    {selectedVehiclePriceLabel ?? "No informado"}
+                  </p>
+                  {selectedVehiclePromoMeta.promoEnabled ? (
+                    <p className="mt-2 inline-flex rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+                      Precio promocional
+                    </p>
+                  ) : null}
+                  <p className="mt-3 text-sm text-slate-600">
+                    Valor + gastos de impuesto y transferencia.
+                  </p>
+                </div>
+                <div className="p-5">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documentación</p>
+                  {selectedVehicleLotDocuments.length > 0 ? (
+                    <ul className="mt-3 list-none space-y-2.5 p-0">
+                      {selectedVehicleLotDocuments.map((doc, idx) => (
+                        <li key={`lot-doc-footer-${doc.url}-${idx}`}>
+                          <a
+                            href={cloudinaryRawPdfUrlForInlineDisplay(doc.url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm font-semibold text-cyan-700 transition hover:border-cyan-200 hover:bg-cyan-50/60 hover:text-cyan-800"
+                          >
+                            <span className="mt-0.5 inline-block shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                              PDF
+                            </span>
+                            <span className="break-all">{doc.label}</span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-sm text-slate-500">
+                      No hay documentación disponible para este vehículo.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
             <div className="mt-4">
               <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Vehículos similares</h4>
               <div className="grid gap-3 md:grid-cols-3">
