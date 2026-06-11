@@ -240,3 +240,161 @@ export async function fetchAutoredV2VehicleByPatent(
 export function invalidateAutoredTokenCache(): void {
   tokenCache = null;
 }
+
+function parseKmValue(value?: string | number | null): number | null {
+  if (value == null) return null;
+  const digits = String(value).replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const km = Number.parseInt(digits, 10);
+  return Number.isFinite(km) && km >= 0 ? km : null;
+}
+
+function mapAutoredTransmissionId(transmission?: string): number | undefined {
+  const sample = (transmission ?? "").toUpperCase();
+  if (!sample) return undefined;
+  if (/\bAT\b|\bAUT\b|AUTOMAT|CVT|DCT|DSG/.test(sample)) return 1;
+  if (/\bMT\b|\bMANUAL\b|MECAN/.test(sample)) return 0;
+  return undefined;
+}
+
+function mapAutoredFuelTypeId(fuel?: string): number | undefined {
+  const sample = (fuel ?? "").toUpperCase();
+  if (!sample) return undefined;
+  if (/DIESEL|HDI/.test(sample)) return 1;
+  if (/HIBRID|HYBRID|PHEV|MHEV/.test(sample)) return 2;
+  if (/ELECTRIC|\bEV\b/.test(sample)) return 3;
+  if (/GASOLINA|BENCINA|GASOL|BENC/.test(sample)) return 0;
+  return undefined;
+}
+
+function mapAutoredTractionId(traction?: string): number | undefined {
+  const sample = (traction ?? "").toUpperCase();
+  if (!sample) return undefined;
+  if (/4X4|4WD|AWD|CUATRO/.test(sample)) return 1;
+  if (/4X2|2WD|DELANTERA|TRASERA/.test(sample)) return 0;
+  return undefined;
+}
+
+function extractPublicationAverageFromPayload(payload: Record<string, unknown>): number | null {
+  const kpis = payload.kpis;
+  if (kpis && typeof kpis === "object" && !Array.isArray(kpis)) {
+    const record = kpis as Record<string, unknown>;
+    const candidates = [
+      record.average_price,
+      record.avg_price,
+      record.mean_price,
+      record.price_avg,
+      record.averagePrice,
+      record.avgPrice,
+      record.priceAverage,
+      record.promedio,
+    ];
+    for (const candidate of candidates) {
+      const amount = Number(candidate);
+      if (Number.isFinite(amount) && amount > 0) return Math.round(amount);
+    }
+  }
+
+  const selected = payload.selected;
+  if (Array.isArray(selected) && selected.length > 0) {
+    const prices = selected
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const price = Number((row as Record<string, unknown>).price);
+        return Number.isFinite(price) && price > 0 ? price : null;
+      })
+      .filter((price): price is number => price != null);
+    if (prices.length > 0) {
+      const total = prices.reduce((sum, price) => sum + price, 0);
+      return Math.round(total / prices.length);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Consulta el precio promedio de publicación en Autored por modelo, año, versión y km.
+ */
+export async function fetchAutoredPublicationAveragePrice(
+  autored: Record<string, unknown>,
+  kilometraje?: string | number | null,
+): Promise<number | null> {
+  const modelId = Number(autored.model_id);
+  const year = Number(autored.year ?? autored.ano ?? autored.anio);
+  if (!Number.isFinite(modelId) || modelId <= 0 || !Number.isFinite(year) || year <= 0) {
+    return null;
+  }
+
+  const creds = getAutoredCredentials();
+  if (!creds) return null;
+
+  const accessToken = await fetchAutoredAccessToken(creds);
+  if (!accessToken) return null;
+
+  const url = new URL(`${creds.baseUrl}/prices/publication-prices`);
+  url.searchParams.set("model_id", String(modelId));
+  url.searchParams.set("year", String(year));
+  url.searchParams.set("only_recent_publications", "true");
+  url.searchParams.set("row_limit_only", "true");
+
+  const trimName = String(
+    autored.version_name ?? autored.version ?? autored.original_extracted_version ?? "",
+  ).trim();
+  if (trimName) url.searchParams.set("trim_name", trimName);
+
+  const cylinderCapacity = Number(autored.cylinder_capacity ?? autored.cilindrada ?? autored.cc);
+  if (Number.isFinite(cylinderCapacity) && cylinderCapacity > 0) {
+    url.searchParams.set("cylinder_capacity", String(Math.round(cylinderCapacity)));
+  }
+
+  const transmissionId = mapAutoredTransmissionId(
+    String(autored.transmissionName ?? autored.transmission ?? autored.transmision ?? ""),
+  );
+  if (transmissionId != null) url.searchParams.set("transmission_id", String(transmissionId));
+
+  const fuelTypeId = mapAutoredFuelTypeId(
+    String(autored.fuelTypeName ?? autored.fuel_type ?? autored.combustible ?? ""),
+  );
+  if (fuelTypeId != null) url.searchParams.set("fuel_type_id", String(fuelTypeId));
+
+  const tractionId = mapAutoredTractionId(
+    String(autored.tractionName ?? autored.traction ?? autored.traccion ?? ""),
+  );
+  if (tractionId != null) url.searchParams.set("traction_id", String(tractionId));
+
+  const km = parseKmValue(kilometraje);
+  if (km != null) {
+    url.searchParams.set("km_min", String(Math.max(0, km - 20_000)));
+    url.searchParams.set("km_max", String(km + 20_000));
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (response.status === 401) {
+    const retryToken = await fetchAutoredAccessToken(creds, true);
+    if (!retryToken) return null;
+    const retry = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${retryToken}`, Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!retry.ok) return null;
+    const retryPayload = (await retry.json()) as Record<string, unknown>;
+    return extractPublicationAverageFromPayload(retryPayload);
+  }
+
+  if (!response.ok) {
+    console.warn(`[autored] publication-prices HTTP ${response.status}`);
+    return null;
+  }
+
+  const payload = (await response.json()) as Record<string, unknown>;
+  return extractPublicationAverageFromPayload(payload);
+}

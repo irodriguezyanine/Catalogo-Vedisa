@@ -14,7 +14,8 @@ import {
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
 import { sleepMs } from "@/lib/glo3d-api";
-import { isAutoredApiConfigured } from "@/lib/autored-api";
+import { fetchAutoredPublicationAveragePrice, isAutoredApiConfigured } from "@/lib/autored-api";
+import { buildDefaultVentaDirectaExtendedDescription } from "@/lib/venta-directa-description";
 import {
   autoredRecordHasIdentity,
   looksLikeChileanPatent,
@@ -674,6 +675,44 @@ function buildVehicleDetailsFromSources(
       pickString(row, ["categoria", "tipo_vehiculo"]) ??
       pickString(glo3dFields, ["tipo_de_vehiculo", "tipo_vehiculo"]) ??
       "vehiculo_liviano",
+    extendedDescription: pickString(row, ["descripcion_ampliada", "observaciones"]) ?? undefined,
+    originalPrice: resolvePublicationPriceFromRow(row),
+  };
+}
+
+function resolvePublicationPriceFromRow(row: Record<string, unknown>): string | undefined {
+  const raw = pickString(row, [
+    "precio_promedio_publicacion",
+    "valor_minimo",
+    "precio_referencia",
+    "precio_normal",
+    "original_price",
+  ]);
+  if (!raw) return undefined;
+  const digits = raw.replace(/[^\d]/g, "");
+  return digits || undefined;
+}
+
+async function applyDefaultVentaDirectaForNewVehicle(
+  payload: Record<string, unknown>,
+  autored: Record<string, unknown> | null,
+): Promise<Record<string, unknown>> {
+  const km = pickString(payload, ["kilometraje", "km", "odometro", "mileage"]);
+  const averagePrice = autored
+    ? await fetchAutoredPublicationAveragePrice(autored, km)
+    : null;
+  const extendedDescription = buildDefaultVentaDirectaExtendedDescription(averagePrice);
+  return {
+    ...payload,
+    descripcion_ampliada: extendedDescription,
+    observaciones: extendedDescription,
+    ...(averagePrice
+      ? {
+          valor_minimo: averagePrice,
+          precio_referencia: averagePrice,
+          precio_promedio_publicacion: averagePrice,
+        }
+      : {}),
   };
 }
 
@@ -956,7 +995,7 @@ export async function importVehicleByPatent(
 
   const autoredSynced = autoredRecordHasIdentity(autored, patente);
 
-  const payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
+  let payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
   payload.patente = patente;
   payload.PPU = patente;
   payload.stock_number = patente;
@@ -1016,6 +1055,10 @@ export async function importVehicleByPatent(
     throw new Error(
       `No se encontró ${requestedPatente} en Glo3D ni datos útiles en Autored. Verifica la patente exacta (ej. TJSX32).`,
     );
+  }
+
+  if (!existingRow) {
+    payload = await applyDefaultVentaDirectaForNewVehicle(payload, autored);
   }
 
   const persisted = await persistInventarioRow(patente, payload, null, options);

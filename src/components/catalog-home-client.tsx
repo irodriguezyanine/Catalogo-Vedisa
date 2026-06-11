@@ -938,6 +938,15 @@ function getCatalogItemDedupeKey(item: CatalogItem): string {
   return getVehicleKey(item);
 }
 
+function catalogItemIdentityScore(item: CatalogItem): number {
+  const patente = getPatent(item);
+  let score = 0;
+  if (getModel(item) !== "Sin Modelo") score += 3;
+  if (item.title?.trim() && !isStaleEditorDraftValue(item.title, patente)) score += 3;
+  if (item.thumbnail?.startsWith("http") && !item.thumbnail.includes("placeholder")) score += 1;
+  return score;
+}
+
 function dedupeCatalogItemsByVehicleKey(list: CatalogItem[]): CatalogItem[] {
   const map = new Map<string, CatalogItem>();
   for (const item of list) {
@@ -947,13 +956,38 @@ function dedupeCatalogItemsByVehicleKey(list: CatalogItem[]): CatalogItem[] {
       map.set(dedupeKey, item);
       continue;
     }
-    const existingHasPatent = getPatent(existing) !== "—";
-    const incomingHasPatent = getPatent(item) !== "—";
-    if (!existingHasPatent && incomingHasPatent) {
+    const existingScore = catalogItemIdentityScore(existing);
+    const incomingScore = catalogItemIdentityScore(item);
+    if (incomingScore >= existingScore) {
       map.set(dedupeKey, item);
     }
   }
   return Array.from(map.values());
+}
+
+function resolveVehicleListTitle(
+  item: CatalogItem,
+  vehicleDetails: Record<string, EditorVehicleDetails>,
+): string {
+  const patente = getPatent(item);
+  const override = getEditorOverrideForItem(item, vehicleDetails);
+  const overrideTitle = resolveIdentityDraftField(override?.title, "", patente);
+  if (overrideTitle) return overrideTitle;
+
+  const itemTitle = item.title?.trim();
+  if (itemTitle && !isStaleEditorDraftValue(itemTitle, patente)) return itemTitle;
+
+  const autoTitle = buildAutoVehicleTitle({
+    brand: resolveIdentityDraftField(override?.brand, "", patente),
+    model: resolveIdentityDraftField(override?.model, "", patente),
+    year: resolveIdentityDraftField(override?.year, "", patente),
+    version: override?.version,
+    title: override?.title,
+    patente,
+  } as EditorVehicleDetails);
+  if (autoTitle) return autoTitle;
+
+  return getModel(item);
 }
 
 function isAssignedVehicleKey(
@@ -2284,9 +2318,37 @@ function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails
   ];
   const thumbnail =
     (hasSyncedThumbnail ? syncedThumbnail : undefined) ?? mergedImages[0] ?? item.thumbnail;
+  const resolvedTitle =
+    resolveIdentityDraftField(overrideCopy.title, item.title, patente) ||
+    buildAutoVehicleTitle({
+      ...overrideCopy,
+      brand: resolveIdentityDraftField(overrideCopy.brand, String((item.raw as Record<string, unknown>).marca ?? ""), patente),
+      model: resolveIdentityDraftField(
+        overrideCopy.model,
+        String((item.raw as Record<string, unknown>).modelo ?? ""),
+        patente,
+      ),
+      year: resolveIdentityDraftField(
+        overrideCopy.year,
+        String((item.raw as Record<string, unknown>).ano ?? (item.raw as Record<string, unknown>).anio ?? ""),
+        patente,
+      ),
+      patente,
+    }) ||
+    item.title;
+  const resolvedModel = resolveIdentityDraftField(
+    overrideCopy.model,
+    String((item.raw as Record<string, unknown>).modelo ?? (item.raw as Record<string, unknown>).model ?? ""),
+    patente,
+  );
+  const resolvedBrand = resolveIdentityDraftField(
+    overrideCopy.brand,
+    String((item.raw as Record<string, unknown>).marca ?? (item.raw as Record<string, unknown>).brand ?? ""),
+    patente,
+  );
   return {
     ...item,
-    title: overrideCopy.title ?? item.title,
+    title: resolvedTitle,
     subtitle: overrideCopy.subtitle ?? item.subtitle,
     status: overrideCopy.status ?? item.status,
     location: overrideCopy.location ?? item.location,
@@ -2318,8 +2380,8 @@ function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails
       ...(overrideCopy.extendedDescription
         ? { descripcion_ampliada: overrideCopy.extendedDescription, observaciones: overrideCopy.extendedDescription }
         : {}),
-      ...(overrideCopy.brand ? { marca: overrideCopy.brand, brand: overrideCopy.brand } : {}),
-      ...(overrideCopy.model ? { modelo: overrideCopy.model, model: overrideCopy.model } : {}),
+      ...(resolvedBrand ? { marca: resolvedBrand, brand: resolvedBrand } : {}),
+      ...(resolvedModel ? { modelo: resolvedModel, model: resolvedModel } : {}),
       ...(overrideCopy.year ? { ano: overrideCopy.year, anio: overrideCopy.year, year: overrideCopy.year } : {}),
       ...(overrideCopy.category ? { categoria: overrideCopy.category } : {}),
       ...(overrideCopy.kilometraje ? { kilometraje: overrideCopy.kilometraje, km: overrideCopy.kilometraje } : {}),
@@ -6064,6 +6126,7 @@ export function CatalogHomeClient({
       hasGlo3dViewer?: boolean;
     }) => {
       const vehicleKey = getVehicleKey(payload.item);
+      const patentKey = normalizePatentToken(getPatent(payload.item));
       const importedVehicleDetails = payload.vehicleDetails;
       const mergedVehicleDetails = importedVehicleDetails
         ? mergeImportedVehicleDetails(undefined, importedVehicleDetails)
@@ -6082,16 +6145,34 @@ export function CatalogHomeClient({
         ]),
       );
       if (importedVehicleDetails) {
-        setConfig((prev) => ({
+        const priceSeed = importedVehicleDetails.originalPrice?.trim();
+        setConfig((prev) => {
+          const mergedDetails = mergeImportedVehicleDetails(
+            prev.vehicleDetails?.[vehicleKey] ??
+              (patentKey ? prev.vehicleDetails?.[patentKey] : undefined) ??
+              (payload.item.id ? prev.vehicleDetails?.[payload.item.id] : undefined),
+            importedVehicleDetails,
+          );
+          return {
           ...prev,
           vehicleDetails: {
             ...prev.vehicleDetails,
-            [vehicleKey]: mergeImportedVehicleDetails(
-              prev.vehicleDetails?.[vehicleKey],
-              importedVehicleDetails,
-            ),
+            [vehicleKey]: mergedDetails,
+            ...(patentKey && patentKey !== vehicleKey ? { [patentKey]: mergedDetails } : {}),
+            ...(payload.item.id && payload.item.id !== vehicleKey && payload.item.id !== patentKey
+              ? { [payload.item.id]: mergedDetails }
+              : {}),
           },
-        }));
+          ...(payload.created && priceSeed
+            ? {
+                vehiclePrices: {
+                  ...prev.vehiclePrices,
+                  [vehicleKey]: priceSeed,
+                },
+              }
+            : {}),
+          };
+        });
       }
       return vehicleKey;
     },
@@ -8463,9 +8544,7 @@ export function CatalogHomeClient({
                             ) : null}
                           </p>
                           <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">
-                            {item.title?.trim() && !isStaleEditorDraftValue(item.title, getPatent(item))
-                              ? item.title
-                              : getModel(item)}
+                            {resolveVehicleListTitle(item, config.vehicleDetails)}
                           </p>
                         </div>
                         <VehicleListThumbnailWithSync
@@ -12150,9 +12229,7 @@ export function CatalogHomeClient({
                           ) : null}
                         </p>
                         <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">
-                          {item.title?.trim() && !isStaleEditorDraftValue(item.title, getPatent(item))
-                            ? item.title
-                            : getModel(item)}
+                          {resolveVehicleListTitle(item, config.vehicleDetails)}
                         </p>
                       </div>
                       <VehicleListThumbnailWithSync
@@ -12397,9 +12474,7 @@ export function CatalogHomeClient({
                       className="ui-focus min-w-0 flex-1 text-left"
                     >
                       <p className="font-semibold text-slate-900">
-                        {item.title?.trim() && !isStaleEditorDraftValue(item.title, getPatent(item))
-                          ? item.title
-                          : getModel(item)}
+                        {resolveVehicleListTitle(item, config.vehicleDetails)}
                       </p>
                       <p className="text-xs text-slate-500">
                         {getPatent(item)}{" "}
