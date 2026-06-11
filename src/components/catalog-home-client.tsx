@@ -288,6 +288,21 @@ function getAuctionEventType(auction: UpcomingAuction): CommercialEventType {
   return detectCommercialEventType(auction.name);
 }
 
+function resolveEstadoRetiroForBatchTarget(
+  target: BatchAssignTarget,
+  auctions: UpcomingAuction[],
+): string {
+  if (target.type === "section") {
+    if (target.sectionId === "ventas-directas") return "en_bodega_a_venta_directa";
+    return "en_tasacion";
+  }
+  const auction = auctions.find((entry) => entry.id === target.auctionId);
+  return getAuctionEventType(auction ?? { id: target.auctionId, name: "", date: "" }) ===
+    "venta_directa"
+    ? "en_bodega_a_venta_directa"
+    : "en_bodega_a_remate";
+}
+
 function getAuctionEventOrigin(auction: UpcomingAuction): CommercialEventOrigin {
   if (
     auction.eventOrigin === "subastas" ||
@@ -5529,7 +5544,7 @@ export function CatalogHomeClient({
     }
   };
 
-  const addBatchVehiclesToTarget = () => {
+  const addBatchVehiclesToTarget = async () => {
     if (!batchAssignTarget) return;
     if (batchAssignSelectedKeys.length === 0) {
       showSystemNotice("info", "Sin selección", "Selecciona al menos un vehículo para agregar.");
@@ -5547,33 +5562,128 @@ export function CatalogHomeClient({
       return byPatent ? getVehicleKey(byPatent) : vehicleKey;
     });
     const uniqueKeys = Array.from(new Set(canonicalKeys));
-    if (batchAssignTarget.type === "auction") {
-      setConfig((prev) => {
-        const nextAuctionMap = { ...prev.vehicleUpcomingAuctionIds };
-        for (const vehicleKey of uniqueKeys) {
-          nextAuctionMap[vehicleKey] = batchAssignTarget.auctionId;
+    const estadoRetiro = resolveEstadoRetiroForBatchTarget(
+      batchAssignTarget,
+      sortedUpcomingAuctions,
+    );
+
+    setBatchAssignImporting(true);
+    try {
+      const enrichedItems = new Map<string, CatalogItem>();
+      const enrichedDetails: Record<string, EditorVehicleDetails> = {};
+
+      for (const vehicleKey of uniqueKeys) {
+        const direct = itemsByKey.get(vehicleKey);
+        const patentSource =
+          direct ??
+          items.find(
+            (item) =>
+              normalizePatentToken(getPatent(item)) === normalizePatentToken(vehicleKey) ||
+              normalizePatentToken(getVehicleKey(item)) === normalizePatentToken(vehicleKey),
+          );
+        const patente = normalizePatentToken(
+          patentSource ? getPatent(patentSource) : vehicleKey,
+        );
+        const response = await fetch("/api/admin/import-patent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          error?: string;
+          item?: CatalogItem;
+          vehicleDetails?: EditorVehicleDetails;
+        };
+        if (!response.ok || !payload.ok || !payload.item) {
+          throw new Error(payload.error ?? `No se pudo enriquecer ${patente}.`);
         }
-        return { ...prev, vehicleUpcomingAuctionIds: nextAuctionMap };
+        const resolvedKey = getVehicleKey(payload.item);
+        enrichedItems.set(resolvedKey, payload.item);
+        if (payload.vehicleDetails) {
+          enrichedDetails[resolvedKey] = payload.vehicleDetails;
+        }
+      }
+
+      const keysToAssign = Array.from(
+        new Set([...uniqueKeys, ...Array.from(enrichedItems.keys())]),
+      );
+
+      setImportedInventoryItems((prev) => {
+        let next = [...prev];
+        for (const item of enrichedItems.values()) {
+          const key = getVehicleKey(item);
+          next = next.filter((entry) => getVehicleKey(entry) !== key);
+          next.push(item);
+        }
+        return next;
       });
-    } else {
+
+      setLiveFeedItems((prev) =>
+        dedupeCatalogItemsByVehicleKey([
+          ...prev.filter((entry) => !enrichedItems.has(getVehicleKey(entry))),
+          ...Array.from(enrichedItems.values()),
+        ]),
+      );
+
       setConfig((prev) => {
+        const nextDetails = { ...prev.vehicleDetails };
+        for (const [key, details] of Object.entries(enrichedDetails)) {
+          nextDetails[key] = { ...(nextDetails[key] ?? {}), ...details };
+        }
+
+        const hiddenVehicleIds = (prev.hiddenVehicleIds ?? []).filter(
+          (id) => !keysToAssign.includes(id),
+        );
+
+        if (batchAssignTarget.type === "auction") {
+          const nextAuctionMap = { ...prev.vehicleUpcomingAuctionIds };
+          for (const vehicleKey of keysToAssign) {
+            nextAuctionMap[vehicleKey] = batchAssignTarget.auctionId;
+          }
+          return {
+            ...prev,
+            hiddenVehicleIds,
+            vehicleDetails: nextDetails,
+            vehicleUpcomingAuctionIds: nextAuctionMap,
+          };
+        }
+
         const current = new Set(prev.sectionVehicleIds[batchAssignTarget.sectionId] ?? []);
-        for (const vehicleKey of uniqueKeys) current.add(vehicleKey);
+        for (const vehicleKey of keysToAssign) current.add(vehicleKey);
         return {
           ...prev,
+          hiddenVehicleIds,
+          vehicleDetails: nextDetails,
           sectionVehicleIds: {
             ...prev.sectionVehicleIds,
             [batchAssignTarget.sectionId]: Array.from(current),
           },
         };
       });
+
+      showSystemNotice(
+        "success",
+        "Unidades agregadas",
+        `${batchAssignSelectedKeys.length} vehículo(s) enriquecido(s) con Glo3D y Autored, guardados en inventario compartido y asignados a ${batchAssignTargetLabel}.`,
+      );
+      closeBatchAssignModal();
+    } catch (error) {
+      const message =
+        error instanceof DOMException && error.name === "TimeoutError"
+          ? "La importación tardó demasiado. Espera unos segundos y vuelve a intentar."
+          : error instanceof Error
+            ? error.message
+            : "No se pudieron agregar los vehículos seleccionados.";
+      showSystemNotice(
+        "error",
+        message.includes("saturada") ? "Glo3D saturado" : "Agregado fallido",
+        message,
+      );
+    } finally {
+      setBatchAssignImporting(false);
     }
-    showSystemNotice(
-      "success",
-      "Unidades agregadas",
-      `${batchAssignSelectedKeys.length} vehículos agregados en ${batchAssignTargetLabel}.`,
-    );
-    closeBatchAssignModal();
   };
 
   const toggleManualDraftSection = (sectionId: SectionId) => {
@@ -11339,10 +11449,11 @@ export function CatalogHomeClient({
               </button>
               <button
                 type="button"
-                onClick={addBatchVehiclesToTarget}
-                className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
+                onClick={() => void addBatchVehiclesToTarget()}
+                disabled={batchAssignImporting || batchAssignSelectedKeys.length === 0}
+                className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Agregar seleccionados
+                {batchAssignImporting ? "Importando y agregando…" : "Agregar seleccionados"}
               </button>
             </div>
           </div>

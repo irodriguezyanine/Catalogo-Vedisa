@@ -137,6 +137,31 @@ function extractPatentFromText(value?: string): string | undefined {
   return match?.[1];
 }
 
+function isPlaceholderVehicleLabel(value?: string): boolean {
+  if (!value?.trim()) return true;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return (
+    normalized === "sin marca" ||
+    normalized === "sin modelo" ||
+    normalized === "no informado" ||
+    normalized === "sin informacion" ||
+    normalized === "sin informacion disponible"
+  );
+}
+
+function buildVehicleTitleFromRow(row: Record<string, unknown>): string | undefined {
+  const marca = getStringFromKeys(row, ["marca", "brand", "make"]);
+  const modelo = getStringFromKeys(row, ["modelo", "model", "model2"]);
+  const ano = getStringFromKeys(row, ["ano", "anio", "year", "año"]);
+  const parts = [marca, modelo, ano].filter((part) => part && !isPlaceholderVehicleLabel(part));
+  const composed = parts.join(" ").trim();
+  return composed || undefined;
+}
+
 export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | null {
   const id =
     getStringFromKeys(row, ["id", "uuid", "vehicle_id", "inventario_id"]) ??
@@ -149,9 +174,10 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
       "nombre_vehiculo",
       "vehiculo",
       "marca_modelo",
-      "modelo",
-      "patente",
-    ]) ?? `Vehículo ${id.slice(0, 8)}`;
+    ]) ??
+    buildVehicleTitleFromRow(row) ??
+    getStringFromKeys(row, ["modelo", "patente"]) ??
+    `Vehículo ${id.slice(0, 8)}`;
 
   const subtitle = getStringFromKeys(row, [
     "patente",
@@ -647,9 +673,15 @@ export type Glo3dInventoryEntry = {
 function normalizeGlo3dTechnicalFields(
   glo3dRaw: Record<string, unknown>,
 ): Record<string, unknown> {
+  const inlineFields =
+    glo3dRaw.fields &&
+    typeof glo3dRaw.fields === "object" &&
+    !Array.isArray(glo3dRaw.fields)
+      ? (glo3dRaw.fields as Record<string, unknown>)
+      : {};
   const flat = flattenObject(glo3dRaw);
   const customSpecFields = extractCustomSpecFieldMap(glo3dRaw);
-  const merged = { ...glo3dRaw, ...flat, ...customSpecFields };
+  const merged = { ...glo3dRaw, ...flat, ...inlineFields, ...customSpecFields };
   const result: Record<string, unknown> = {};
 
   const patenteVerifier = pickString(merged, [
@@ -670,7 +702,21 @@ function normalizeGlo3dTechnicalFields(
   ]);
   const version = pickString(merged, ["version", "ver", "trim"]);
   const color = pickString(merged, ["color", "color_exterior", "color_vehiculo", "exterior_color"]);
-  const combustible = pickString(merged, ["combustible", "tipo_combustible", "fuel", "fuel_type"]);
+  const combustible = pickString(merged, [
+    "combustible",
+    "tipo_combustible",
+    "fuel",
+    "fuel_type",
+    "engine_fuel_type",
+  ]);
+  const kilometraje = pickString(merged, [
+    "kilometraje",
+    "km",
+    "kms",
+    "odometro",
+    "odometer",
+    "mileage",
+  ]);
   const llaves = pickString(merged, ["llaves", "keys", "has_keys", "tiene_llaves", "lla"]);
   const transmision = pickString(merged, [
     "transmision",
@@ -864,6 +910,11 @@ function normalizeGlo3dTechnicalFields(
   if (cilindrada) {
     result.cilindrada = cilindrada;
     result.cc = cilindrada;
+  }
+  if (kilometraje) {
+    result.kilometraje = kilometraje;
+    result.km = kilometraje;
+    result.mileage = kilometraje;
   }
   if (tipoVehiculo) {
     result.tipo_de_vehiculo = tipoVehiculo;
@@ -1384,6 +1435,11 @@ function normalizeAutoredTechnicalFields(
   const merged = { ...autoredRaw, ...flat };
   const result: Record<string, unknown> = {};
 
+  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]);
+  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]);
+  const ano = pickString(merged, ["ano", "anio", "year", "año"]);
+  const version = pickString(merged, ["version", "trim", "ver"]);
+
   const vin = pickString(merged, [
     "vin",
     "numero_chasis",
@@ -1441,6 +1497,20 @@ function normalizeAutoredTechnicalFields(
     "engine_cc",
   ]);
 
+  if (marca) {
+    result.marca = marca;
+    result.brand = marca;
+  }
+  if (modelo) {
+    result.modelo = modelo;
+    result.model = modelo;
+  }
+  if (ano) {
+    result.ano = ano;
+    result.anio = ano;
+    result.year = ano;
+  }
+  if (version) result.version = version;
   if (vin) result.vin = vin;
   if (kilometraje) {
     result.kilometraje = kilometraje;

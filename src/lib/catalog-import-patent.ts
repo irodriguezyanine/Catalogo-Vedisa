@@ -13,6 +13,11 @@ import type { EditorVehicleDetails } from "@/types/editor";
 
 export type ImportPatentSource = "inventario" | "glo3d" | "glo3d+autored" | "autored";
 
+export type ImportPatentOptions = {
+  estadoRetiro?: string;
+  forceRefresh?: boolean;
+};
+
 export type ImportPatentResult = {
   item: CatalogItem;
   vehicleDetails: EditorVehicleDetails;
@@ -26,6 +31,19 @@ export type ImportPatentResult = {
 
 const INVENTARIO_TABLE = process.env.CATALOG_SUPABASE_TABLE ?? "inventario";
 const ESTADO_RETIRO_DEFAULT = "en_tasacion";
+const ESTADO_RETIRO_VENTA_DIRECTA = "en_bodega_a_venta_directa";
+const ESTADO_RETIRO_REMATE = "en_bodega_a_remate";
+
+const IMPORT_FORCE_REFRESH_KEYS = new Set([
+  "glo3d_url",
+  "url_3d",
+  "visor_3d_url",
+  "glo3d_campos",
+  "autored_campos",
+  "imagenes",
+  "origen",
+  "estado_retiro",
+]);
 
 function normalizePatent(value: string): string {
   return value.trim().toUpperCase().replace(/\s+/g, "").replace(/-/g, "");
@@ -40,17 +58,44 @@ function getServerSupabase() {
   });
 }
 
+function isPlaceholderVehicleLabel(value: unknown): boolean {
+  if (typeof value !== "string" || !value.trim()) return true;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return (
+    normalized === "sin marca" ||
+    normalized === "sin modelo" ||
+    normalized === "no informado" ||
+    normalized === "sin informacion" ||
+    normalized === "sin informacion disponible"
+  );
+}
+
+function isMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return Boolean(value.trim()) && !isPlaceholderVehicleLabel(value);
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
 function pickString(row: Record<string, unknown>, aliases: string[]): string | undefined {
   for (const alias of aliases) {
     const value = row[alias];
-    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "string" && value.trim() && !isPlaceholderVehicleLabel(value)) {
+      return value.trim();
+    }
     if (typeof value === "number") return String(value);
   }
   const lower = new Map<string, unknown>();
   for (const [key, value] of Object.entries(row)) lower.set(key.toLowerCase(), value);
   for (const alias of aliases) {
     const value = lower.get(alias.toLowerCase());
-    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "string" && value.trim() && !isPlaceholderVehicleLabel(value)) {
+      return value.trim();
+    }
     if (typeof value === "number") return String(value);
   }
   return undefined;
@@ -74,30 +119,113 @@ function buildMergedRecord(record: Record<string, unknown>): Record<string, unkn
   return { ...record, ...flattenObject(record) };
 }
 
-function mergePreferPrimary(
+function mergePreferMeaningful(
   primary: Record<string, unknown>,
   fallback: Record<string, unknown>,
 ): Record<string, unknown> {
-  const merged = { ...primary };
-  for (const [key, value] of Object.entries(fallback)) {
+  const merged = { ...fallback };
+  for (const [key, value] of Object.entries(primary)) {
     const current = merged[key];
     const currentEmpty =
       current === null ||
       current === undefined ||
-      (typeof current === "string" && !current.trim());
-    if (currentEmpty && value !== null && value !== undefined && value !== "") {
+      (typeof current === "string" && (!current.trim() || isPlaceholderVehicleLabel(current))) ||
+      (Array.isArray(current) && current.length === 0);
+
+    if (currentEmpty && isMeaningfulValue(value)) {
+      merged[key] = value;
+      continue;
+    }
+
+    if (IMPORT_FORCE_REFRESH_KEYS.has(key) && isMeaningfulValue(value)) {
       merged[key] = value;
     }
   }
   return merged;
 }
 
+function normalizeImageList(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => {
+        if (typeof entry === "string" && entry.trim().startsWith("http")) return [entry.trim()];
+        if (typeof entry === "object" && entry !== null) {
+          const url = pickString(entry as Record<string, unknown>, ["url", "src", "href", "image", "imagen"]);
+          return url ? [url] : [];
+        }
+        return [];
+      })
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return [];
+    if (raw.startsWith("http")) return [raw];
+    return raw
+      .split(/[\n,;|]+/)
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith("http"));
+  }
+  return [];
+}
+
 function extractGlo3dImages(glo3d: Glo3dInventoryEntry): string[] {
+  const urls: string[] = [];
+  const push = (value?: string) => {
+    if (value?.startsWith("http")) urls.push(value);
+  };
+
+  push(pickString(glo3d.raw, ["thumb", "thumbnail_url", "image", "image_url", "foto", "thumbnail"]));
+  push(
+    pickString(glo3d.technicalFields, ["thumb", "thumbnail_url", "image", "image_url", "foto", "thumbnail"]),
+  );
+
+  const gallery = glo3d.raw.gallery;
+  if (gallery && typeof gallery === "object" && !Array.isArray(gallery)) {
+    for (const section of Object.values(gallery as Record<string, unknown>)) {
+      if (!section || typeof section !== "object" || Array.isArray(section)) continue;
+      const imageUrl = (section as Record<string, unknown>).image_url;
+      for (const url of normalizeImageList(imageUrl)) push(url);
+    }
+  }
+
+  return [...new Set(urls)];
+}
+
+function extractAutoredImages(autored?: Record<string, unknown> | null): string[] {
+  if (!autored) return [];
+  const merged = buildMergedRecord(autored);
   const candidates = [
-    pickString(glo3d.raw, ["thumb", "thumbnail_url", "image", "image_url", "foto", "thumbnail"]),
-    pickString(glo3d.technicalFields, ["thumb", "thumbnail_url", "image", "image_url", "foto"]),
+    ...normalizeImageList(merged.imagenes),
+    ...normalizeImageList(merged.fotos),
+    ...normalizeImageList(merged.fotos_urls),
+    ...normalizeImageList(merged.images),
+    ...normalizeImageList(merged.photos),
+    ...normalizeImageList(merged.galeria),
+    ...normalizeImageList(merged.galeria_fotos),
+    pickString(merged, ["thumbnail", "imagen_principal", "foto_portada", "foto_principal"]),
   ].filter(Boolean) as string[];
   return [...new Set(candidates.filter((url) => url.startsWith("http")))];
+}
+
+function resolveEstadoRetiro(options?: ImportPatentOptions): string {
+  const value = options?.estadoRetiro?.trim();
+  if (!value) return ESTADO_RETIRO_DEFAULT;
+  return value;
+}
+
+export function resolveEstadoRetiroForAssignmentTarget(
+  target:
+    | { type: "section"; sectionId: string }
+    | { type: "auction"; auctionId: string; eventType?: "remate" | "venta_directa" },
+): string {
+  if (target.type === "section") {
+    if (target.sectionId === "ventas-directas") return ESTADO_RETIRO_VENTA_DIRECTA;
+    if (target.sectionId === "proximos-remates") return ESTADO_RETIRO_REMATE;
+    return ESTADO_RETIRO_DEFAULT;
+  }
+  return target.eventType === "venta_directa" ? ESTADO_RETIRO_VENTA_DIRECTA : ESTADO_RETIRO_REMATE;
 }
 
 function buildVehicleDetailsFromSources(
@@ -105,27 +233,27 @@ function buildVehicleDetailsFromSources(
   row: Record<string, unknown>,
   glo3d?: Glo3dInventoryEntry | null,
   autored?: Record<string, unknown> | null,
+  images: string[] = [],
 ): EditorVehicleDetails {
   const glo3dFields = glo3d?.technicalFields ?? {};
   const autoredMerged = autored ? buildMergedRecord(autored) : {};
+  const merged = mergePreferMeaningful(autoredMerged, glo3dFields);
+
   const marca =
     pickString(row, ["marca", "brand"]) ??
-    pickString(glo3dFields, ["marca", "brand", "make"]) ??
-    pickString(autoredMerged, ["marca", "brand", "make"]);
+    pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]);
   const modelo =
     pickString(row, ["modelo", "model"]) ??
-    pickString(glo3dFields, ["modelo", "model", "model2"]) ??
-    pickString(autoredMerged, ["modelo", "model"]);
+    pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]);
   const ano =
     pickString(row, ["ano", "año", "year"]) ??
-    pickString(glo3dFields, ["ano", "anio", "year"]) ??
-    pickString(autoredMerged, ["ano", "año", "year"]);
+    pickString(merged, ["ano", "anio", "year", "año"]);
   const version =
     pickString(row, ["version", "trim"]) ??
-    pickString(glo3dFields, ["version", "trim", "ver"]) ??
-    pickString(autoredMerged, ["version", "trim", "ver"]);
+    pickString(merged, ["version", "trim", "ver"]);
   const title =
     [marca, modelo, ano].filter(Boolean).join(" ").trim() || `Unidad ${patente}`;
+  const thumbnail = images[0] ?? pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]);
 
   return {
     title,
@@ -134,21 +262,42 @@ function buildVehicleDetailsFromSources(
     model: modelo,
     year: ano,
     version,
+    thumbnail,
+    imagesCsv: images.length > 0 ? images.join(", ") : undefined,
     view3dUrl:
       glo3d?.view3dUrl ??
       pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]) ??
       undefined,
+    patenteVerifier:
+      pickString(row, ["patente_verifier", "patente_dv", "ppu_dv", "dv"]) ??
+      pickString(glo3dFields, ["patente_verifier", "patente_dv", "ppu_dv", "dv"]),
+    vin:
+      pickString(row, ["vin", "numero_chasis", "nro_chasis", "n_de_vin"]) ??
+      pickString(glo3dFields, ["n_de_vin", "vin", "numero_chasis"]) ??
+      pickString(autoredMerged, ["vin", "numero_chasis", "nro_chasis", "chasis"]),
+    nChasis:
+      pickString(row, ["n_de_chasis", "numero_chasis", "nro_chasis"]) ??
+      pickString(glo3dFields, ["n_de_chasis", "numero_chasis", "nro_chasis"]),
+    nMotor:
+      pickString(row, ["n_de_motor", "numero_motor", "ndm"]) ??
+      pickString(glo3dFields, ["n_de_motor", "numero_motor", "ndm"]),
+    nSerie:
+      pickString(row, ["n_de_serie", "numero_serie", "nds"]) ??
+      pickString(glo3dFields, ["n_de_serie", "numero_serie", "nds"]),
+    nSiniestro:
+      pickString(row, ["n_de_siniestro", "numero_siniestro", "n_s", "ns"]) ??
+      pickString(glo3dFields, ["n_de_siniestro", "numero_siniestro", "n_s", "ns", "n°s"]),
     kilometraje:
       pickString(row, ["kilometraje", "km"]) ??
-      pickString(glo3dFields, ["kilometraje", "km"]) ??
-      pickString(autoredMerged, ["kilometraje", "km", "odometro", "odometer"]),
+      pickString(glo3dFields, ["kilometraje", "km", "mileage"]) ??
+      pickString(autoredMerged, ["kilometraje", "km", "odometro", "odometer", "mileage"]),
     color:
       pickString(row, ["color"]) ??
       pickString(glo3dFields, ["color", "color_exterior"]) ??
       pickString(autoredMerged, ["color", "color_exterior"]),
     combustible:
       pickString(row, ["combustible", "tipo_combustible"]) ??
-      pickString(glo3dFields, ["combustible", "tipo_combustible"]) ??
+      pickString(glo3dFields, ["combustible", "tipo_combustible", "fuel_type", "engine_fuel_type"]) ??
       pickString(autoredMerged, ["combustible", "tipo_combustible", "fuel"]),
     transmision:
       pickString(row, ["transmision", "caja", "tipo_caja"]) ??
@@ -166,20 +315,65 @@ function buildVehicleDetailsFromSources(
       pickString(row, ["cilindrada", "cc", "motor_cc"]) ??
       pickString(glo3dFields, ["cilindrada", "cc", "engine_cc"]) ??
       pickString(autoredMerged, ["cilindrada", "cc", "engine_cc"]),
-    vin:
-      pickString(row, ["vin", "numero_chasis", "nro_chasis", "n_de_vin"]) ??
-      pickString(glo3dFields, ["n_de_vin", "vin", "numero_chasis"]) ??
-      pickString(autoredMerged, ["vin", "numero_chasis", "nro_chasis", "chasis"]),
+    llaves:
+      pickString(row, ["llaves", "keys", "lla"]) ??
+      pickString(glo3dFields, ["llaves", "keys", "lla"]),
+    aireAcondicionado:
+      pickString(row, ["aire_acondicionado", "ac"]) ??
+      pickString(glo3dFields, ["aire_acondicionado", "ac"]),
+    unicoPropietario:
+      pickString(row, ["unico_propietario"]) ??
+      pickString(glo3dFields, ["unico_propietario"]),
+    condicionado:
+      pickString(row, ["condicionado", "acondicionado"]) ??
+      pickString(glo3dFields, ["condicionado", "acondicionado"]),
+    multas:
+      pickString(row, ["multas", "mul"]) ?? pickString(glo3dFields, ["multas", "mul"]),
+    tag: pickString(row, ["tag"]) ?? pickString(glo3dFields, ["tag"]),
+    vencRevisionTecnica:
+      pickString(row, ["vencimiento_revision_tecnica", "vrt"]) ??
+      pickString(glo3dFields, ["vencimiento_revision_tecnica", "vrt"]),
+    vencPermisoCirculacion:
+      pickString(row, ["vencimiento_permiso_circulacion", "vpc"]) ??
+      pickString(glo3dFields, ["vencimiento_permiso_circulacion", "vpc"]),
+    vencSeguroObligatorio:
+      pickString(row, ["vencimiento_seguro_obligatorio", "vso"]) ??
+      pickString(glo3dFields, ["vencimiento_seguro_obligatorio", "vso"]),
+    pruebaMotor:
+      pickString(row, ["prueba_motor", "pdm"]) ??
+      pickString(glo3dFields, ["prueba_motor", "prueba_motor_arranca", "pdm"]),
+    pruebaDesplazamiento:
+      pickString(row, ["prueba_desplazamiento", "pdd"]) ??
+      pickString(glo3dFields, ["prueba_desplazamiento", "pdd"]),
+    estadoAirbags:
+      pickString(row, ["estado_airbags", "eda"]) ??
+      pickString(glo3dFields, ["estado_airbags", "airbags_estado", "eda"]),
+    nombrePropietarioAnterior:
+      pickString(row, ["nombre_propietario_anterior", "npa"]) ??
+      pickString(glo3dFields, ["nombre_propietario_anterior", "npa"]),
+    rutPropietarioAnterior:
+      pickString(row, ["rut_propietario_anterior", "rpa"]) ??
+      pickString(glo3dFields, ["rut_propietario_anterior", "rpa"]),
+    rutVerificador:
+      pickString(row, ["rut_verificador"]) ??
+      pickString(glo3dFields, ["rut_verificador"]),
     description:
       pickString(row, ["descripcion", "description"]) ??
       pickString(glo3dFields, ["descripcion", "description"]) ??
       pickString(autoredMerged, ["descripcion", "description"]),
+    tipo:
+      pickString(row, ["tipo", "type"]) ?? pickString(glo3dFields, ["tipo", "type", "tipo_unidad"]),
     tipoVehiculo:
       pickString(row, ["tipo_vehiculo", "tipo_de_vehiculo"]) ??
       pickString(glo3dFields, ["tipo_vehiculo", "tipo_de_vehiculo", "vehicle_type"]),
-    ubicacionFisica: pickString(glo3dFields, ["ubicacion_fisica", "ubi", "ubicacion"]),
-    transportista: pickString(glo3dFields, ["transportista", "tra"]),
-    taller: pickString(glo3dFields, ["taller", "tal"]),
+    ubicacionFisica:
+      pickString(row, ["ubicacion_fisica", "ubi", "ubicacion"]) ??
+      pickString(glo3dFields, ["ubicacion_fisica", "ubi", "ubicacion"]),
+    transportista:
+      pickString(row, ["transportista", "tra"]) ??
+      pickString(glo3dFields, ["transportista", "tra"]),
+    taller:
+      pickString(row, ["taller", "tal"]) ?? pickString(glo3dFields, ["taller", "tal"]),
     category:
       pickString(row, ["categoria", "tipo_vehiculo"]) ??
       pickString(glo3dFields, ["tipo_de_vehiculo", "tipo_vehiculo"]) ??
@@ -191,17 +385,24 @@ function buildInventarioPayloadFromSources(
   patente: string,
   glo3d?: Glo3dInventoryEntry | null,
   autored?: Record<string, unknown> | null,
+  options?: ImportPatentOptions,
 ): Record<string, unknown> {
   const glo3dFields = glo3d?.technicalFields ?? {};
   const autoredMerged = autored ? buildMergedRecord(autored) : {};
-  const merged = mergePreferPrimary(glo3dFields, autoredMerged);
-  const marca = pickString(merged, ["marca", "brand", "make"]) ?? "Sin Marca";
-  const modelo = pickString(merged, ["modelo", "model", "model2"]) ?? "Sin Modelo";
-  const ano = pickString(merged, ["ano", "anio", "year"]);
+  const identity = mergePreferMeaningful(autoredMerged, glo3dFields);
+  const technical = mergePreferMeaningful(glo3dFields, autoredMerged);
+  const merged = { ...technical, ...identity };
+
+  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand"]) ?? "Sin Marca";
+  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model"]) ?? "Sin Modelo";
+  const ano = pickString(merged, ["ano", "anio", "year", "año"]);
   const version = pickString(merged, ["version", "trim", "ver"]);
-  const kilometraje = pickString(merged, ["kilometraje", "km", "odometro", "odometer"]);
+  const kilometraje = pickString(merged, ["kilometraje", "km", "odometro", "odometer", "mileage"]);
   const descripcion = pickString(merged, ["descripcion", "description"]);
-  const imagenes = glo3d ? extractGlo3dImages(glo3d) : [];
+  const glo3dImages = glo3d ? extractGlo3dImages(glo3d) : [];
+  const autoredImages = extractAutoredImages(autored);
+  const imagenes = [...new Set([...glo3dImages, ...autoredImages])];
+  const nombreVehiculo = [marca, modelo, ano].filter((part) => !isPlaceholderVehicleLabel(part)).join(" ").trim();
 
   return {
     patente,
@@ -212,12 +413,14 @@ function buildInventarioPayloadFromSources(
     version,
     kilometraje,
     descripcion,
+    nombre_vehiculo: nombreVehiculo || null,
+    titulo: nombreVehiculo || null,
     imagenes: imagenes.length > 0 ? imagenes : null,
     glo3d_url: glo3d?.view3dUrl ?? null,
     url_3d: glo3d?.view3dUrl ?? null,
     visor_3d_url: glo3d?.view3dUrl ?? null,
-    origen: glo3d ? (autored ? "glo3d+autored" : "glo3d") : "autored",
-    estado_retiro: ESTADO_RETIRO_DEFAULT,
+    origen: glo3d ? (autored ? "glo3d+autored" : "glo3d") : autored ? "autored" : "glo3d",
+    estado_retiro: resolveEstadoRetiro(options),
     glo3d_campos: glo3d?.raw ?? null,
     autored_campos: autored ?? null,
   };
@@ -227,17 +430,19 @@ function buildCatalogRow(
   patente: string,
   base: Record<string, unknown>,
   glo3d?: Glo3dInventoryEntry | null,
+  autored?: Record<string, unknown> | null,
 ): Record<string, unknown> {
-  const imagenes = extractGlo3dImages(glo3d ?? { raw: base, technicalFields: {} });
+  const glo3dImages = extractGlo3dImages(glo3d ?? { raw: base, technicalFields: {} });
+  const autoredImages = extractAutoredImages(autored);
+  const imagenes = [...new Set([...glo3dImages, ...autoredImages, ...normalizeImageList(base.imagenes)])];
   return {
     ...base,
     patente,
     glo3d: glo3d?.raw ?? base.glo3d ?? null,
     glo3d_url: glo3d?.view3dUrl ?? base.glo3d_url ?? base.url_3d ?? null,
     url_3d: glo3d?.view3dUrl ?? base.url_3d ?? base.glo3d_url ?? null,
-    imagenes:
-      (Array.isArray(base.imagenes) && base.imagenes.length > 0 ? base.imagenes : null) ??
-      (imagenes.length > 0 ? imagenes : null),
+    imagenes: imagenes.length > 0 ? imagenes : null,
+    autored: autored ?? base.autored ?? null,
   };
 }
 
@@ -252,7 +457,48 @@ function resolveImportSource(
   return "autored";
 }
 
-export async function importVehicleByPatent(rawPatent: string): Promise<ImportPatentResult> {
+async function persistInventarioRow(
+  patente: string,
+  payload: Record<string, unknown>,
+  existingRow: Record<string, unknown> | null,
+): Promise<{ row: Record<string, unknown>; created: boolean }> {
+  const supabase = getServerSupabase();
+  const finalPayload = existingRow ? mergePreferMeaningful(payload, existingRow) : payload;
+
+  if (!supabase) {
+    return { row: finalPayload, created: false };
+  }
+
+  if (existingRow) {
+    const { data, error } = await supabase
+      .from(INVENTARIO_TABLE)
+      .update(finalPayload)
+      .eq("patente", patente)
+      .select("*")
+      .single();
+    if (error) {
+      console.warn(`[import-patent] Inventario Supabase no actualizado para ${patente}:`, error.message);
+      return { row: finalPayload, created: false };
+    }
+    return { row: (data as Record<string, unknown>) ?? finalPayload, created: false };
+  }
+
+  const { data, error } = await supabase
+    .from(INVENTARIO_TABLE)
+    .insert(finalPayload)
+    .select("*")
+    .single();
+  if (error) {
+    console.warn(`[import-patent] Inventario Supabase no creado para ${patente}:`, error.message);
+    return { row: finalPayload, created: false };
+  }
+  return { row: (data as Record<string, unknown>) ?? finalPayload, created: true };
+}
+
+export async function importVehicleByPatent(
+  rawPatent: string,
+  options?: ImportPatentOptions,
+): Promise<ImportPatentResult> {
   const requestedPatente = normalizePatent(rawPatent);
   if (!/^[A-Z0-9]{5,10}$/.test(requestedPatente)) {
     throw new Error("Patente inválida. Usa un formato como TJSX73.");
@@ -276,27 +522,27 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
     (await fetchInventarioRowByPatent(patente)) ??
     (correctedPatente ? await fetchInventarioRowByPatent(requestedPatente) : null);
 
+  const payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
+  const shouldPersist = Boolean(glo3d || autored || options?.forceRefresh);
+
   if (existingRow) {
-    const payload = buildInventarioPayloadFromSources(patente, glo3d, autored);
-    const mergedRow = buildCatalogRow(patente, mergePreferPrimary(existingRow, payload), glo3d);
+    const persisted = shouldPersist
+      ? await persistInventarioRow(patente, payload, existingRow)
+      : { row: mergePreferMeaningful(payload, existingRow), created: false };
+    const mergedRow = buildCatalogRow(patente, persisted.row, glo3d, autored);
+    const images = [
+      ...extractGlo3dImages(glo3d ?? { raw: mergedRow, technicalFields: {} }),
+      ...extractAutoredImages(autored),
+      ...normalizeImageList(mergedRow.imagenes),
+    ];
     const item = catalogRowToItem(mergedRow);
     if (!item) throw new Error(`No se pudo normalizar el inventario para ${patente}.`);
 
-    if (glo3d || autored) {
-      const supabase = getServerSupabase();
-      if (supabase) {
-        await supabase
-          .from(INVENTARIO_TABLE)
-          .update(payload)
-          .eq("patente", patente);
-      }
-    }
-
     return {
       item,
-      vehicleDetails: buildVehicleDetailsFromSources(patente, mergedRow, glo3d, autored),
+      vehicleDetails: buildVehicleDetailsFromSources(patente, mergedRow, glo3d, autored, images),
       source: resolveImportSource(glo3d, autored, true),
-      created: false,
+      created: persisted.created,
       patente,
       requestedPatente,
       correctedPatente,
@@ -320,35 +566,21 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
     );
   }
 
-  const insertPayload = buildInventarioPayloadFromSources(patente, glo3d, autored);
-  const supabase = getServerSupabase();
-  let data: Record<string, unknown> | null = null;
-  let insertError: string | undefined;
-
-  if (supabase) {
-    const insertResult = await supabase
-      .from(INVENTARIO_TABLE)
-      .insert(insertPayload)
-      .select("*")
-      .single();
-    data = (insertResult.data as Record<string, unknown> | null) ?? null;
-    insertError = insertResult.error?.message;
-    if (insertError) {
-      console.warn(`[import-patent] Inventario Supabase no creado para ${patente}:`, insertError);
-    }
-  }
-
-  const row = data
-    ? buildCatalogRow(patente, data, glo3d)
-    : buildCatalogRow(patente, insertPayload, glo3d);
+  const persisted = await persistInventarioRow(patente, payload, null);
+  const row = buildCatalogRow(patente, persisted.row, glo3d, autored);
+  const images = [
+    ...extractGlo3dImages(glo3d),
+    ...extractAutoredImages(autored),
+    ...normalizeImageList(row.imagenes),
+  ];
   const item = catalogRowToItem(row);
   if (!item) throw new Error(`No se pudo normalizar la unidad importada ${patente}.`);
 
   return {
     item,
-    vehicleDetails: buildVehicleDetailsFromSources(patente, row, glo3d, autored),
+    vehicleDetails: buildVehicleDetailsFromSources(patente, row, glo3d, autored, images),
     source: resolveImportSource(glo3d, autored, false),
-    created: Boolean(data),
+    created: persisted.created,
     patente,
     requestedPatente,
     correctedPatente,

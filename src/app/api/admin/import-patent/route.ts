@@ -15,14 +15,21 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "No autorizado." }, { status: 401 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { patente?: string };
+  const body = (await req.json().catch(() => ({}))) as {
+    patente?: string;
+    estadoRetiro?: string;
+    forceRefresh?: boolean;
+  };
   const patente = String(body.patente ?? "").trim();
   if (!patente) {
     return Response.json({ ok: false, error: "Debes indicar una patente." }, { status: 400 });
   }
 
   try {
-    const result = await importVehicleByPatent(patente);
+    const result = await importVehicleByPatent(patente, {
+      estadoRetiro: body.estadoRetiro,
+      forceRefresh: body.forceRefresh,
+    });
     revalidatePath("/");
     revalidatePath("/api/catalogo");
     return Response.json({ ok: true, ...result });
