@@ -531,6 +531,25 @@ function resolveAutoImportPatent(rawTerm: string): string | null {
   return null;
 }
 
+function patentDifferenceScore(left: string, right: string): number {
+  if (left === right) return 0;
+  if (left.length !== right.length) return 99;
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) diff += 1;
+  }
+  return diff;
+}
+
+function patentsAreSimilar(left: string, right: string): boolean {
+  const a = normalizePatentToken(left);
+  const b = normalizePatentToken(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length === 6 && b.length === 6) return patentDifferenceScore(a, b) <= 2;
+  return a.includes(b) || b.includes(a);
+}
+
 function getCatalogItemDedupeKey(item: CatalogItem): string {
   const patent = normalizePatentToken(getPatent(item));
   if (patent && patent !== "—") return patent;
@@ -573,7 +592,13 @@ function matchesInventoryPatentSearch(
   const patent = normalizePatentToken(getPatent(item));
   const key = normalizePatentToken(getVehicleKey(item));
   if (patentTokens.length > 0) {
-    return patentTokens.some((token) => patent === token || key === token);
+    return patentTokens.some(
+      (token) =>
+        patent === token ||
+        key === token ||
+        patentsAreSimilar(patent, token) ||
+        patentsAreSimilar(key, token),
+    );
   }
   const query = normalizeText(rawTerm);
   if (!query) return false;
@@ -5346,7 +5371,8 @@ export function CatalogHomeClient({
   };
 
   const importPatentsForBatchAssign = async () => {
-    const patentTokens = extractPatentTokens(batchAssignSearchTerm);
+    const singlePatent = resolveAutoImportPatent(batchAssignSearchTerm);
+    const patentTokens = singlePatent ? [singlePatent] : extractPatentTokens(batchAssignSearchTerm);
     if (patentTokens.length === 0) {
       showSystemNotice("info", "Sin patente", "Ingresa al menos una patente para importar.");
       return;
@@ -5359,6 +5385,7 @@ export function CatalogHomeClient({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ patente }),
+          signal: AbortSignal.timeout(45_000),
         });
         const payload = (await response.json().catch(() => ({}))) as {
           ok?: boolean;
@@ -5368,10 +5395,22 @@ export function CatalogHomeClient({
           source?: "inventario" | "glo3d" | "glo3d+autored" | "autored";
           created?: boolean;
           patente?: string;
+          requestedPatente?: string;
+          correctedPatente?: boolean;
           hasGlo3dViewer?: boolean;
         };
         if (!response.ok || !payload.ok || !payload.item) {
           throw new Error(payload.error ?? `No se pudo importar ${patente}.`);
+        }
+        const resolvedPatente = payload.patente ?? patente;
+        if (payload.correctedPatente && resolvedPatente !== normalizePatentToken(batchAssignSearchTerm)) {
+          setBatchAssignSearchTerm(resolvedPatente);
+          lastAutoImportPatentRef.current = resolvedPatente;
+          showSystemNotice(
+            "info",
+            "Patente corregida",
+            `En Glo3D la patente es ${resolvedPatente}${payload.requestedPatente ? ` (buscaste ${payload.requestedPatente})` : ""}.`,
+          );
         }
         const vehicleKey = getVehicleKey(payload.item);
         importedKeys.push(vehicleKey);
@@ -5395,17 +5434,23 @@ export function CatalogHomeClient({
           "success",
           payload.created ? "Unidad importada" : "Unidad encontrada",
           payload.created
-            ? `${patente} se creó en inventario compartido desde Glo3D${payload.hasGlo3dViewer ? " con visor 3D" : ""}.`
-            : `${patente} quedó disponible para agregar${payload.hasGlo3dViewer ? " con visor Glo3D" : ""}.`,
+            ? `${resolvedPatente} se creó en inventario compartido desde Glo3D${payload.hasGlo3dViewer ? " con visor 3D" : ""}.`
+            : `${resolvedPatente} quedó disponible para agregar${payload.hasGlo3dViewer ? " con visor Glo3D" : ""}.`,
         );
       }
       setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...importedKeys])));
     } catch (error) {
       lastAutoImportPatentRef.current = "";
+      const message =
+        error instanceof DOMException && error.name === "TimeoutError"
+          ? "Glo3D tardó demasiado en responder. Espera unos segundos y vuelve a intentar con la patente exacta (ej. TJSX32)."
+          : error instanceof Error
+            ? error.message
+            : "No se pudo importar la patente.";
       showSystemNotice(
         "error",
-        "Importación fallida",
-        error instanceof Error ? error.message : "No se pudo importar la patente.",
+        message.includes("saturada") ? "Glo3D saturado" : "Importación fallida",
+        message,
       );
     } finally {
       setBatchAssignImporting(false);
@@ -11140,7 +11185,8 @@ export function CatalogHomeClient({
 
             {batchAssignImporting ? (
               <p className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
-                Buscando en Glo3D y completando ficha para agregar al evento...
+                Buscando en Glo3D y completando ficha... Verifica que la patente sea exacta (ej.{" "}
+                <strong>TJSX32</strong>, no TSJX32). Puede tardar hasta 30 segundos.
               </p>
             ) : null}
 

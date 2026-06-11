@@ -4,6 +4,8 @@ import {
   fetchAutoredRecordByPatent,
   fetchGlo3dRecordByPatent,
   fetchInventarioRowByPatent,
+  Glo3dRateLimitError,
+  resolveCanonicalPatentFromGlo3dEntry,
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
 import type { CatalogItem } from "@/types/catalog";
@@ -17,6 +19,8 @@ export type ImportPatentResult = {
   source: ImportPatentSource;
   created: boolean;
   patente: string;
+  requestedPatente?: string;
+  correctedPatente?: boolean;
   hasGlo3dViewer: boolean;
 };
 
@@ -249,14 +253,28 @@ function resolveImportSource(
 }
 
 export async function importVehicleByPatent(rawPatent: string): Promise<ImportPatentResult> {
-  const patente = normalizePatent(rawPatent);
-  if (!/^[A-Z0-9]{5,10}$/.test(patente)) {
+  const requestedPatente = normalizePatent(rawPatent);
+  if (!/^[A-Z0-9]{5,10}$/.test(requestedPatente)) {
     throw new Error("Patente inválida. Usa un formato como TJSX73.");
   }
 
-  const glo3d = await fetchGlo3dRecordByPatent(patente);
+  let glo3d: Glo3dInventoryEntry | null = null;
+  try {
+    glo3d = await fetchGlo3dRecordByPatent(requestedPatente);
+  } catch (error) {
+    if (error instanceof Glo3dRateLimitError) throw error;
+    throw error;
+  }
+  const canonicalPatente = glo3d
+    ? resolveCanonicalPatentFromGlo3dEntry(glo3d, requestedPatente)
+    : requestedPatente;
+  const patente = canonicalPatente;
+  const correctedPatente = patente !== requestedPatente;
+
   const autored = await fetchAutoredRecordByPatent(patente);
-  const existingRow = await fetchInventarioRowByPatent(patente);
+  const existingRow =
+    (await fetchInventarioRowByPatent(patente)) ??
+    (correctedPatente ? await fetchInventarioRowByPatent(requestedPatente) : null);
 
   if (existingRow) {
     const payload = buildInventarioPayloadFromSources(patente, glo3d, autored);
@@ -280,6 +298,8 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
       source: resolveImportSource(glo3d, autored, true),
       created: false,
       patente,
+      requestedPatente,
+      correctedPatente,
       hasGlo3dViewer: Boolean(glo3d?.view3dUrl ?? mergedRow.glo3d_url ?? mergedRow.url_3d),
     };
   }
@@ -296,29 +316,31 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
       );
     }
     throw new Error(
-      `No se encontró ${patente} en Glo3D (o la API está saturada). Escribe la patente completa (ej. TJSX32), espera 5 segundos y pulsa "Actualizar inventario y sync".`,
-    );
-  }
-
-  const supabase = getServerSupabase();
-  if (!supabase) {
-    throw new Error(
-      "Falta SUPABASE_SERVICE_ROLE_KEY para crear inventario compartido desde Glo3D.",
+      `No se encontró ${requestedPatente} en Glo3D (o la API está saturada). Verifica la patente exacta (ej. TJSX32, no TSJX32), espera unos segundos y pulsa "Actualizar inventario y sync".`,
     );
   }
 
   const insertPayload = buildInventarioPayloadFromSources(patente, glo3d, autored);
-  const { data, error } = await supabase
-    .from(INVENTARIO_TABLE)
-    .insert(insertPayload)
-    .select("*")
-    .single();
+  const supabase = getServerSupabase();
+  let data: Record<string, unknown> | null = null;
+  let insertError: string | undefined;
 
-  if (error || !data) {
-    throw new Error(error?.message ?? `No se pudo crear inventario para ${patente}.`);
+  if (supabase) {
+    const insertResult = await supabase
+      .from(INVENTARIO_TABLE)
+      .insert(insertPayload)
+      .select("*")
+      .single();
+    data = (insertResult.data as Record<string, unknown> | null) ?? null;
+    insertError = insertResult.error?.message;
+    if (insertError) {
+      console.warn(`[import-patent] Inventario Supabase no creado para ${patente}:`, insertError);
+    }
   }
 
-  const row = buildCatalogRow(patente, { ...(data as Record<string, unknown>) }, glo3d);
+  const row = data
+    ? buildCatalogRow(patente, data, glo3d)
+    : buildCatalogRow(patente, insertPayload, glo3d);
   const item = catalogRowToItem(row);
   if (!item) throw new Error(`No se pudo normalizar la unidad importada ${patente}.`);
 
@@ -326,8 +348,10 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
     item,
     vehicleDetails: buildVehicleDetailsFromSources(patente, row, glo3d, autored),
     source: resolveImportSource(glo3d, autored, false),
-    created: true,
+    created: Boolean(data),
     patente,
+    requestedPatente,
+    correctedPatente,
     hasGlo3dViewer: Boolean(glo3d.view3dUrl),
   };
 }

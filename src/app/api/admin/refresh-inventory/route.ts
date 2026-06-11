@@ -6,6 +6,7 @@ import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 export async function POST() {
   const cookieStore = await cookies();

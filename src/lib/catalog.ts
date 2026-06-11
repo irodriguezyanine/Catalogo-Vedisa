@@ -13,8 +13,8 @@ const AUTORED_API_URL = process.env.CATALOG_SOURCE_AUTORED_API_URL;
 const AUTORED_MAX_LOOKUPS = Number(process.env.CATALOG_AUTORED_MAX_LOOKUPS ?? "1000");
 const GLO3D_INVENTORY_POST_URL =
   "https://us-central1-glo3d-c338b.cloudfunctions.net/outbound/api/v1/inventory";
-const GLO3D_MAX_PAGES = Number(process.env.GLO3D_MAX_PAGES ?? "8");
-const GLO3D_REFRESH_MAX_PAGES = Number(process.env.GLO3D_REFRESH_MAX_PAGES ?? "12");
+const GLO3D_MAX_PAGES = Number(process.env.GLO3D_MAX_PAGES ?? "3");
+const GLO3D_REFRESH_MAX_PAGES = Number(process.env.GLO3D_REFRESH_MAX_PAGES ?? "3");
 const GLO3D_PAGE_CACHE_TTL_MS = 120_000;
 const GLO3D_PATENT_CACHE_TTL_MS = 300_000;
 
@@ -43,6 +43,15 @@ function getGlo3dCredentials(): { username: string; password: string } | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export class Glo3dRateLimitError extends Error {
+  constructor() {
+    super(
+      "La API de Glo3D está saturada. Espera 10–15 segundos sin hacer clic en nada y vuelve a buscar la patente.",
+    );
+    this.name = "Glo3dRateLimitError";
+  }
 }
 const GLO3D_IFRAME_NOVA_BASE = "https://glo3d.net/iframeNova";
 const GLO3D_IFRAME_PARAMS =
@@ -929,6 +938,61 @@ function glo3dRawContainsNeedle(item: Record<string, unknown>, target: string): 
   return JSON.stringify(item).toUpperCase().includes(target);
 }
 
+function patentDifferenceScore(left: string, right: string): number {
+  if (left === right) return 0;
+  if (left.length !== right.length) return 99;
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) diff += 1;
+  }
+  return diff;
+}
+
+export function patentsAreSimilar(left: string, right: string): boolean {
+  const a = normalizeStock(left);
+  const b = normalizeStock(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length === 6 && b.length === 6) return patentDifferenceScore(a, b) <= 2;
+  return a.includes(b) || b.includes(a);
+}
+
+function findFuzzyGlo3dEntryFromItems(
+  items: Array<Record<string, unknown>>,
+  target: string,
+): Glo3dInventoryEntry | null {
+  let best: { entry: Glo3dInventoryEntry; score: number } | null = null;
+  for (const item of items) {
+    const stock = normalizeStock(
+      getStringFromKeys(item, ["stock_number", "stock", "PPU", "ppu", "patente", "plate"]) ??
+        extractPatentFromGlo3dItem(item) ??
+        "",
+    );
+    if (!/^[A-Z]{4}\d{2}$/.test(stock)) continue;
+    const score = patentDifferenceScore(target, stock);
+    if (score > 2) continue;
+    const entry = buildGlo3dEntryFromRaw(item);
+    if (!entry) continue;
+    if (!best || score < best.score) {
+      best = { entry: stampGlo3dEntryPatent(entry, stock), score };
+    }
+  }
+  return best?.entry ?? null;
+}
+
+export function resolveCanonicalPatentFromGlo3dEntry(
+  entry: Glo3dInventoryEntry,
+  fallback: string,
+): string {
+  const raw = entry.raw as Record<string, unknown>;
+  const stock = normalizeStock(
+    getStringFromKeys(raw, ["stock_number", "stock", "PPU", "ppu", "patente", "plate"]) ??
+      extractPatentFromGlo3dItem(raw) ??
+      fallback,
+  );
+  return /^[A-Z]{4}\d{2}$/.test(stock) ? stock : normalizeStock(fallback);
+}
+
 function stampGlo3dEntryPatent(entry: Glo3dInventoryEntry, patente: string): Glo3dInventoryEntry {
   const raw = { ...(entry.raw as Record<string, unknown>), patente, ppu: patente, stock_number: patente };
   return {
@@ -1040,7 +1104,7 @@ async function fetchGlo3dInventoryPage(page: number, search?: string): Promise<G
             : { page, pageSize: 200 },
         );
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await fetch(GLO3D_INVENTORY_POST_URL, {
       method: "POST",
       headers: {
@@ -1053,7 +1117,7 @@ async function fetchGlo3dInventoryPage(page: number, search?: string): Promise<G
     });
 
     if (response.status === 429) {
-      await sleep(900 * (attempt + 1));
+      await sleep(1200 * (attempt + 1));
       continue;
     }
 
@@ -1093,33 +1157,54 @@ function resolveGlo3dEntryFromPageItems(
   return null;
 }
 
-async function fetchGlo3dByPatentScan(patent: string): Promise<Glo3dInventoryEntry | null> {
+function resolveGlo3dEntryByStockNumber(
+  items: Array<Record<string, unknown>>,
+  target: string,
+): Glo3dInventoryEntry | null {
+  for (const item of items) {
+    const stock = normalizeStock(
+      getStringFromKeys(item, ["stock_number", "stock", "PPU", "ppu"]) ?? "",
+    );
+    if (stock !== target) continue;
+    const entry = buildGlo3dEntryFromRaw(item);
+    if (entry) return stampGlo3dEntryPatent(entry, stock);
+  }
+  return null;
+}
+
+async function fetchGlo3dByPatentScan(
+  patent: string,
+): Promise<{ entry: Glo3dInventoryEntry | null; rateLimited: boolean }> {
   const target = normalizeStock(patent);
-  if (!target) return null;
+  if (!target) return { entry: null, rateLimited: false };
+
+  let rateLimited = false;
 
   for (const query of [target, target.toLowerCase()]) {
-    let page = 0;
-    while (page < 4) {
-      const payload = await fetchGlo3dInventoryPage(page, query);
-      if (!payload.ok) break;
-      const resolved = resolveGlo3dEntryFromPageItems(payload.data, target);
-      if (resolved) return resolved;
-      if (payload.remaining <= 0 || payload.data.length === 0) break;
-      page += 1;
-    }
-  }
+    const payload = await fetchGlo3dInventoryPage(0, query);
+    if (payload.rateLimited) rateLimited = true;
+    if (!payload.ok) continue;
 
-  let page = 0;
-  while (page < 8) {
-    const payload = await fetchGlo3dInventoryPage(page);
-    if (!payload.ok) break;
+    const byStock = resolveGlo3dEntryByStockNumber(payload.data, target);
+    if (byStock) return { entry: byStock, rateLimited: false };
+
     const resolved = resolveGlo3dEntryFromPageItems(payload.data, target);
-    if (resolved) return resolved;
-    if (payload.remaining <= 0 || payload.data.length === 0) break;
-    page += 1;
+    if (resolved) return { entry: resolved, rateLimited: false };
+
+    const fuzzy = findFuzzyGlo3dEntryFromItems(payload.data, target);
+    if (fuzzy) return { entry: fuzzy, rateLimited: false };
   }
 
-  return null;
+  const fallbackPage = await fetchGlo3dInventoryPage(0);
+  if (fallbackPage.rateLimited) rateLimited = true;
+  if (fallbackPage.ok) {
+    const byStock = resolveGlo3dEntryByStockNumber(fallbackPage.data, target);
+    if (byStock) return { entry: byStock, rateLimited: false };
+    const resolved = resolveGlo3dEntryFromPageItems(fallbackPage.data, target);
+    if (resolved) return { entry: resolved, rateLimited: false };
+  }
+
+  return { entry: null, rateLimited };
 }
 
 export async function fetchGlo3dRecordByPatent(
@@ -1133,9 +1218,17 @@ export async function fetchGlo3dRecordByPatent(
     return cached.entry;
   }
 
-  const fromScan = await fetchGlo3dByPatentScan(stock);
-  glo3dPatentCache.set(stock, { expires: Date.now() + GLO3D_PATENT_CACHE_TTL_MS, entry: fromScan });
-  return fromScan;
+  const lookup = await fetchGlo3dByPatentScan(stock);
+  glo3dPatentCache.set(stock, {
+    expires: Date.now() + GLO3D_PATENT_CACHE_TTL_MS,
+    entry: lookup.entry,
+  });
+
+  if (lookup.rateLimited && !lookup.entry) {
+    throw new Glo3dRateLimitError();
+  }
+
+  return lookup.entry;
 }
 
 export async function appendGlo3dOnlyCatalogItems(items: CatalogItem[]): Promise<CatalogItem[]> {

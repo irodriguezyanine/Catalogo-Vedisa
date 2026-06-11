@@ -5,6 +5,7 @@ import { importVehicleByPatent } from "@/lib/catalog-import-patent";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const cookieStore = await cookies();
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
     return Response.json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo importar la patente.";
-    return Response.json({ ok: false, error: message }, { status: 400 });
+    const status = error instanceof Error && error.name === "Glo3dRateLimitError" ? 429 : 400;
+    return Response.json({ ok: false, error: message }, { status });
   }
 }
