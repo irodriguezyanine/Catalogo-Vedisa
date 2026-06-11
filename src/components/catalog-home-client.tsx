@@ -377,6 +377,8 @@ function mergeSyncedVehicleDetails(
     combustible: pick(synced.combustible) ?? draft.combustible,
     transmision: pick(synced.transmision) ?? draft.transmision,
     traccion: pick(synced.traccion) ?? draft.traccion,
+    aro: pick(synced.aro) ?? draft.aro,
+    cilindrada: pick(synced.cilindrada) ?? draft.cilindrada,
     thumbnail: pick(synced.thumbnail) ?? draft.thumbnail ?? item.thumbnail ?? "",
     view3dUrl: pick(synced.view3dUrl) ?? draft.view3dUrl ?? item.view3dUrl ?? "",
     imagesCsv:
@@ -475,6 +477,148 @@ function vehicleNeedsSourceSync(
   const missingMedia = !details?.thumbnail && !item.thumbnail;
   const missingTechnical = !details?.pruebaMotor && !details?.llaves && !details?.kilometraje;
   return missingIdentity || missingMedia || missingTechnical;
+}
+
+function hasRealVehicleThumbnail(
+  item: CatalogItem,
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+): boolean {
+  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const candidate =
+    details?.thumbnail ??
+    item.thumbnail ??
+    item.images.find((url) => url.startsWith("http"));
+  if (!candidate?.trim()) return false;
+  if (candidate.includes("placeholder")) return false;
+  return candidate.startsWith("http");
+}
+
+function vehicleTitleNeedsSync(
+  item: CatalogItem,
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+): boolean {
+  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const patente = getPatent(item);
+  const title = (details?.title ?? item.title ?? "").trim();
+  if (!title || isStaleEditorDraftValue(title, patente)) return true;
+  const model = getModel(item).trim();
+  if (model && title.toUpperCase() === model.toUpperCase()) return true;
+  const brand = (details?.brand ?? String((item.raw as Record<string, unknown>).marca ?? "")).trim();
+  const year = (details?.year ?? String((item.raw as Record<string, unknown>).ano ?? "")).trim();
+  if (brand && !isPlaceholderVehicleLabel(brand) && !title.toUpperCase().includes(brand.toUpperCase())) {
+    return true;
+  }
+  if (year && !title.includes(year)) return true;
+  return false;
+}
+
+function vehicleNeedsQuickSync(
+  item: CatalogItem,
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+): boolean {
+  if (vehicleKey.startsWith("manual-")) return false;
+  return !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) && vehicleTitleNeedsSync(item, vehicleKey, editorConfig);
+}
+
+function resolveVehicleThumbnailSrc(item: CatalogItem): string {
+  const candidate =
+    item.thumbnail ?? item.images.find((url) => url.startsWith("http") && !url.includes("placeholder"));
+  return candidate ?? "/placeholder-car.svg";
+}
+
+function VehicleSyncIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" className={className} fill="currentColor" aria-hidden="true">
+      <path d="M4.5 3A1.5 1.5 0 0 0 3 4.5v2.879a1 1 0 0 0 .293.707l2.122 2.122a1 1 0 0 0 1.414-1.414L5.414 7.5H7.5A1.5 1.5 0 0 0 9 6V4.5A1.5 1.5 0 0 0 7.5 3h-3ZM13 3A1.5 1.5 0 0 0 11.5 4.5V6a1.5 1.5 0 0 0 1.5 1.5h2.086l-1.415 1.415a1 1 0 1 0 1.414 1.414l2.122-2.122A1 1 0 0 0 17 7.379V4.5A1.5 1.5 0 0 0 15.5 3H13Zm-8 10A1.5 1.5 0 0 0 3.5 14.5V17a1.5 1.5 0 0 0 1.5 1.5h3A1.5 1.5 0 0 0 9 17v-1.5A1.5 1.5 0 0 0 7.5 14H5.414l1.415 1.415a1 1 0 0 1-1.414 1.414L3.293 14.707A1 1 0 0 1 3 14V11.5A1.5 1.5 0 0 1 4.5 10h.5v1.5A1.5 1.5 0 0 1 6.5 13H7v1.5A1.5 1.5 0 0 1 5.5 16h-2Zm11-1.5A1.5 1.5 0 0 0 15 14.5V17a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 17v-1.5a1.5 1.5 0 0 1 1.5-1.5h2.086l-1.415-1.415a1 1 0 1 1 1.414-1.414l2.122 2.122a1 1 0 0 1 .293.707V17a1.5 1.5 0 0 0 1.5 1.5h.5v-1.5A1.5 1.5 0 0 0 15.5 13H15v-1.5A1.5 1.5 0 0 0 13.5 10h2Z" />
+    </svg>
+  );
+}
+
+function VehicleListThumbnailWithSync({
+  item,
+  vehicleKey,
+  editorConfig,
+  onSync,
+  syncingVehicleKey,
+  className = "relative mx-auto h-12 w-20 overflow-hidden rounded-md border border-slate-200 bg-slate-100",
+}: {
+  item: CatalogItem;
+  vehicleKey: string;
+  editorConfig: EditorConfig;
+  onSync: (key: string) => void;
+  syncingVehicleKey: string | null;
+  className?: string;
+}) {
+  const needsQuickSync = vehicleNeedsQuickSync(item, vehicleKey, editorConfig);
+  const isSyncing = syncingVehicleKey === vehicleKey;
+  const patente = getPatent(item);
+  return (
+    <div className={className}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={resolveVehicleThumbnailSrc(item)}
+        alt={`Miniatura ${getModel(item)}`}
+        className="h-full w-full object-cover"
+        loading="lazy"
+        onError={(event) => {
+          event.currentTarget.src = "/placeholder-car.svg";
+        }}
+      />
+      {needsQuickSync ? (
+        <button
+          type="button"
+          onClick={() => onSync(vehicleKey)}
+          disabled={Boolean(syncingVehicleKey)}
+          className="ui-focus absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-slate-900/50 text-white transition hover:bg-cyan-900/65 disabled:cursor-wait"
+          aria-label={`Sincronizar ${patente} con Glo3D y Autored`}
+          title="Sincronizar Glo3D + Autored"
+        >
+          {isSyncing ? (
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          ) : (
+            <VehicleSyncIcon />
+          )}
+          <span className="text-[9px] font-semibold leading-none">{isSyncing ? "Sync…" : "Sync"}</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function VehicleQuickSyncButton({
+  item,
+  vehicleKey,
+  editorConfig,
+  onSync,
+  syncingVehicleKey,
+}: {
+  item: CatalogItem;
+  vehicleKey: string;
+  editorConfig: EditorConfig;
+  onSync: (key: string) => void;
+  syncingVehicleKey: string | null;
+}) {
+  if (!vehicleNeedsQuickSync(item, vehicleKey, editorConfig)) return null;
+  const isSyncing = syncingVehicleKey === vehicleKey;
+  return (
+    <button
+      type="button"
+      onClick={() => onSync(vehicleKey)}
+      disabled={Boolean(syncingVehicleKey)}
+      className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-amber-300 bg-amber-50 text-amber-700 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
+      aria-label={`Sincronizar ${getPatent(item)}`}
+      title="Sincronizar Glo3D + Autored"
+    >
+      {isSyncing ? (
+        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700" />
+      ) : (
+        <VehicleSyncIcon className="h-4 w-4" />
+      )}
+    </button>
+  );
 }
 
 function getAuctionEventOrigin(auction: UpcomingAuction): CommercialEventOrigin {
@@ -1769,7 +1913,17 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
     nChasis: resolveEditorDraftField(
       override?.nChasis,
       String(
-        getLookupValue(lookup, ["n_de_chasis", "numero_chasis", "nro_chasis", "chasis", "glo3d.n_de_chasis"]) ?? "",
+        getLookupValue(lookup, [
+          "n_de_chasis",
+          "numero_chasis",
+          "nro_chasis",
+          "chasis",
+          "glo3d.n_de_chasis",
+          "autored.n_de_chasis",
+          "autored.numero_chasis",
+        ]) ??
+          getLookupValue(lookup, ["vin", "n_de_vin", "numero_vin", "extracted_vin", "glo3d.n_de_vin", "autored.vin"]) ??
+          "",
       ),
       patente,
     ),
@@ -1872,7 +2026,15 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
     combustible: resolveEditorDraftField(
       override?.combustible,
       String(
-        getLookupValue(lookup, ["combustible", "fuel", "fuel_type", "glo3d.combustible", "glo3d.fuel"]) ??
+        getLookupValue(lookup, [
+          "combustible",
+          "fuel",
+          "fuel_type",
+          "glo3d.combustible",
+          "glo3d.fuel",
+          "autored.combustible",
+          "autored.fuel_type",
+        ]) ??
           raw.combustible ??
           cav.combustible ??
           "",
@@ -1882,7 +2044,15 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
     transmision: resolveEditorDraftField(
       override?.transmision,
       String(
-        getLookupValue(lookup, ["transmision", "caja", "transmission", "glo3d.transmision", "glo3d.caja"]) ??
+        getLookupValue(lookup, [
+          "transmision",
+          "caja",
+          "transmission",
+          "glo3d.transmision",
+          "glo3d.caja",
+          "autored.transmision",
+          "autored.caja",
+        ]) ??
           raw.transmision ??
           cav.transmision ??
           cav.caja ??
@@ -1900,7 +2070,16 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
       ),
       patente,
     ),
-    aro: override?.aro ?? String(raw.aro ?? cav.aro ?? ""),
+    aro: resolveEditorDraftField(
+      override?.aro,
+      String(
+        getLookupValue(lookup, ["aro", "rin", "rines", "glo3d.aro", "glo3d.rin", "autored.aro"]) ??
+          raw.aro ??
+          cav.aro ??
+          "",
+      ),
+      patente,
+    ),
     cilindrada: override?.cilindrada ?? String(raw.cilindrada ?? cav.cilindrada ?? ""),
     llaves: resolveEditorDraftField(
       override?.llaves,
@@ -2031,7 +2210,20 @@ function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails
       delete overrideCopy[key];
     }
   }
-  const images = parseImagesCsv(overrideCopy.imagesCsv);
+  const imagesFromCsv = parseImagesCsv(overrideCopy.imagesCsv);
+  const syncedThumbnail = overrideCopy.thumbnail?.trim();
+  const hasSyncedThumbnail = Boolean(
+    syncedThumbnail?.startsWith("http") && !syncedThumbnail.includes("placeholder"),
+  );
+  const mergedImages = [
+    ...new Set([
+      ...imagesFromCsv,
+      ...(hasSyncedThumbnail && syncedThumbnail ? [syncedThumbnail] : []),
+      ...item.images.filter((url) => url.startsWith("http") && !url.includes("placeholder")),
+    ]),
+  ];
+  const thumbnail =
+    (hasSyncedThumbnail ? syncedThumbnail : undefined) ?? mergedImages[0] ?? item.thumbnail;
   return {
     ...item,
     title: overrideCopy.title ?? item.title,
@@ -2040,9 +2232,9 @@ function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails
     location: overrideCopy.location ?? item.location,
     lot: overrideCopy.lot ?? item.lot,
     auctionDate: overrideCopy.auctionDate ?? item.auctionDate,
-    thumbnail: overrideCopy.thumbnail ?? item.thumbnail,
+    thumbnail,
     view3dUrl: overrideCopy.view3dUrl ?? item.view3dUrl,
-    images: images.length > 0 ? images : item.images,
+    images: mergedImages.length > 0 ? mergedImages : item.images,
     raw: {
       ...item.raw,
       ...(overrideCopy.patente ? { patente: overrideCopy.patente, PPU: overrideCopy.patente } : {}),
@@ -2099,6 +2291,16 @@ function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails
       ...(override.nombrePropietarioAnterior ? { nombre_propietario_anterior: override.nombrePropietarioAnterior, npa: override.nombrePropietarioAnterior } : {}),
       ...(override.rutPropietarioAnterior ? { rut_propietario_anterior: override.rutPropietarioAnterior, rpa: override.rutPropietarioAnterior } : {}),
       ...(override.rutVerificador ? { rut_verificador: override.rutVerificador, verifier_rut: override.rutVerificador } : {}),
+      ...(mergedImages.length > 0
+        ? {
+            imagenes: mergedImages,
+            fotos_urls: mergedImages,
+            fotos: mergedImages,
+            thumbnail,
+            imagen_principal: thumbnail,
+            foto_portada: thumbnail,
+          }
+        : {}),
     },
   };
 }
@@ -2244,7 +2446,7 @@ function FeaturedStrip({ items, onOpenVehicle }: FeaturedStripProps) {
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
+                src={resolveVehicleThumbnailSrc(item)}
                 alt={item.title}
                 className="featured-image"
                 loading="lazy"
@@ -5777,17 +5979,23 @@ export function CatalogHomeClient({
       hasGlo3dViewer?: boolean;
     }) => {
       const vehicleKey = getVehicleKey(payload.item);
+      const importedVehicleDetails = payload.vehicleDetails;
+      const mergedVehicleDetails = importedVehicleDetails
+        ? mergeImportedVehicleDetails(undefined, importedVehicleDetails)
+        : undefined;
+      const enrichedItem = mergedVehicleDetails
+        ? applyDetailsOverride(payload.item, mergedVehicleDetails)
+        : payload.item;
       setImportedInventoryItems((prev) => {
         const next = prev.filter((entry) => getVehicleKey(entry) !== vehicleKey);
-        return [...next, payload.item];
+        return [...next, enrichedItem];
       });
       setLiveFeedItems((prev) =>
         dedupeCatalogItemsByVehicleKey([
           ...prev.filter((entry) => getVehicleKey(entry) !== vehicleKey),
-          payload.item,
+          enrichedItem,
         ]),
       );
-      const importedVehicleDetails = payload.vehicleDetails;
       if (importedVehicleDetails) {
         setConfig((prev) => ({
           ...prev,
@@ -8090,6 +8298,7 @@ export function CatalogHomeClient({
                   {paginatedEditorItems.map((item) => {
                     const key = getVehicleKey(item);
                     const hidden = mergedHiddenVehicleIds.has(key);
+                    const needsQuickSync = vehicleNeedsQuickSync(item, key, config);
                     const eventBadge = upcomingAuctionByVehicleKey[key];
                     const auctionLabel = eventBadge
                       ? eventBadge.kind === "venta_directa"
@@ -8127,23 +8336,25 @@ export function CatalogHomeClient({
                             <span className="normal-case tracking-normal text-[11px] text-slate-500">
                               {hidden ? "Oculto" : "Visible"}
                             </span>
+                            {needsQuickSync ? (
+                              <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800">
+                                Sin sync
+                              </span>
+                            ) : null}
                           </p>
                           <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">
-                            {getModel(item)}
+                            {item.title?.trim() && !isStaleEditorDraftValue(item.title, getPatent(item))
+                              ? item.title
+                              : getModel(item)}
                           </p>
                         </div>
-                        <div className="mx-auto h-12 w-20 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
-                            alt={`Miniatura ${getModel(item)}`}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                            onError={(event) => {
-                              event.currentTarget.src = "/placeholder-car.svg";
-                            }}
-                          />
-                        </div>
+                        <VehicleListThumbnailWithSync
+                          item={item}
+                          vehicleKey={key}
+                          editorConfig={config}
+                          onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                          syncingVehicleKey={syncingVehicleKey}
+                        />
                         <div className="min-w-0 text-xs text-slate-600 sm:text-right">
                           <p className="line-clamp-1 font-semibold text-slate-700">{auctionLabel}</p>
                           <p className="line-clamp-1">
@@ -8152,6 +8363,13 @@ export function CatalogHomeClient({
                           </p>
                         </div>
                         <div className="flex items-center justify-end gap-1.5">
+                          <VehicleQuickSyncButton
+                            item={item}
+                            vehicleKey={key}
+                            editorConfig={config}
+                            onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                            syncingVehicleKey={syncingVehicleKey}
+                          />
                           <button
                             type="button"
                             onClick={() => setManagingVehicleKey(key)}
@@ -11053,7 +11271,7 @@ export function CatalogHomeClient({
                         <div className="h-12 w-16 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
+                            src={resolveVehicleThumbnailSrc(item)}
                             alt={`Miniatura ${item.title}`}
                             className="h-full w-full object-cover"
                             loading="lazy"
@@ -11781,6 +11999,7 @@ export function CatalogHomeClient({
                 groupManageItems.map((item) => {
                   const key = getVehicleKey(item);
                   const hidden = mergedHiddenVehicleIds.has(key);
+                  const needsQuickSync = vehicleNeedsQuickSync(item, key, config);
                   return (
                     <article
                       key={`group-manage-${key}`}
@@ -11798,23 +12017,25 @@ export function CatalogHomeClient({
                           <span className="normal-case tracking-normal text-[11px] text-slate-500">
                             {hidden ? "Oculto" : "Visible"}
                           </span>
+                          {needsQuickSync ? (
+                            <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800">
+                              Sin sync
+                            </span>
+                          ) : null}
                         </p>
                         <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">
-                          {getModel(item)}
+                          {item.title?.trim() && !isStaleEditorDraftValue(item.title, getPatent(item))
+                            ? item.title
+                            : getModel(item)}
                         </p>
                       </div>
-                      <div className="mx-auto h-12 w-20 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
-                          alt={`Miniatura ${getModel(item)}`}
-                          className="h-full w-full object-cover"
-                          loading="lazy"
-                          onError={(event) => {
-                            event.currentTarget.src = "/placeholder-car.svg";
-                          }}
-                        />
-                      </div>
+                      <VehicleListThumbnailWithSync
+                        item={item}
+                        vehicleKey={key}
+                        editorConfig={config}
+                        onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                        syncingVehicleKey={syncingVehicleKey}
+                      />
                       <div className="min-w-0 text-xs text-slate-600 sm:text-right">
                         <p className="line-clamp-1">
                           {formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ??
@@ -11822,6 +12043,13 @@ export function CatalogHomeClient({
                         </p>
                       </div>
                       <div className="flex items-center justify-end gap-1.5">
+                        <VehicleQuickSyncButton
+                          item={item}
+                          vehicleKey={key}
+                          editorConfig={config}
+                          onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                          syncingVehicleKey={syncingVehicleKey}
+                        />
                         <button
                           type="button"
                           onClick={() => setManagingVehicleKey(key)}
@@ -12015,22 +12243,45 @@ export function CatalogHomeClient({
                 return (
                   <div
                     key={`assign-batch-${key}`}
-                    className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${
                       checked ? "border-cyan-300 bg-cyan-50" : "border-slate-200 bg-white"
                     }`}
                   >
+                    <VehicleListThumbnailWithSync
+                      item={item}
+                      vehicleKey={key}
+                      editorConfig={config}
+                      onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                      syncingVehicleKey={syncingVehicleKey}
+                      className="relative h-11 w-16 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100"
+                    />
                     <button
                       type="button"
                       onClick={() => toggleBatchAssignVehicle(key)}
                       className="ui-focus min-w-0 flex-1 text-left"
                     >
-                      <p className="font-semibold text-slate-900">{getModel(item)}</p>
+                      <p className="font-semibold text-slate-900">
+                        {item.title?.trim() && !isStaleEditorDraftValue(item.title, getPatent(item))
+                          ? item.title
+                          : getModel(item)}
+                      </p>
                       <p className="text-xs text-slate-500">
                         {getPatent(item)}{" "}
-                        {vehicleNeedsSourceSync(item, key, config) ? "· ficha incompleta" : "· ficha OK"}
+                        {vehicleNeedsQuickSync(item, key, config)
+                          ? "· sin sync"
+                          : vehicleNeedsSourceSync(item, key, config)
+                            ? "· ficha incompleta"
+                            : "· ficha OK"}
                         {alreadyInTarget ? " · ya agregado" : ""}
                       </p>
                     </button>
+                    <VehicleQuickSyncButton
+                      item={item}
+                      vehicleKey={key}
+                      editorConfig={config}
+                      onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                      syncingVehicleKey={syncingVehicleKey}
+                    />
                     <span
                       className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
                         checked
@@ -12220,236 +12471,210 @@ export function CatalogHomeClient({
 
       {isAdmin && managingVehicleKey && managingItem ? (
         <div
-          className="fixed inset-0 z-[76] flex items-center justify-center bg-slate-900/70 p-4"
+          className="fixed inset-0 z-[76] flex items-center justify-center bg-slate-900/70 p-3"
           onClick={() => setManagingVehicleKey(null)}
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-label="Gestionar unidad"
-            className="max-h-[92vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl"
+            className="w-full max-w-md overflow-hidden rounded-xl bg-white shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700">
                   Gestionar unidad
                 </p>
-                <h3 className="text-lg font-bold text-slate-900">
+                <h3 className="truncate text-sm font-bold text-slate-900">
                   {managingItem.title?.trim() && !isPlaceholderVehicleLabel(managingItem.title)
                     ? managingItem.title
                     : getModel(managingItem)}
                 </h3>
-                <p className="text-xs text-slate-500">Patente {getPatent(managingItem)}</p>
-                {!managingVehicleKey.startsWith("manual-") ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void syncManagingVehicleWithGlo3dAutored()}
-                      disabled={Boolean(syncingVehicleKey)}
-                      className="ui-focus mt-2 inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      title="Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
-                    >
-                      {syncingVehicleKey === managingVehicleKey ? "Sincronizando…" : "Sincronizar Glo3D + Autored"}
-                    </button>
-                    {Date.now() < glo3dCooldownUntil ? (
-                      <p className="mt-1 max-w-md text-xs text-amber-800">
-                        Glo3D en pausa breve: puedes sincronizar igual; se actualizará Autored y se
-                        conservará el visor 3D local.
-                      </p>
-                    ) : null}
-                  </>
-                ) : null}
+                <p className="text-[11px] text-slate-500">{getPatent(managingItem)}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setManagingVehicleKey(null)}
-                className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50"
-              >
-                Cerrar
-              </button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {!managingVehicleKey.startsWith("manual-") ? (
+                  <button
+                    type="button"
+                    onClick={() => void syncManagingVehicleWithGlo3dAutored()}
+                    disabled={Boolean(syncingVehicleKey)}
+                    className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
+                  >
+                    {syncingVehicleKey === managingVehicleKey ? "Sync…" : "Sync Glo3D"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setManagingVehicleKey(null)}
+                  className="ui-focus rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 transition hover:bg-slate-50"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
 
-            {vehicleNeedsSourceSync(managingItem, managingVehicleKey, config) ? (
-              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                Esta unidad tiene datos incompletos (marca, modelo, miniatura o ficha técnica). Usa
-                &quot;Sincronizar Glo3D + Autored&quot; para completarla antes de publicar en el home.
-              </div>
+            {Date.now() < glo3dCooldownUntil && !managingVehicleKey.startsWith("manual-") ? (
+              <p className="border-b border-amber-100 bg-amber-50 px-3 py-1 text-[10px] text-amber-800">
+                Glo3D en pausa breve; Autored sigue disponible.
+              </p>
             ) : null}
 
-            <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Estado y precio
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={!mergedHiddenVehicleIds.has(managingVehicleKey)}
-                      onChange={() => toggleHidden(managingVehicleKey)}
-                    />
-                    Visible en el sitio
-                  </label>
-                  <div className="space-y-2">
-                    <input
-                      className="ui-focus w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-                      placeholder="Precio normal CLP"
-                      value={managingVehiclePromoMeta.originalPrice}
-                      onChange={(event) =>
-                        updateVehiclePromoSettings(managingVehicleKey, {
-                          originalPrice: event.target.value,
-                        })
-                      }
-                    />
-                    <label className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
-                      <input
-                        type="checkbox"
-                        checked={managingVehiclePromoMeta.promoEnabled}
-                        onChange={(event) =>
-                          updateVehiclePromoSettings(managingVehicleKey, {
-                            promoEnabled: event.target.checked,
-                          })
-                        }
-                      />
-                      Precio promocional
-                    </label>
-                    {managingVehiclePromoMeta.promoEnabled ? (
-                      <input
-                        className="ui-focus w-full rounded-md border border-rose-300 bg-white px-3 py-2 text-sm"
-                        placeholder="Precio oferta CLP"
-                        value={managingVehiclePromoMeta.promoPrice}
-                        onChange={(event) =>
-                          updateVehiclePromoSettings(managingVehicleKey, {
-                            promoPrice: event.target.value,
-                          })
-                        }
-                      />
-                    ) : null}
-                  </div>
-                  <select
-                    className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm sm:col-span-2"
-                    value={normalizeVehicleCategoryValue(
-                      String(
-                        config.vehicleDetails[managingVehicleKey]?.category ??
-                          getLookupValue(buildVehicleLookup(managingItem.raw as Record<string, unknown>), [
-                            "categoria",
-                            "tipo_vehiculo",
-                            "tipo",
-                          ]) ??
-                          "",
-                      ),
-                    )}
-                    onChange={(event) => setVehicleCategory(managingVehicleKey, event.target.value)}
-                  >
-                    <option value="">Seleccionar categoría de vehículo</option>
-                    {VEHICLE_CATEGORY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Asignación de remate
-                </p>
-                <select
-                  className="ui-focus w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={config.vehicleUpcomingAuctionIds[managingVehicleKey] ?? ""}
+            <div className="space-y-2.5 px-3 py-2.5">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="inline-flex items-center gap-1.5 rounded border border-slate-200 px-2 py-1.5 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={!mergedHiddenVehicleIds.has(managingVehicleKey)}
+                    onChange={() => toggleHidden(managingVehicleKey)}
+                  />
+                  Visible en sitio
+                </label>
+                <label className="inline-flex items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
+                  <input
+                    type="checkbox"
+                    checked={managingVehiclePromoMeta.promoEnabled}
+                    onChange={(event) =>
+                      updateVehiclePromoSettings(managingVehicleKey, {
+                        promoEnabled: event.target.checked,
+                      })
+                    }
+                  />
+                  Precio promo
+                </label>
+                <input
+                  className="ui-focus rounded border border-slate-300 px-2 py-1.5 text-xs sm:col-span-2"
+                  placeholder="Precio normal CLP"
+                  value={managingVehiclePromoMeta.originalPrice}
                   onChange={(event) =>
-                    assignVehicleToUpcomingAuction(managingVehicleKey, event.target.value)
+                    updateVehiclePromoSettings(managingVehicleKey, {
+                      originalPrice: event.target.value,
+                    })
                   }
+                />
+                {managingVehiclePromoMeta.promoEnabled ? (
+                  <input
+                    className="ui-focus rounded border border-rose-300 px-2 py-1.5 text-xs sm:col-span-2"
+                    placeholder="Precio oferta CLP"
+                    value={managingVehiclePromoMeta.promoPrice}
+                    onChange={(event) =>
+                      updateVehiclePromoSettings(managingVehicleKey, {
+                        promoPrice: event.target.value,
+                      })
+                    }
+                  />
+                ) : null}
+                <select
+                  className="ui-focus rounded border border-slate-300 px-2 py-1.5 text-xs sm:col-span-2"
+                  value={normalizeVehicleCategoryValue(
+                    String(
+                      config.vehicleDetails[managingVehicleKey]?.category ??
+                        getLookupValue(buildVehicleLookup(managingItem.raw as Record<string, unknown>), [
+                          "categoria",
+                          "tipo_vehiculo",
+                          "tipo",
+                        ]) ??
+                        "",
+                    ),
+                  )}
+                  onChange={(event) => setVehicleCategory(managingVehicleKey, event.target.value)}
                 >
-                  <option value="">Sin remate</option>
-                  {sortedUpcomingAuctions.map((auction) => (
-                    <option key={auction.id} value={auction.id}>
-                      {auction.name} ({formatAuctionWindowLabel(auction)})
+                  <option value="">Categoría de vehículo</option>
+                  {VEHICLE_CATEGORY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Canales de publicación
-                </p>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {(["ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => {
-                    const selected = (config.sectionVehicleIds[sectionId] ?? []).includes(
-                      managingVehicleKey,
-                    );
-                    return (
-                      <label
-                        key={`manage-${managingVehicleKey}-${sectionId}`}
-                        className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${
-                          selected
-                            ? "border-cyan-300 bg-cyan-50 text-cyan-800"
-                            : "border-slate-200 bg-white text-slate-700"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={() => toggleItemInSection(sectionId, managingVehicleKey)}
-                        />
-                        {SECTION_LABELS[sectionId]}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+              <select
+                className="ui-focus w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                value={config.vehicleUpcomingAuctionIds[managingVehicleKey] ?? ""}
+                onChange={(event) =>
+                  assignVehicleToUpcomingAuction(managingVehicleKey, event.target.value)
+                }
+              >
+                <option value="">Sin remate asignado</option>
+                {sortedUpcomingAuctions.map((auction) => (
+                  <option key={auction.id} value={auction.id}>
+                    {auction.name} ({formatAuctionWindowLabel(auction)})
+                  </option>
+                ))}
+              </select>
 
-              <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-3">
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      markVehicleAsSold(managingVehicleKey);
-                      setManagingVehicleKey(null);
-                      showSystemNotice(
-                        "success",
-                        "Unidad vendida",
-                        `${getPatent(managingItem)} pasó a historial y dejó de estar visible en inventario/catálogo.`,
-                      );
-                    }}
-                    className="ui-focus rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
-                  >
-                    Marcar como vendida
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setManagingVehicleKey(null);
-                      openDetailsEditor(managingItem);
-                    }}
-                    className="ui-focus rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-700 transition hover:bg-cyan-100"
-                  >
-                    Editar ficha completa
-                  </button>
-                  {managingVehicleKey.startsWith("manual-") ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        deleteManualPublication(managingVehicleKey.replace("manual-", ""));
-                        setManagingVehicleKey(null);
-                      }}
-                      className="ui-focus rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+              <div className="flex flex-wrap gap-1.5">
+                {(["ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => {
+                  const selected = (config.sectionVehicleIds[sectionId] ?? []).includes(managingVehicleKey);
+                  return (
+                    <label
+                      key={`manage-${managingVehicleKey}-${sectionId}`}
+                      className={`inline-flex cursor-pointer items-center gap-1 rounded border px-2 py-1 text-[11px] ${
+                        selected
+                          ? "border-cyan-300 bg-cyan-50 text-cyan-800"
+                          : "border-slate-200 text-slate-600"
+                      }`}
                     >
-                      Borrar unidad manual
-                    </button>
-                  ) : null}
-                </div>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleItemInSection(sectionId, managingVehicleKey)}
+                      />
+                      {SECTION_LABELS[sectionId]}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-200 px-3 py-2">
+              <div className="flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setManagingVehicleKey(null)}
-                  className="ui-focus rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+                  onClick={() => {
+                    markVehicleAsSold(managingVehicleKey);
+                    setManagingVehicleKey(null);
+                    showSystemNotice(
+                      "success",
+                      "Unidad vendida",
+                      `${getPatent(managingItem)} pasó a historial y dejó de estar visible en inventario/catálogo.`,
+                    );
+                  }}
+                  className="ui-focus rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100"
                 >
-                  Listo
+                  Vendida
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManagingVehicleKey(null);
+                    openDetailsEditor(managingItem);
+                  }}
+                  className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-100"
+                >
+                  Editar ficha
+                </button>
+                {managingVehicleKey.startsWith("manual-") ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      deleteManualPublication(managingVehicleKey.replace("manual-", ""));
+                      setManagingVehicleKey(null);
+                    }}
+                    className="ui-focus rounded border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100"
+                  >
+                    Borrar
+                  </button>
+                ) : null}
               </div>
+              <button
+                type="button"
+                onClick={() => setManagingVehicleKey(null)}
+                className="ui-focus rounded bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-slate-700"
+              >
+                Listo
+              </button>
             </div>
           </div>
         </div>
@@ -12637,63 +12862,171 @@ export function CatalogHomeClient({
               <div className="space-y-4">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Identificación y trazabilidad
+                    Clasificación comercial
                   </p>
                   <div className="grid gap-3 md:grid-cols-2">
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Patente" value={editingDetails.patente ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), patente: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Patente verificador (DV)" value={editingDetails.patenteVerifier ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), patenteVerifier: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="VIN" value={editingDetails.vin ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), vin: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="N° Chasis" value={editingDetails.nChasis ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), nChasis: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="N° Motor" value={editingDetails.nMotor ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), nMotor: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="N° Serie" value={editingDetails.nSerie ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), nSerie: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2" placeholder="N° de siniestro" value={editingDetails.nSiniestro ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), nSiniestro: event.target.value }))} />
+                    <EditorLabeledField label="Patente" className="md:col-span-2">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm font-semibold uppercase tracking-wide"
+                        value={editingDetails.patente ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), patente: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Marca">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.brand ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), brand: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Modelo">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.model ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), model: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Año">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.year ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), year: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Versión (ver / trim)">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.version ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), version: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Tipo de vehículo">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.tipoVehiculo ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), tipoVehiculo: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Tipo">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.tipo ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), tipo: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Categoría">
+                      <select
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={normalizeVehicleCategoryValue(editingDetails.category ?? "")}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({
+                            ...(prev ?? {}),
+                            category: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Seleccionar…</option>
+                        {VEHICLE_CATEGORY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </EditorLabeledField>
+                    <EditorLabeledField label="Condición">
+                      <select
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.vehicleCondition ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({
+                            ...(prev ?? {}),
+                            vehicleCondition: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Seleccionar…</option>
+                        {VEHICLE_CONDITION_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </EditorLabeledField>
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Clasificación comercial
+                    Identificación y trazabilidad
                   </p>
                   <div className="grid gap-3 md:grid-cols-2">
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Marca" value={editingDetails.brand ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), brand: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Modelo" value={editingDetails.model ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), model: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Año" value={editingDetails.year ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), year: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Versión (ver / trim)" value={editingDetails.version ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), version: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Tipo de vehículo" value={editingDetails.tipoVehiculo ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), tipoVehiculo: event.target.value }))} />
-                    <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Tipo" value={editingDetails.tipo ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), tipo: event.target.value }))} />
-                    <select
-                      className="rounded border border-slate-300 px-3 py-2 text-sm"
-                      value={normalizeVehicleCategoryValue(editingDetails.category ?? "")}
-                      onChange={(event) =>
-                        setEditingDetails((prev) => ({
-                          ...(prev ?? {}),
-                          category: event.target.value,
-                        }))
-                      }
-                    >
-                      <option value="">Categoría</option>
-                      {VEHICLE_CATEGORY_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="rounded border border-slate-300 px-3 py-2 text-sm"
-                      value={editingDetails.vehicleCondition ?? ""}
-                      onChange={(event) =>
-                        setEditingDetails((prev) => ({
-                          ...(prev ?? {}),
-                          vehicleCondition: event.target.value,
-                        }))
-                      }
-                    >
-                      <option value="">Condición</option>
-                      {VEHICLE_CONDITION_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
+                    <EditorLabeledField label="Patente verificador (DV)">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.patenteVerifier ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), patenteVerifier: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="VIN">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.vin ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), vin: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="N° Chasis">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.nChasis ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), nChasis: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="N° Motor">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.nMotor ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), nMotor: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="N° Serie">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.nSerie ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), nSerie: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
+                    <EditorLabeledField label="N° de siniestro" className="md:col-span-2">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        value={editingDetails.nSiniestro ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), nSiniestro: event.target.value }))
+                        }
+                      />
+                    </EditorLabeledField>
                   </div>
                 </div>
               </div>

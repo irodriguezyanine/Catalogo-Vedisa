@@ -76,6 +76,28 @@ async function fetchAutoredAccessToken(
   return payload.accessToken;
 }
 
+function inferTransmissionFromAutoredText(...parts: Array<string | undefined>): string | undefined {
+  const combined = parts.filter(Boolean).join(" ").toUpperCase();
+  if (!combined) return undefined;
+  if (/\bDCT\b|\bDSG\b/.test(combined)) return "Automática DCT";
+  if (/\bCVT\b/.test(combined)) return "CVT";
+  if (/\bAT\b|\bAUT\b|AUTOMAT/.test(combined)) return "Automática";
+  if (/\bMT\b|\bMANUAL\b/.test(combined)) return "Manual";
+  return undefined;
+}
+
+function inferFuelFromAutoredText(...parts: Array<string | undefined>): string | undefined {
+  const combined = parts.filter(Boolean).join(" ").toUpperCase();
+  if (!combined) return undefined;
+  if (/\bDIESEL\b|\bHDI\b/.test(combined)) return "Diesel";
+  if (/\bHIBRID|\bHYBRID|\bPHEV|\bMHEV/.test(combined)) return "Híbrido";
+  if (/\bELECTRIC|\bEV\b/.test(combined)) return "Eléctrico";
+  if (/\bGNC\b|\bGLP\b/.test(combined)) return "GNC/GLP";
+  if (/\bGASOLINA\b|\bBENCINA\b/.test(combined)) return "Gasolina";
+  if (/\b1\.\d\b|\b2\.\d\b/.test(combined) && !/\bDIESEL\b/.test(combined)) return "Gasolina";
+  return undefined;
+}
+
 export function normalizeAutoredV2Vehicle(
   raw: Record<string, unknown>,
   patente: string,
@@ -88,11 +110,17 @@ export function normalizeAutoredV2Vehicle(
   const motor = String(raw.engine_number ?? "").trim();
   const color = String(raw.color ?? "").trim();
   const cilindrada = raw.cylinder_capacity != null ? String(raw.cylinder_capacity) : "";
-  const combustible = String(raw.fuelTypeName ?? raw.fuel_type ?? "").trim();
-  const traccion = String(raw.tractionName ?? "").trim();
-  const transmision = String(raw.transmissionName ?? raw.transmission ?? "").trim();
-  const tipo = String(raw.vehicle_type ?? "").trim();
   const showName = String(raw.showName ?? "").trim();
+  const combustible =
+    String(raw.fuelTypeName ?? raw.fuel_type ?? "").trim() ||
+    inferFuelFromAutoredText(version, showName, modelo, marca) ||
+    "";
+  const traccion = String(raw.tractionName ?? "").trim();
+  const transmision =
+    String(raw.transmissionName ?? raw.transmission ?? "").trim() ||
+    inferTransmissionFromAutoredText(version, showName, modelo) ||
+    "";
+  const tipo = String(raw.vehicle_type ?? "").trim();
   const licensePlate = String(raw.license_plate ?? patente).trim().toUpperCase();
 
   const result: Record<string, unknown> = {
@@ -119,6 +147,9 @@ export function normalizeAutoredV2Vehicle(
   if (vin) {
     result.vin = vin;
     result.n_de_vin = vin;
+    result.numero_chasis = vin;
+    result.n_de_chasis = vin;
+    result.chasis = vin;
   }
   if (motor) {
     result.numero_motor = motor;

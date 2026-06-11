@@ -240,7 +240,17 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
   );
 
   const thumbnail =
-    getStringFromKeys(row, ["thumbnail", "imagen_principal", "foto_portada"]) ??
+    getStringFromKeys(row, [
+      "thumbnail",
+      "imagen_principal",
+      "foto_portada",
+      "thumb",
+      "thumbnail_url",
+      "image_url",
+      "foto",
+      "main_image",
+      "main_frame",
+    ]) ??
     images[0];
 
   const view3dRaw = getStringFromKeys(row, [
@@ -807,10 +817,13 @@ function normalizeGlo3dTechnicalFields(
     "rut_verificador_dv",
   ]);
   const cilindrada = pickString(merged, ["cilindrada", "cc", "motor_cc", "engine_cc"]);
+  const aro = pickString(merged, ["aro", "aro_llanta", "rin", "rines", "wheel_size"]);
   const nMotor = pickString(merged, ["n_de_motor", "numero_motor", "motor_number", "ndm"]);
   const nSerie = pickString(merged, ["n_de_serie", "numero_serie", "serial_number", "nds"]);
   const nVin = pickString(merged, ["n_de_vin", "vin", "numero_chasis", "nro_chasis"]);
-  const nChasis = pickString(merged, ["n_de_chasis", "numero_chasis", "nro_chasis"]);
+  const nChasis =
+    pickString(merged, ["n_de_chasis", "numero_chasis", "nro_chasis"]) ??
+    pickString(merged, ["n_de_vin", "vin", "extracted_vin"]);
   const nSiniestro = pickString(merged, [
     "n_de_siniestro",
     "numero_siniestro",
@@ -945,6 +958,10 @@ function normalizeGlo3dTechnicalFields(
   if (cilindrada) {
     result.cilindrada = cilindrada;
     result.cc = cilindrada;
+  }
+  if (aro) {
+    result.aro = aro;
+    result.rin = aro;
   }
   if (kilometraje) {
     result.kilometraje = kilometraje;

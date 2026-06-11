@@ -315,6 +315,38 @@ function extractGlo3dImages(glo3d: Glo3dInventoryEntry): string[] {
   pushMany(merged.fotos);
   pushMany(merged.galeria);
   pushMany(merged.gallery);
+  pushMany(merged.frames);
+  pushMany(merged.main_frame);
+  pushMany(merged.gallery_images);
+  pushMany(glo3d.raw.frames);
+  pushMany(glo3d.raw.main_frame);
+  pushMany(glo3d.raw.gallery_images);
+
+  for (const key of ["src_with_params", "src", "iframe_with_params"]) {
+    const candidate = pickString(merged, [key]) ?? pickString(glo3d.raw, [key]);
+    if (candidate?.startsWith("http") && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(candidate)) {
+      push(candidate);
+    }
+  }
+
+  const frames = merged.frames ?? glo3d.raw.frames;
+  if (Array.isArray(frames)) {
+    for (const frame of frames) {
+      if (typeof frame === "string") push(frame);
+      else if (frame && typeof frame === "object" && !Array.isArray(frame)) {
+        push(
+          pickString(frame as Record<string, unknown>, [
+            "url",
+            "image_url",
+            "thumb",
+            "thumbnail",
+            "src",
+            "image",
+          ]),
+        );
+      }
+    }
+  }
 
   const gallery = merged.gallery ?? glo3d.raw.gallery;
   if (gallery && typeof gallery === "object" && !Array.isArray(gallery)) {
@@ -408,13 +440,14 @@ function normalizeAutoredImportRecord(
     "ndm",
   ]);
   const numeroSerie = pickString(merged, ["numero_serie", "n_de_serie", "nro_serie", "serie", "nds"]);
-  const numeroChasis = pickString(merged, [
-    "numero_chasis",
-    "n_de_chasis",
-    "nro_chasis",
-    "chasis",
-    "chassis_number",
-  ]);
+  const numeroChasis =
+    pickString(merged, [
+      "numero_chasis",
+      "n_de_chasis",
+      "nro_chasis",
+      "chasis",
+      "chassis_number",
+    ]) ?? pickString(merged, ["vin", "n_de_vin", "extracted_vin", "numero_vin"]);
   const tipoVehiculo = pickString(merged, [
     "tipo_vehiculo",
     "tipo_de_vehiculo",
@@ -431,6 +464,14 @@ function normalizeAutoredImportRecord(
     "tipo_transmision",
   ]);
   const color = pickString(merged, ["color", "color_exterior", "color_vehiculo", "exterior_color"]);
+  const combustible = pickString(merged, [
+    "combustible",
+    "tipo_combustible",
+    "fuel",
+    "fuel_type",
+    "engine_fuel_type",
+    "fuelTypeName",
+  ]);
   const cilindrada = pickString(merged, ["cilindrada", "cc", "motor_cc", "engine_cc", "capacidad_motor"]);
 
   const normalized: Record<string, unknown> = { ...merged, ...raw };
@@ -468,6 +509,10 @@ function normalizeAutoredImportRecord(
   if (transmision) {
     normalized.transmision = transmision;
     normalized.caja = transmision;
+  }
+  if (combustible) {
+    normalized.combustible = combustible;
+    normalized.tipo_combustible = combustible;
   }
   if (color) normalized.color = color;
   if (cilindrada) {
@@ -541,9 +586,13 @@ function buildVehicleDetailsFromSources(
     patenteVerifier:
       pickString(row, ["patente_verifier", "patente_dv", "ppu_dv", "dv"]) ??
       pickString(glo3dFields, ["patente_verifier", "patente_dv", "ppu_dv", "dv"]),
-    vin: pickString(merged, ["vin", "n_de_vin", "numero_vin", "numero_chasis", "nro_chasis"]),
-    nChasis: pickString(merged, ["n_de_chasis", "numero_chasis", "nro_chasis", "chasis"]),
-    nMotor: pickString(merged, ["n_de_motor", "numero_motor", "nro_motor", "ndm", "motor"]),
+    vin: pickString(merged, ["vin", "n_de_vin", "numero_vin", "extracted_vin"]),
+    nChasis:
+      pickString(merged, ["n_de_chasis", "numero_chasis", "nro_chasis", "chasis"]) ??
+      pickString(merged, ["vin", "n_de_vin", "extracted_vin"]),
+    nMotor:
+      pickString(merged, ["n_de_motor", "numero_motor", "nro_motor", "ndm", "motor", "engine_number"]) ??
+      pickString(merged, ["engine_number"]),
     nSerie: pickString(merged, ["n_de_serie", "numero_serie", "nro_serie", "nds", "serie"]),
     nSiniestro:
       pickString(row, ["n_de_siniestro", "numero_siniestro", "n_s", "ns"]) ??
@@ -556,10 +605,7 @@ function buildVehicleDetailsFromSources(
       pickString(row, ["traccion", "tipo_traccion"]) ??
       pickString(glo3dFields, ["traccion", "tipo_traccion", "drive_type"]) ??
       pickString(autoredMerged, ["traccion", "tipo_traccion", "drivetrain"]),
-    aro:
-      pickString(row, ["aro", "rin"]) ??
-      pickString(glo3dFields, ["aro", "rin"]) ??
-      pickString(autoredMerged, ["aro", "rin", "wheel_size"]),
+    aro: pickString(merged, ["aro", "rin", "rines", "aro_llanta", "wheel_size"]),
     cilindrada: pickString(merged, ["cilindrada", "cc", "motor_cc", "engine_cc", "capacidad_motor"]),
     llaves:
       pickString(row, ["llaves", "keys", "lla"]) ??
@@ -695,6 +741,10 @@ function buildInventarioPayloadFromSources(
     cilindrada: cilindrada ?? null,
     tipo_vehiculo: tipoVehiculo ?? null,
     imagenes: imagenes.length > 0 ? imagenes : null,
+    thumbnail: imagenes[0] ?? null,
+    imagen_principal: imagenes[0] ?? null,
+    foto_portada: imagenes[0] ?? null,
+    fotos_urls: imagenes.length > 0 ? imagenes : null,
     glo3d_url: glo3d?.view3dUrl ?? null,
     url_3d: glo3d?.view3dUrl ?? null,
     visor_3d_url: glo3d?.view3dUrl ?? null,
@@ -714,6 +764,7 @@ function buildCatalogRow(
   const glo3dImages = extractGlo3dImages(glo3d ?? { raw: base, technicalFields: {} });
   const autoredImages = extractAutoredImages(autored);
   const imagenes = [...new Set([...glo3dImages, ...autoredImages, ...normalizeImageList(base.imagenes)])];
+  const primaryImage = imagenes[0] ?? pickString(base, ["thumbnail", "imagen_principal", "foto_portada"]);
   return {
     ...base,
     patente,
@@ -721,6 +772,11 @@ function buildCatalogRow(
     glo3d_url: glo3d?.view3dUrl ?? base.glo3d_url ?? base.url_3d ?? null,
     url_3d: glo3d?.view3dUrl ?? base.url_3d ?? base.glo3d_url ?? null,
     imagenes: imagenes.length > 0 ? imagenes : null,
+    thumbnail: primaryImage ?? base.thumbnail ?? null,
+    imagen_principal: primaryImage ?? base.imagen_principal ?? null,
+    foto_portada: primaryImage ?? base.foto_portada ?? null,
+    fotos_urls: imagenes.length > 0 ? imagenes : base.fotos_urls ?? null,
+    fotos: imagenes.length > 0 ? imagenes : base.fotos ?? null,
     autored: autored ?? base.autored ?? null,
   };
 }
