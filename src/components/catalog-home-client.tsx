@@ -6645,6 +6645,8 @@ export function CatalogHomeClient({
           hasGlo3dViewer?: boolean;
           glo3dRateLimited?: boolean;
           autoredSynced?: boolean;
+          autoredConfigured?: boolean;
+          autoredReason?: "synced" | "not_configured" | "no_record" | "no_identity";
           skippedGlo3dFetch?: boolean;
           retryAfterMs?: number;
         };
@@ -6676,7 +6678,11 @@ export function CatalogHomeClient({
 
         const autoredNote = payload.autoredSynced
           ? " Autored aplicado."
-          : " Autored no devolvió marca/modelo (revisa CATALOG_SOURCE_AUTORED_API_URL).";
+          : payload.autoredReason === "not_configured"
+            ? " Autored no está configurado: falta CATALOG_SOURCE_AUTORED_API_URL en Vercel."
+            : payload.autoredReason === "no_record"
+              ? " Tasaciones/Autored no tienen ficha para esta patente."
+              : " Autored respondió sin marca/modelo útiles para esta patente.";
         const glo3dNote =
           payload.glo3dRateLimited || payload.skippedGlo3dFetch
             ? " Glo3D en pausa: se usó el visor local."

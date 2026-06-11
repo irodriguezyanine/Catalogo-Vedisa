@@ -45,8 +45,35 @@ export type ImportPatentResult = {
   skippedAutoredFetch?: boolean;
   glo3dRateLimited?: boolean;
   autoredSynced?: boolean;
+  autoredConfigured?: boolean;
+  autoredReason?: "synced" | "not_configured" | "no_record" | "no_identity";
   retryAfterMs?: number;
 };
+
+function resolveAutoredSyncReason(
+  autoredSynced: boolean,
+  autored: Record<string, unknown> | null,
+): ImportPatentResult["autoredReason"] {
+  if (autoredSynced) return "synced";
+  if (!process.env.CATALOG_SOURCE_AUTORED_API_URL) return "not_configured";
+  if (!autored) return "no_record";
+  return "no_identity";
+}
+
+function buildImportPatentResult(
+  base: Omit<
+    ImportPatentResult,
+    "autoredConfigured" | "autoredReason"
+  > & { autored: Record<string, unknown> | null },
+): ImportPatentResult {
+  const autoredSynced = base.autoredSynced ?? autoredRecordHasIdentity(base.autored, base.patente);
+  return {
+    ...base,
+    autoredSynced,
+    autoredConfigured: Boolean(process.env.CATALOG_SOURCE_AUTORED_API_URL),
+    autoredReason: resolveAutoredSyncReason(autoredSynced, base.autored),
+  };
+}
 
 export type ImportPatentsBatchResult = {
   results: ImportPatentResult[];
@@ -896,7 +923,7 @@ export async function importVehicleByPatent(
     const item = catalogRowToItem(mergedRow);
     if (!item) throw new Error(`No se pudo normalizar el inventario para ${patente}.`);
 
-    return {
+    return buildImportPatentResult({
       item,
       vehicleDetails: buildVehicleDetailsFromSources(patente, mergedRow, glo3d, autored, images),
       source: resolveImportSource(glo3d, autored, true),
@@ -909,8 +936,9 @@ export async function importVehicleByPatent(
       skippedAutoredFetch,
       glo3dRateLimited,
       autoredSynced,
+      autored,
       retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
-    };
+    });
   }
 
   if (!glo3d) {
@@ -939,7 +967,7 @@ export async function importVehicleByPatent(
   const item = catalogRowToItem(row);
   if (!item) throw new Error(`No se pudo normalizar la unidad importada ${patente}.`);
 
-  return {
+  return buildImportPatentResult({
     item,
     vehicleDetails: buildVehicleDetailsFromSources(patente, row, glo3d, autored, images),
     source: resolveImportSource(glo3d, autored, false),
@@ -952,8 +980,9 @@ export async function importVehicleByPatent(
     skippedAutoredFetch,
     glo3dRateLimited,
     autoredSynced,
+    autored,
     retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
-  };
+  });
 }
 
 const BATCH_IMPORT_DELAY_MS = Number(process.env.GLO3D_BATCH_DELAY_MS ?? "900");
