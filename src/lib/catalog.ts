@@ -599,7 +599,7 @@ function normalizeGlo3dUrl(value: string): string {
   return value;
 }
 
-type Glo3dInventoryEntry = {
+export type Glo3dInventoryEntry = {
   view3dUrl?: string;
   technicalFields: Record<string, unknown>;
   raw: Record<string, unknown>;
@@ -832,6 +832,15 @@ function normalizeGlo3dTechnicalFields(
   }
 
   return result;
+}
+
+export async function fetchGlo3dRecordByPatent(
+  patent: string,
+): Promise<Glo3dInventoryEntry | null> {
+  const stock = normalizeStock(patent);
+  if (!stock) return null;
+  const resolved = await fetchGlo3dByStocks([stock]);
+  return resolved.get(stock) ?? null;
 }
 
 async function fetchGlo3dByStocks(stocks: string[]): Promise<Map<string, Glo3dInventoryEntry>> {

@@ -5319,9 +5319,10 @@ export function CatalogHomeClient({
           error?: string;
           item?: CatalogItem;
           vehicleDetails?: EditorVehicleDetails;
-          source?: "inventario" | "autored";
+          source?: "inventario" | "glo3d" | "glo3d+autored" | "autored";
           created?: boolean;
           patente?: string;
+          hasGlo3dViewer?: boolean;
         };
         if (!response.ok || !payload.ok || !payload.item) {
           throw new Error(payload.error ?? `No se pudo importar ${patente}.`);
@@ -5348,8 +5349,8 @@ export function CatalogHomeClient({
           "success",
           payload.created ? "Unidad importada" : "Unidad encontrada",
           payload.created
-            ? `${patente} se creó en inventario compartido con datos de Autored.`
-            : `${patente} ya existía en inventario compartido y quedó disponible para agregar.`,
+            ? `${patente} se creó en inventario compartido desde Glo3D${payload.hasGlo3dViewer ? " con visor 3D" : ""}.`
+            : `${patente} quedó disponible para agregar${payload.hasGlo3dViewer ? " con visor Glo3D" : ""}.`,
         );
       }
       setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...importedKeys])));
@@ -11075,9 +11076,9 @@ export function CatalogHomeClient({
             {batchAssignCandidates.length === 0 && batchAssignPatentTokens.length > 0 ? (
               <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
                 <p className="text-sm text-slate-700">
-                  Esta patente no está en el inventario cargado del catálogo. Puedes traerla desde
-                  inventario compartido o Autored para agregarla al evento y sincronizar con Tasaciones
-                  y Subastas.
+                  Esta patente no está en el inventario cargado del catálogo. Se importará primero desde
+                  Glo3D (visor y ficha base) y se completará con Autored si hace falta, para agregarla al
+                  evento y sincronizar con Tasaciones y Subastas.
                 </p>
                 <button
                   type="button"
@@ -11086,8 +11087,8 @@ export function CatalogHomeClient({
                   className="ui-focus mt-2 rounded-md bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-500 disabled:opacity-60"
                 >
                   {batchAssignImporting
-                    ? "Importando..."
-                    : `Importar ${batchAssignPatentTokens.join(", ")} desde Autored`}
+                    ? "Importando desde Glo3D..."
+                    : `Importar ${batchAssignPatentTokens.join(", ")} desde Glo3D`}
                 </button>
               </div>
             ) : null}
