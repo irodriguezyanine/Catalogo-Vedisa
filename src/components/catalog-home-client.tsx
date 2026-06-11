@@ -336,7 +336,17 @@ function resolveEditorDraftField(
   if (overrideValue?.trim() && !isStaleEditorDraftValue(overrideValue, patente)) {
     return overrideValue.trim();
   }
-  return itemValue;
+  const cleaned = itemValue?.trim() ?? "";
+  if (cleaned && !isStaleEditorDraftValue(cleaned, patente)) return cleaned;
+  return "";
+}
+
+function resolveIdentityDraftField(
+  overrideValue: string | undefined,
+  itemValue: string,
+  patente?: string,
+): string {
+  return resolveEditorDraftField(overrideValue, itemValue, patente);
 }
 
 function buildAutoVehicleTitle(details: EditorVehicleDetails): string {
@@ -833,11 +843,24 @@ function getExpectedPatenteForRainworx(item: CatalogItem, details: EditorVehicle
   return normalizePatenteKey(label);
 }
 
+function isPatenteLikeModelValue(value: string, patent: string): boolean {
+  if (!value.trim() || !patent || patent === "—") return false;
+  return normalizePatentToken(value) === normalizePatentToken(patent);
+}
+
 function getModel(item: CatalogItem): string {
   const raw = item.raw as Record<string, unknown>;
-  const model = [raw.modelo, raw.model, item.title]
-    .find((value) => typeof value === "string" && value.trim().length > 0) as string | undefined;
-  return model?.trim() ?? item.title;
+  const patent = getPatent(item);
+  const candidates = [raw.modelo, raw.model, raw.model2, item.title];
+  for (const value of candidates) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    const trimmed = value.trim();
+    if (isPlaceholderVehicleLabel(trimmed)) continue;
+    if (isPatenteLikeModelValue(trimmed, patent)) continue;
+    if (/^unidad\s+[a-z0-9]{5,10}$/i.test(trimmed)) continue;
+    return trimmed;
+  }
+  return "Sin Modelo";
 }
 
 function inferVehicleType(item: CatalogItem): VehicleTypeId {
@@ -1647,7 +1670,7 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
       "",
   );
   return {
-    title: resolveEditorDraftField(override?.title, item.title, patente),
+    title: resolveIdentityDraftField(override?.title, item.title, patente),
     subtitle: resolveEditorDraftField(override?.subtitle, item.subtitle ?? "", patente),
     patente: resolveEditorDraftField(override?.patente, patente, patente),
     patenteVerifier:
@@ -1756,9 +1779,9 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
           "cav_campos.descripcion",
         ]) ?? "",
       ),
-    brand: resolveEditorDraftField(override?.brand, itemBrand, patente),
-    model: resolveEditorDraftField(override?.model, itemModel, patente),
-    year: resolveEditorDraftField(override?.year, itemYear, patente),
+    brand: resolveIdentityDraftField(override?.brand, itemBrand, patente),
+    model: resolveIdentityDraftField(override?.model, itemModel, patente),
+    year: resolveIdentityDraftField(override?.year, itemYear, patente),
     category: override?.category ?? String(raw.categoria ?? ""),
     kilometraje: resolveEditorDraftField(
       override?.kilometraje,
@@ -6506,7 +6529,7 @@ export function CatalogHomeClient({
 
   const syncManagingVehicleWithGlo3dAutored = useCallback(async () => {
     if (!managingVehicleKey) return;
-    if (!assertGlo3dClientAllowed()) return;
+    const skipGlo3dFetch = glo3dClientCooldownUntilRef.current > Date.now();
     const currentItem = itemsByKey.get(managingVehicleKey);
     if (!currentItem) {
       showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
@@ -6536,7 +6559,7 @@ export function CatalogHomeClient({
       const response = await fetch("/api/admin/import-patent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true }),
+        body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true, skipGlo3dFetch }),
         signal: AbortSignal.timeout(60_000),
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -6546,9 +6569,16 @@ export function CatalogHomeClient({
         vehicleDetails?: EditorVehicleDetails;
         source?: string;
         hasGlo3dViewer?: boolean;
+        glo3dRateLimited?: boolean;
+        autoredSynced?: boolean;
+        skippedGlo3dFetch?: boolean;
+        retryAfterMs?: number;
       };
       if (!response.ok || !payload.ok || !payload.item) {
         throw new Error(payload.error ?? `No se pudo sincronizar ${patente}.`);
+      }
+      if (payload.glo3dRateLimited) {
+        markGlo3dClientCooldown(payload.retryAfterMs ?? GLO3D_CLIENT_COOLDOWN_MS);
       }
 
       const resolvedKey = applyImportedPatentPayload({
@@ -6570,10 +6600,18 @@ export function CatalogHomeClient({
         setEditingDetails(buildDetailsDraft(syncedItem, payload.vehicleDetails));
       }
 
+      const autoredNote = payload.autoredSynced
+        ? " Autored aplicado."
+        : " Autored no devolvió marca/modelo (revisa CATALOG_SOURCE_AUTORED_API_URL).";
+      const glo3dNote = payload.glo3dRateLimited || payload.skippedGlo3dFetch
+        ? " Glo3D en pausa: se usó el visor local."
+        : payload.hasGlo3dViewer
+          ? " Visor 3D actualizado."
+          : "";
       showSystemNotice(
-        "success",
-        "Unidad sincronizada",
-        `${patente} se actualizó con datos de Glo3D${payload.hasGlo3dViewer ? " (visor 3D)" : ""}${payload.source?.includes("autored") ? " y Autored" : ""}. Revisa el home para confirmar miniatura y ficha.`,
+        payload.autoredSynced ? "success" : "info",
+        payload.autoredSynced ? "Unidad sincronizada" : "Sincronización parcial",
+        `${patente} actualizado.${glo3dNote}${autoredNote}`,
       );
     } catch (error) {
       const message =
@@ -6593,7 +6631,6 @@ export function CatalogHomeClient({
     }
   }, [
     applyImportedPatentPayload,
-    assertGlo3dClientAllowed,
     config,
     editingVehicleKey,
     itemsByKey,
@@ -12113,15 +12150,23 @@ export function CatalogHomeClient({
                 <h3 className="text-lg font-bold text-slate-900">{getModel(managingItem)}</h3>
                 <p className="text-xs text-slate-500">Patente {getPatent(managingItem)}</p>
                 {!managingVehicleKey.startsWith("manual-") ? (
-                  <button
-                    type="button"
-                    onClick={() => void syncManagingVehicleWithGlo3dAutored()}
-                    disabled={managingVehicleSyncing}
-                    className="ui-focus mt-2 inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
-                  >
-                    {managingVehicleSyncing ? "Sincronizando…" : "Sincronizar Glo3D + Autored"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void syncManagingVehicleWithGlo3dAutored()}
+                      disabled={managingVehicleSyncing}
+                      className="ui-focus mt-2 inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      title="Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
+                    >
+                      {managingVehicleSyncing ? "Sincronizando…" : "Sincronizar Glo3D + Autored"}
+                    </button>
+                    {Date.now() < glo3dCooldownUntil ? (
+                      <p className="mt-1 max-w-md text-xs text-amber-800">
+                        Glo3D en pausa breve: puedes sincronizar igual; se actualizará Autored y se
+                        conservará el visor 3D local.
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
               <button

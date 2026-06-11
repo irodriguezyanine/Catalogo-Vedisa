@@ -168,6 +168,12 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
     getStringFromKeys(row, ["id", "uuid", "vehicle_id", "inventario_id"]) ??
     crypto.randomUUID();
 
+  const patenteKey = getStringFromKeys(row, ["patente", "PPU", "ppu", "stock_number"]);
+  const rawModelo = getStringFromKeys(row, ["modelo", "model", "model2"]);
+  const modeloLooksLikePatente =
+    rawModelo &&
+    patenteKey &&
+    normalizeStock(rawModelo) === normalizeStock(patenteKey);
   const title =
     getStringFromKeys(row, [
       "titulo",
@@ -177,8 +183,8 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
       "marca_modelo",
     ]) ??
     buildVehicleTitleFromRow(row) ??
-    getStringFromKeys(row, ["modelo", "patente"]) ??
-    `Vehículo ${id.slice(0, 8)}`;
+    (rawModelo && !modeloLooksLikePatente && !isPlaceholderVehicleLabel(rawModelo) ? rawModelo : undefined) ??
+    (patenteKey ? `Unidad ${patenteKey}` : `Vehículo ${id.slice(0, 8)}`);
 
   const subtitle = getStringFromKeys(row, [
     "patente",
@@ -282,7 +288,8 @@ function extractRowsFromPayload(payload: unknown): Record<string, unknown>[] {
       (Array.isArray(container.items) && container.items) ||
       (Array.isArray(container.data) && container.data) ||
       (Array.isArray(container.results) && container.results) ||
-      (Array.isArray(container.vehiculos) && container.vehiculos);
+      (Array.isArray(container.vehiculos) && container.vehiculos) ||
+      (Array.isArray(container.registros) && container.registros);
 
     if (nestedArray) {
       return nestedArray.filter(
@@ -297,7 +304,10 @@ function extractRowsFromPayload(payload: unknown): Record<string, unknown>[] {
       container.autored ??
       container.datos ??
       container.result ??
-      container.registro;
+      container.registro ??
+      container.ficha ??
+      container.record ??
+      container.payload;
     if (singleNode && typeof singleNode === "object" && !Array.isArray(singleNode)) {
       return [singleNode as Record<string, unknown>];
     }
@@ -1648,27 +1658,32 @@ export async function fetchAutoredRecordByPatent(
 
   if (AUTORED_API_URL) {
     const token = process.env.CATALOG_SOURCE_API_TOKEN;
-    const url = new URL(AUTORED_API_URL);
-    url.searchParams.set("patente", normalized);
-
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { "x-api-key": token } : {}),
-      },
-      cache: options?.forceRefresh ? "no-store" : undefined,
-      next: options?.forceRefresh ? undefined : { revalidate: 120 },
-    });
-    if (response.ok) {
+    const paramNames = ["patente", "ppu", "PPU", "plate"];
+    for (const paramName of paramNames) {
+      const url = new URL(AUTORED_API_URL);
+      url.searchParams.set(paramName, normalized);
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "x-api-key": token } : {}),
+        },
+        cache: options?.forceRefresh ? "no-store" : undefined,
+        next: options?.forceRefresh ? undefined : { revalidate: 120 },
+      });
+      if (!response.ok) continue;
       const payload = (await response.json()) as unknown;
       const rows = extractRowsFromPayload(payload);
-      record =
+      const candidate =
         rows.length > 0
           ? rows[0]
           : payload && typeof payload === "object" && !Array.isArray(payload)
             ? (payload as Record<string, unknown>)
             : null;
+      if (candidate && Object.keys(candidate).length > 0) {
+        record = candidate;
+        break;
+      }
     }
   }
 

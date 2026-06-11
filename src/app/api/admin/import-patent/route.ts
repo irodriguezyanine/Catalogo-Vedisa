@@ -20,6 +20,7 @@ export async function POST(req: Request) {
     patente?: string;
     estadoRetiro?: string;
     forceRefresh?: boolean;
+    skipGlo3dFetch?: boolean;
   };
   const patente = String(body.patente ?? "").trim();
   if (!patente) {
@@ -30,6 +31,7 @@ export async function POST(req: Request) {
     const result = await importVehicleByPatent(patente, {
       estadoRetiro: body.estadoRetiro,
       forceRefresh: body.forceRefresh,
+      skipGlo3dFetch: body.skipGlo3dFetch,
     });
     revalidatePath("/");
     revalidatePath("/api/catalogo");

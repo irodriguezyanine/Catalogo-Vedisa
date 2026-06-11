@@ -6,6 +6,7 @@ import {
   fetchGlo3dRecordByPatent,
   fetchInventarioRowByPatent,
   fetchTasacionesRecordByPatent,
+  getGlo3dCircuitRetryAfterMs,
   Glo3dRateLimitError,
   resolveCanonicalPatentFromGlo3dEntry,
   type Glo3dInventoryEntry,
@@ -19,6 +20,8 @@ export type ImportPatentSource = "inventario" | "glo3d" | "glo3d+autored" | "aut
 export type ImportPatentOptions = {
   estadoRetiro?: string;
   forceRefresh?: boolean;
+  /** Omite consulta a Glo3D (útil si la API está saturada) y sincroniza Autored + inventario local. */
+  skipGlo3dFetch?: boolean;
 };
 
 export type ImportPatentResult = {
@@ -32,6 +35,9 @@ export type ImportPatentResult = {
   hasGlo3dViewer: boolean;
   skippedGlo3dFetch?: boolean;
   skippedAutoredFetch?: boolean;
+  glo3dRateLimited?: boolean;
+  autoredSynced?: boolean;
+  retryAfterMs?: number;
 };
 
 export type ImportPatentsBatchResult = {
@@ -84,6 +90,18 @@ function isPlaceholderVehicleLabel(value: unknown): boolean {
     normalized === "sin informacion disponible" ||
     normalized === "unidad"
   );
+}
+
+function sanitizeIdentityValue(
+  value: string | undefined,
+  patente: string,
+): string | undefined {
+  if (!value?.trim()) return undefined;
+  const trimmed = value.trim();
+  if (isPlaceholderVehicleLabel(trimmed)) return undefined;
+  if (normalizePatent(trimmed) === normalizePatent(patente)) return undefined;
+  if (trimmed.toLowerCase() === "unidad") return undefined;
+  return trimmed;
 }
 
 function isDerivedPlaceholderIdentity(
@@ -385,8 +403,14 @@ function buildVehicleDetailsFromSources(
   const rowMerged = buildMergedRecord(row);
   const merged = mergePreferMeaningful(autoredMerged, mergePreferMeaningful(glo3dFields, rowMerged));
 
-  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]);
-  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]);
+  const marca = sanitizeIdentityValue(
+    pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]),
+    patente,
+  );
+  const modelo = sanitizeIdentityValue(
+    pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]),
+    patente,
+  );
   const ano = pickString(merged, ["ano", "anio", "year", "año"]);
   const version = pickString(merged, ["version", "trim", "ver"]);
   const title =
@@ -515,8 +539,16 @@ function buildInventarioPayloadFromSources(
   const technical = mergePreferMeaningful(glo3dFields, autoredMerged);
   const merged = { ...technical, ...identity };
 
-  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]) ?? "Sin Marca";
-  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]) ?? "Sin Modelo";
+  const marca =
+    sanitizeIdentityValue(
+      pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]),
+      patente,
+    ) ?? "Sin Marca";
+  const modelo =
+    sanitizeIdentityValue(
+      pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]),
+      patente,
+    ) ?? "Sin Modelo";
   const ano = pickString(merged, ["ano", "anio", "year", "año"]);
   const version = pickString(merged, ["version", "trim", "ver"]);
   const kilometraje = pickString(merged, ["kilometraje", "km", "odometro", "odometer", "mileage"]);
@@ -681,29 +713,39 @@ export async function importVehicleByPatent(
   const existingRowEarly = await fetchInventarioRowByPatent(requestedPatente);
   let skippedGlo3dFetch = false;
   let skippedAutoredFetch = false;
+  let glo3dRateLimited = false;
 
   let glo3d: Glo3dInventoryEntry | null = null;
-  if (
-    !options?.forceRefresh &&
-    existingRowEarly &&
-    inventarioRowHasCompleteGlo3d(existingRowEarly)
-  ) {
+  if (existingRowEarly && inventarioRowHasCompleteGlo3d(existingRowEarly)) {
     glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
-    skippedGlo3dFetch = Boolean(glo3d);
+    skippedGlo3dFetch = true;
   }
-  if (options?.forceRefresh || !glo3d) {
-    if (options?.forceRefresh) skippedGlo3dFetch = false;
+
+  const shouldFetchGlo3dFromApi =
+    !options?.skipGlo3dFetch && (options?.forceRefresh || !glo3d);
+  if (shouldFetchGlo3dFromApi) {
+    skippedGlo3dFetch = false;
     try {
       const fetched = await fetchGlo3dRecordByPatent(requestedPatente);
       glo3d = fetched ?? glo3d;
     } catch (error) {
-      if (error instanceof Glo3dRateLimitError && glo3d) {
-        // Mantiene datos Glo3D locales si la API está saturada.
-      } else if (error instanceof Glo3dRateLimitError) {
-        throw error;
+      if (error instanceof Glo3dRateLimitError) {
+        glo3dRateLimited = true;
+        skippedGlo3dFetch = true;
+        if (!glo3d && existingRowEarly) {
+          glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
+        }
+        if (!glo3d && !existingRowEarly) {
+          throw error;
+        }
       } else {
         throw error;
       }
+    }
+  } else if (options?.skipGlo3dFetch) {
+    skippedGlo3dFetch = true;
+    if (!glo3d && existingRowEarly) {
+      glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
     }
   }
 
@@ -726,13 +768,35 @@ export async function importVehicleByPatent(
       skippedAutoredFetch = Boolean(autored);
     }
   }
-  if (!autored || options?.forceRefresh) {
+  const rowMarca = existingRow ? pickString(existingRow, ["marca", "brand"]) : undefined;
+  const rowModelo = existingRow ? pickString(existingRow, ["modelo", "model"]) : undefined;
+  const needsAutoredRefresh =
+    options?.forceRefresh ||
+    !autored ||
+    (existingRow && isDerivedPlaceholderIdentity(rowMarca, rowModelo, patente));
+
+  if (needsAutoredRefresh) {
     skippedAutoredFetch = false;
     autored =
       (await fetchAutoredRecordByPatent(patente, { forceRefresh: options?.forceRefresh })) ??
       (await fetchTasacionesRecordByPatent(patente));
     autored = normalizeAutoredImportRecord(autored);
+    if (!autored && options?.forceRefresh) {
+      console.warn(`[import-patent] Autored/Tasaciones sin datos para ${patente}`);
+    }
   }
+
+  const autoredSynced = Boolean(
+    autored &&
+      (sanitizeIdentityValue(
+        pickString(buildMergedRecord(autored), ["marca", "brand", "make"]),
+        patente,
+      ) ||
+        sanitizeIdentityValue(
+          pickString(buildMergedRecord(autored), ["modelo", "model", "model2"]),
+          patente,
+        )),
+  );
 
   const payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
   const shouldPersist = Boolean(glo3d || autored || options?.forceRefresh);
@@ -761,6 +825,9 @@ export async function importVehicleByPatent(
       hasGlo3dViewer: Boolean(glo3d?.view3dUrl ?? mergedRow.glo3d_url ?? mergedRow.url_3d),
       skippedGlo3dFetch,
       skippedAutoredFetch,
+      glo3dRateLimited,
+      autoredSynced,
+      retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
     };
   }
 
@@ -801,6 +868,9 @@ export async function importVehicleByPatent(
     hasGlo3dViewer: Boolean(glo3d.view3dUrl),
     skippedGlo3dFetch,
     skippedAutoredFetch,
+    glo3dRateLimited,
+    autoredSynced,
+    retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
   };
 }
 
