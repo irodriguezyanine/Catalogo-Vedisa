@@ -3040,7 +3040,15 @@ export function CatalogHomeClient({
     [items, soldVehicleIdsSet],
   );
 
-  const visibleItems = useMemo(() => getVisibleCatalogItems(feed, config), [feed, config]);
+  const publicFeedItems = useMemo(
+    () => dedupeCatalogItemsByVehicleKey([...rawItems, ...importedInventoryItems]),
+    [rawItems, importedInventoryItems],
+  );
+
+  const visibleItems = useMemo(
+    () => getVisibleCatalogItems({ ...feed, items: publicFeedItems }, config),
+    [feed, publicFeedItems, config],
+  );
 
   useLayoutEffect(() => {
     if (!isStandaloneDetailPage || !standaloneVehicleKey?.trim()) return;
@@ -3059,6 +3067,12 @@ export function CatalogHomeClient({
   const homeFilteredItems = useMemo(() => {
     const query = normalizeText(homeSearchTerm);
     if (!query) return visibleItems;
+    const patentTokens = extractPatentTokens(homeSearchTerm);
+    if (patentTokens.length > 0) {
+      return visibleItems.filter((item) =>
+        matchesInventoryPatentSearch(item, homeSearchTerm, patentTokens),
+      );
+    }
     return visibleItems.filter((item) => {
       const raw = item.raw as Record<string, unknown>;
       const source = [
@@ -9618,7 +9632,47 @@ export function CatalogHomeClient({
             </div>
           </section>
         ) : null}
+        {hasActiveSearch ? (
+          <section className="section-shell scroll-mt-24" id="resultados-busqueda">
+            <header className="mb-4">
+              <p className="premium-kicker">Búsqueda de inventario</p>
+              <h2 className="text-2xl font-bold text-slate-900">
+                {homeVisibleItems.length > 0
+                  ? `${homeVisibleItems.length} resultado${homeVisibleItems.length === 1 ? "" : "s"} para "${homeSearchTerm.trim().toUpperCase()}"`
+                  : `Sin resultados para "${homeSearchTerm.trim().toUpperCase()}"`}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {homeVisibleItems.length > 0
+                  ? "Unidades publicadas o asignadas a un evento del catálogo."
+                  : "La patente debe estar en inventario, publicada y agregada a un evento desde el editor."}
+              </p>
+            </header>
+            {homeVisibleItems.length > 0 ? (
+              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {homeVisibleItems.map((item) => (
+                  <CatalogCard
+                    key={`search-${getVehicleKey(item)}`}
+                    item={item}
+                    density={cardDensity}
+                    priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
+                    promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
+                    originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
+                    commercialEventBadge={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
+                    onOpen={() => openVehicleDetail(item)}
+                    onWhatsappClick={() =>
+                      trackEvent("whatsapp_click_card", {
+                        section: "busqueda-inventario",
+                        itemKey: getVehicleKey(item),
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
         {resolvedHomeSectionOrder.map((sectionId) => {
+          if (hasActiveSearch) return null;
           if (isBaseHomeSectionOrderId(sectionId) && hiddenHomeCategoryIds.has(sectionCategoryKey(sectionId))) {
             return null;
           }
