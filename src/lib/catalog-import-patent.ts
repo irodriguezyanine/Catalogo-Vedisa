@@ -81,8 +81,25 @@ function isPlaceholderVehicleLabel(value: unknown): boolean {
     normalized === "sin modelo" ||
     normalized === "no informado" ||
     normalized === "sin informacion" ||
-    normalized === "sin informacion disponible"
+    normalized === "sin informacion disponible" ||
+    normalized === "unidad"
   );
+}
+
+function isDerivedPlaceholderIdentity(
+  marca: string | undefined,
+  modelo: string | undefined,
+  patente: string,
+): boolean {
+  const normalizedPatente = normalizePatent(patente);
+  const marcaNorm = marca?.trim().toLowerCase() ?? "";
+  const modeloNorm = modelo?.trim().toLowerCase() ?? "";
+  if (marcaNorm === "unidad") return true;
+  if (modeloNorm && modeloNorm === normalizedPatente.toLowerCase() && (!marca || marcaNorm === "unidad")) {
+    return true;
+  }
+  if (marcaNorm && marcaNorm === normalizedPatente.toLowerCase()) return true;
+  return false;
 }
 
 function isMeaningfulValue(value: unknown): boolean {
@@ -233,6 +250,9 @@ function normalizeAutoredImportRecord(
     "vehiculo_marca",
     "fabricante",
     "nombre_marca",
+    "brand_name",
+    "make_name",
+    "nombre_fabricante",
   ]);
   const modelo = pickString(merged, [
     "modelo",
@@ -241,8 +261,19 @@ function normalizeAutoredImportRecord(
     "vehicle_model",
     "vehiculo_modelo",
     "nombre_modelo",
+    "model_name",
+    "nombre_vehiculo",
   ]);
-  const ano = pickString(merged, ["ano", "anio", "year", "año", "agno"]);
+  const ano = pickString(merged, [
+    "ano",
+    "anio",
+    "year",
+    "año",
+    "agno",
+    "anio_fabricacion",
+    "fabricacion",
+    "year_manufacture",
+  ]);
   const version = pickString(merged, ["version", "trim", "ver", "version_vehiculo"]);
   const vin = pickString(merged, ["vin", "n_de_vin", "numero_vin", "chasis_vin"]);
   const numeroMotor = pickString(merged, [
@@ -359,7 +390,10 @@ function buildVehicleDetailsFromSources(
   const ano = pickString(merged, ["ano", "anio", "year", "año"]);
   const version = pickString(merged, ["version", "trim", "ver"]);
   const title =
-    [marca, modelo, ano].filter(Boolean).join(" ").trim() || `Unidad ${patente}`;
+    [marca, modelo, ano]
+      .filter((part) => part && !isPlaceholderVehicleLabel(part))
+      .join(" ")
+      .trim() || `Unidad ${patente}`;
   const thumbnail = images[0] ?? pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]);
 
   return {
@@ -572,8 +606,12 @@ function inventarioRowHasCompleteGlo3d(row: Record<string, unknown>): boolean {
 }
 
 function inventarioRowHasCompleteAutored(row: Record<string, unknown>): boolean {
+  const patente = pickString(row, ["patente", "PPU", "ppu", "stock_number"]) ?? "";
   const marca = pickString(row, ["marca", "brand"]);
   const modelo = pickString(row, ["modelo", "model"]);
+  if (marca && modelo && isDerivedPlaceholderIdentity(marca, modelo, patente)) {
+    return false;
+  }
   if (!marca || !modelo) {
     const stored = row.autored_campos ?? row.autored;
     if (stored && typeof stored === "object" && !Array.isArray(stored)) {

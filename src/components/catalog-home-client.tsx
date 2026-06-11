@@ -314,8 +314,36 @@ function isPlaceholderVehicleLabel(value?: string | null): boolean {
     normalized === "sin marca" ||
     normalized === "sin modelo" ||
     normalized.includes("sin marca sin modelo") ||
-    normalized === "no informado"
+    normalized === "no informado" ||
+    normalized === "unidad"
   );
+}
+
+function isStaleEditorDraftValue(value: string | undefined, patente?: string): boolean {
+  if (!value?.trim()) return true;
+  if (isPlaceholderVehicleLabel(value)) return true;
+  const normalizedPatente = normalizePatentToken(patente ?? "");
+  if (normalizedPatente && normalizePatentToken(value) === normalizedPatente) return true;
+  if (/^unidad\s+[a-z0-9]{5,10}$/i.test(value.trim())) return true;
+  return false;
+}
+
+function resolveEditorDraftField(
+  overrideValue: string | undefined,
+  itemValue: string,
+  patente?: string,
+): string {
+  if (overrideValue?.trim() && !isStaleEditorDraftValue(overrideValue, patente)) {
+    return overrideValue.trim();
+  }
+  return itemValue;
+}
+
+function buildAutoVehicleTitle(details: EditorVehicleDetails): string {
+  const parts = [details.brand, details.model, details.year, details.version].filter(
+    (part) => part?.trim() && !isPlaceholderVehicleLabel(part),
+  ) as string[];
+  return parts.join(" ").trim();
 }
 
 function resolveEstadoRetiroForVehicleKey(
@@ -1598,10 +1626,30 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
   const lookup = buildVehicleLookup(raw);
   const cav = (raw.cav_campos as Record<string, unknown> | undefined) ?? {};
   const baseImages = item.images.filter((url) => url.startsWith("http")).join(", ");
+  const patente = String(raw.patente ?? raw.PPU ?? "");
+  const itemBrand = String(
+    getLookupValue(lookup, ["marca", "brand", "make", "glo3d.make", "autored.marca", "autored_campos.marca"]) ??
+      raw.marca ??
+      raw.brand ??
+      "",
+  );
+  const itemModel = String(
+    getLookupValue(lookup, ["modelo", "model", "model2", "glo3d.model2", "autored.modelo", "autored_campos.modelo"]) ??
+      raw.modelo ??
+      raw.model ??
+      "",
+  );
+  const itemYear = String(
+    getLookupValue(lookup, ["ano", "anio", "year", "glo3d.year", "autored.ano", "autored_campos.ano"]) ??
+      raw.ano ??
+      raw.anio ??
+      raw.year ??
+      "",
+  );
   return {
-    title: override?.title ?? item.title,
-    subtitle: override?.subtitle ?? (item.subtitle ?? ""),
-    patente: override?.patente ?? String(raw.patente ?? raw.PPU ?? ""),
+    title: resolveEditorDraftField(override?.title, item.title, patente),
+    subtitle: resolveEditorDraftField(override?.subtitle, item.subtitle ?? "", patente),
+    patente: resolveEditorDraftField(override?.patente, patente, patente),
     patenteVerifier:
       override?.patenteVerifier ??
       String(
@@ -1614,26 +1662,48 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
           "glo3d.ppu_dv",
         ]) ?? "",
       ),
-    vin:
-      override?.vin ??
-      String(getLookupValue(lookup, ["vin", "n_de_vin", "numero_chasis", "nro_chasis", "glo3d.n_de_vin"]) ?? raw.vin ?? cav.vin ?? cav.numero_chasis ?? ""),
-    nChasis:
-      override?.nChasis ??
+    vin: resolveEditorDraftField(
+      override?.vin,
+      String(
+        getLookupValue(lookup, ["vin", "n_de_vin", "numero_chasis", "nro_chasis", "glo3d.n_de_vin"]) ??
+          raw.vin ??
+          cav.vin ??
+          cav.numero_chasis ??
+          "",
+      ),
+      patente,
+    ),
+    nChasis: resolveEditorDraftField(
+      override?.nChasis,
       String(
         getLookupValue(lookup, ["n_de_chasis", "numero_chasis", "nro_chasis", "chasis", "glo3d.n_de_chasis"]) ?? "",
       ),
-    nMotor:
-      override?.nMotor ??
-      String(getLookupValue(lookup, ["n_de_motor", "numero_motor", "motor_number", "ndm", "glo3d.n_de_motor", "glo3d.ndm"]) ?? ""),
-    nSerie:
-      override?.nSerie ??
-      String(getLookupValue(lookup, ["n_de_serie", "numero_serie", "serial_number", "nds", "glo3d.n_de_serie", "glo3d.nds"]) ?? ""),
+      patente,
+    ),
+    nMotor: resolveEditorDraftField(
+      override?.nMotor,
+      String(
+        getLookupValue(lookup, ["n_de_motor", "numero_motor", "motor_number", "ndm", "glo3d.n_de_motor", "glo3d.ndm"]) ??
+          "",
+      ),
+      patente,
+    ),
+    nSerie: resolveEditorDraftField(
+      override?.nSerie,
+      String(
+        getLookupValue(lookup, ["n_de_serie", "numero_serie", "serial_number", "nds", "glo3d.n_de_serie", "glo3d.nds"]) ??
+          "",
+      ),
+      patente,
+    ),
     nSiniestro:
       override?.nSiniestro ??
       String(getLookupValue(lookup, ["n_de_siniestro", "numero_siniestro", "n_s", "ns", "glo3d.n_de_siniestro", "glo3d.n_s"]) ?? ""),
-    version:
-      override?.version ??
+    version: resolveEditorDraftField(
+      override?.version,
       String(getLookupValue(lookup, ["version", "ver", "trim", "glo3d.version", "glo3d.trim"]) ?? ""),
+      patente,
+    ),
     tipo:
       override?.tipo ??
       String(getLookupValue(lookup, ["tipo", "type", "tipo_unidad", "glo3d.tipo"]) ?? ""),
@@ -1686,20 +1756,64 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
           "cav_campos.descripcion",
         ]) ?? "",
       ),
-    brand: override?.brand ?? String(getLookupValue(lookup, ["marca", "brand", "make", "glo3d.make"]) ?? raw.marca ?? raw.brand ?? ""),
-    model: override?.model ?? String(getLookupValue(lookup, ["modelo", "model", "model2", "glo3d.model2"]) ?? raw.modelo ?? raw.model ?? ""),
-    year: override?.year ?? String(getLookupValue(lookup, ["ano", "anio", "year", "glo3d.year"]) ?? raw.ano ?? raw.anio ?? raw.year ?? ""),
+    brand: resolveEditorDraftField(override?.brand, itemBrand, patente),
+    model: resolveEditorDraftField(override?.model, itemModel, patente),
+    year: resolveEditorDraftField(override?.year, itemYear, patente),
     category: override?.category ?? String(raw.categoria ?? ""),
-    kilometraje: override?.kilometraje ?? String(raw.kilometraje ?? cav.kilometraje ?? cav.km ?? ""),
-    color: override?.color ?? String(raw.color ?? cav.color ?? ""),
-    combustible: override?.combustible ?? String(raw.combustible ?? cav.combustible ?? ""),
-    transmision: override?.transmision ?? String(raw.transmision ?? cav.transmision ?? cav.caja ?? ""),
-    traccion: override?.traccion ?? String(raw.traccion ?? cav.traccion ?? ""),
+    kilometraje: resolveEditorDraftField(
+      override?.kilometraje,
+      String(
+        getLookupValue(lookup, ["kilometraje", "km", "mileage", "odometro", "glo3d.mileage", "glo3d.kilometraje"]) ??
+          raw.kilometraje ??
+          cav.kilometraje ??
+          cav.km ??
+          "",
+      ),
+      patente,
+    ),
+    color: resolveEditorDraftField(
+      override?.color,
+      String(getLookupValue(lookup, ["color", "color_exterior", "glo3d.color"]) ?? raw.color ?? cav.color ?? ""),
+      patente,
+    ),
+    combustible: resolveEditorDraftField(
+      override?.combustible,
+      String(
+        getLookupValue(lookup, ["combustible", "fuel", "fuel_type", "glo3d.combustible", "glo3d.fuel"]) ??
+          raw.combustible ??
+          cav.combustible ??
+          "",
+      ),
+      patente,
+    ),
+    transmision: resolveEditorDraftField(
+      override?.transmision,
+      String(
+        getLookupValue(lookup, ["transmision", "caja", "transmission", "glo3d.transmision", "glo3d.caja"]) ??
+          raw.transmision ??
+          cav.transmision ??
+          cav.caja ??
+          "",
+      ),
+      patente,
+    ),
+    traccion: resolveEditorDraftField(
+      override?.traccion,
+      String(
+        getLookupValue(lookup, ["traccion", "tipo_traccion", "drive_type", "glo3d.traccion"]) ??
+          raw.traccion ??
+          cav.traccion ??
+          "",
+      ),
+      patente,
+    ),
     aro: override?.aro ?? String(raw.aro ?? cav.aro ?? ""),
     cilindrada: override?.cilindrada ?? String(raw.cilindrada ?? cav.cilindrada ?? ""),
-    llaves:
-      override?.llaves ??
-      String(getLookupValue(lookup, ["llaves", "keys", "has_keys", "tiene_llaves", "glo3d.llaves"]) ?? ""),
+    llaves: resolveEditorDraftField(
+      override?.llaves,
+      String(getLookupValue(lookup, ["llaves", "keys", "has_keys", "tiene_llaves", "glo3d.llaves", "glo3d.lla"]) ?? ""),
+      patente,
+    ),
     aireAcondicionado:
       override?.aireAcondicionado ??
       String(getLookupValue(lookup, ["aire_acondicionado", "air_conditioning", "has_ac", "ac", "glo3d.aire_acondicionado"]) ?? ""),
@@ -1722,12 +1836,16 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
     vencSeguroObligatorio:
       override?.vencSeguroObligatorio ??
       String(getLookupValue(lookup, ["vencimiento_seguro_obligatorio", "vso", "glo3d.vencimiento_seguro_obligatorio"]) ?? ""),
-    pruebaMotor:
-      override?.pruebaMotor ??
-      String(getLookupValue(lookup, ["prueba_motor", "pdm", "glo3d.prueba_motor"]) ?? ""),
-    pruebaDesplazamiento:
-      override?.pruebaDesplazamiento ??
-      String(getLookupValue(lookup, ["prueba_desplazamiento", "pdd", "glo3d.prueba_desplazamiento"]) ?? ""),
+    pruebaMotor: resolveEditorDraftField(
+      override?.pruebaMotor,
+      String(getLookupValue(lookup, ["prueba_motor", "pdm", "glo3d.prueba_motor", "glo3d.pdm"]) ?? ""),
+      patente,
+    ),
+    pruebaDesplazamiento: resolveEditorDraftField(
+      override?.pruebaDesplazamiento,
+      String(getLookupValue(lookup, ["prueba_desplazamiento", "pdd", "glo3d.prueba_desplazamiento", "glo3d.pdd"]) ?? ""),
+      patente,
+    ),
     estadoAirbags:
       override?.estadoAirbags ??
       String(getLookupValue(lookup, ["estado_airbags", "eda", "glo3d.estado_airbags"]) ?? ""),
@@ -1813,70 +1931,77 @@ function sanitizeDetails(details: EditorVehicleDetails): EditorVehicleDetails | 
 
 function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails): CatalogItem {
   if (!override) return item;
-  const images = parseImagesCsv(override.imagesCsv);
+  const patente = getPatent(item);
+  const overrideCopy = { ...override };
+  for (const key of ["brand", "model", "title", "year", "subtitle"] as const) {
+    if (isStaleEditorDraftValue(overrideCopy[key], patente)) {
+      delete overrideCopy[key];
+    }
+  }
+  const images = parseImagesCsv(overrideCopy.imagesCsv);
   return {
     ...item,
-    title: override.title ?? item.title,
-    subtitle: override.subtitle ?? item.subtitle,
-    status: override.status ?? item.status,
-    location: override.location ?? item.location,
-    lot: override.lot ?? item.lot,
-    auctionDate: override.auctionDate ?? item.auctionDate,
-    thumbnail: override.thumbnail ?? item.thumbnail,
-    view3dUrl: override.view3dUrl ?? item.view3dUrl,
+    title: overrideCopy.title ?? item.title,
+    subtitle: overrideCopy.subtitle ?? item.subtitle,
+    status: overrideCopy.status ?? item.status,
+    location: overrideCopy.location ?? item.location,
+    lot: overrideCopy.lot ?? item.lot,
+    auctionDate: overrideCopy.auctionDate ?? item.auctionDate,
+    thumbnail: overrideCopy.thumbnail ?? item.thumbnail,
+    view3dUrl: overrideCopy.view3dUrl ?? item.view3dUrl,
     images: images.length > 0 ? images : item.images,
     raw: {
       ...item.raw,
-      ...(override.patente ? { patente: override.patente, PPU: override.patente } : {}),
-      ...(override.patenteVerifier ? { patente_verifier: override.patenteVerifier, ppu_dv: override.patenteVerifier, dv: override.patenteVerifier } : {}),
-      ...(override.vin ? { vin: override.vin } : {}),
-      ...(override.nChasis ? { n_de_chasis: override.nChasis, numero_chasis: override.nChasis, nro_chasis: override.nChasis, chasis: override.nChasis } : {}),
-      ...(override.nMotor ? { n_de_motor: override.nMotor, numero_motor: override.nMotor, ndm: override.nMotor } : {}),
-      ...(override.nSerie ? { n_de_serie: override.nSerie, numero_serie: override.nSerie, nds: override.nSerie } : {}),
-      ...(override.nSiniestro ? { n_de_siniestro: override.nSiniestro, numero_siniestro: override.nSiniestro, n_s: override.nSiniestro, ns: override.nSiniestro } : {}),
-      ...(override.version ? { version: override.version, ver: override.version, trim: override.version } : {}),
-      ...(override.tipo ? { tipo: override.tipo, type: override.tipo } : {}),
-      ...(override.tipoVehiculo ? { tipo_de_vehiculo: override.tipoVehiculo, tipo_vehiculo: override.tipoVehiculo, vehicle_type: override.tipoVehiculo } : {}),
-      ...(override.vehicleCondition
+      ...(overrideCopy.patente ? { patente: overrideCopy.patente, PPU: overrideCopy.patente } : {}),
+      ...(overrideCopy.patenteVerifier ? { patente_verifier: overrideCopy.patenteVerifier, ppu_dv: overrideCopy.patenteVerifier, dv: overrideCopy.patenteVerifier } : {}),
+      ...(overrideCopy.vin ? { vin: overrideCopy.vin } : {}),
+      ...(overrideCopy.nChasis ? { n_de_chasis: overrideCopy.nChasis, numero_chasis: overrideCopy.nChasis, nro_chasis: overrideCopy.nChasis, chasis: overrideCopy.nChasis } : {}),
+      ...(overrideCopy.nMotor ? { n_de_motor: overrideCopy.nMotor, numero_motor: overrideCopy.nMotor, ndm: overrideCopy.nMotor } : {}),
+      ...(overrideCopy.nSerie ? { n_de_serie: overrideCopy.nSerie, numero_serie: overrideCopy.nSerie, nds: overrideCopy.nSerie } : {}),
+      ...(overrideCopy.nSiniestro ? { n_de_siniestro: overrideCopy.nSiniestro, numero_siniestro: overrideCopy.nSiniestro, n_s: overrideCopy.nSiniestro, ns: overrideCopy.nSiniestro } : {}),
+      ...(overrideCopy.version ? { version: overrideCopy.version, ver: overrideCopy.version, trim: overrideCopy.version } : {}),
+      ...(overrideCopy.tipo ? { tipo: overrideCopy.tipo, type: overrideCopy.tipo } : {}),
+      ...(overrideCopy.tipoVehiculo ? { tipo_de_vehiculo: overrideCopy.tipoVehiculo, tipo_vehiculo: overrideCopy.tipoVehiculo, vehicle_type: overrideCopy.tipoVehiculo } : {}),
+      ...(overrideCopy.vehicleCondition
         ? {
-            condicion: override.vehicleCondition,
-            condicion_vehiculo: override.vehicleCondition,
-            estado_vehiculo: override.vehicleCondition,
+            condicion: overrideCopy.vehicleCondition,
+            condicion_vehiculo: overrideCopy.vehicleCondition,
+            estado_vehiculo: overrideCopy.vehicleCondition,
           }
         : {}),
-      ...(override.description ? { descripcion: override.description, description: override.description } : {}),
-      ...(override.extendedDescription
-        ? { descripcion_ampliada: override.extendedDescription, observaciones: override.extendedDescription }
+      ...(overrideCopy.description ? { descripcion: overrideCopy.description, description: overrideCopy.description } : {}),
+      ...(overrideCopy.extendedDescription
+        ? { descripcion_ampliada: overrideCopy.extendedDescription, observaciones: overrideCopy.extendedDescription }
         : {}),
-      ...(override.brand ? { marca: override.brand, brand: override.brand } : {}),
-      ...(override.model ? { modelo: override.model, model: override.model } : {}),
-      ...(override.year ? { ano: override.year, anio: override.year, year: override.year } : {}),
-      ...(override.category ? { categoria: override.category } : {}),
-      ...(override.kilometraje ? { kilometraje: override.kilometraje, km: override.kilometraje } : {}),
-      ...(override.color ? { color: override.color } : {}),
-      ...(override.combustible ? { combustible: override.combustible } : {}),
-      ...(override.transmision ? { transmision: override.transmision, caja: override.transmision } : {}),
-      ...(override.traccion ? { traccion: override.traccion } : {}),
-      ...(override.aro ? { aro: override.aro } : {}),
-      ...(override.cilindrada ? { cilindrada: override.cilindrada } : {}),
-      ...(override.location ? { ubicacion: override.location } : {}),
-      ...(override.ubicacionFisica ? { ubicacion_fisica: override.ubicacionFisica, ubi: override.ubicacionFisica } : {}),
-      ...(override.transportista ? { transportista: override.transportista, tra: override.transportista } : {}),
-      ...(override.taller ? { taller: override.taller, tal: override.taller } : {}),
-      ...(override.llaves ? { llaves: override.llaves } : {}),
-      ...(override.aireAcondicionado ? { aire_acondicionado: override.aireAcondicionado } : {}),
-      ...(override.unicoPropietario ? { unico_propietario: override.unicoPropietario } : {}),
-      ...(override.condicionado ? { condicionado: override.condicionado } : {}),
-      ...(override.multas ? { multas: override.multas, mul: override.multas } : {}),
-      ...(override.tag ? { tag: override.tag } : {}),
-      ...(override.vencRevisionTecnica ? { vencimiento_revision_tecnica: override.vencRevisionTecnica, vrt: override.vencRevisionTecnica } : {}),
-      ...(override.vencPermisoCirculacion ? { vencimiento_permiso_circulacion: override.vencPermisoCirculacion, vpc: override.vencPermisoCirculacion } : {}),
-      ...(override.vencSeguroObligatorio ? { vencimiento_seguro_obligatorio: override.vencSeguroObligatorio, vso: override.vencSeguroObligatorio } : {}),
-      ...(override.pruebaMotor ? { prueba_motor: override.pruebaMotor, pdm: override.pruebaMotor } : {}),
-      ...(override.pruebaDesplazamiento ? { prueba_desplazamiento: override.pruebaDesplazamiento, pdd: override.pruebaDesplazamiento } : {}),
-      ...(override.estadoAirbags ? { estado_airbags: override.estadoAirbags, eda: override.estadoAirbags } : {}),
-      ...(override.lotDocumentsJson
-        ? { documentos_lote_json: override.lotDocumentsJson, lot_documents_json: override.lotDocumentsJson }
+      ...(overrideCopy.brand ? { marca: overrideCopy.brand, brand: overrideCopy.brand } : {}),
+      ...(overrideCopy.model ? { modelo: overrideCopy.model, model: overrideCopy.model } : {}),
+      ...(overrideCopy.year ? { ano: overrideCopy.year, anio: overrideCopy.year, year: overrideCopy.year } : {}),
+      ...(overrideCopy.category ? { categoria: overrideCopy.category } : {}),
+      ...(overrideCopy.kilometraje ? { kilometraje: overrideCopy.kilometraje, km: overrideCopy.kilometraje } : {}),
+      ...(overrideCopy.color ? { color: overrideCopy.color } : {}),
+      ...(overrideCopy.combustible ? { combustible: overrideCopy.combustible } : {}),
+      ...(overrideCopy.transmision ? { transmision: overrideCopy.transmision, caja: overrideCopy.transmision } : {}),
+      ...(overrideCopy.traccion ? { traccion: overrideCopy.traccion } : {}),
+      ...(overrideCopy.aro ? { aro: overrideCopy.aro } : {}),
+      ...(overrideCopy.cilindrada ? { cilindrada: overrideCopy.cilindrada } : {}),
+      ...(overrideCopy.location ? { ubicacion: overrideCopy.location } : {}),
+      ...(overrideCopy.ubicacionFisica ? { ubicacion_fisica: overrideCopy.ubicacionFisica, ubi: overrideCopy.ubicacionFisica } : {}),
+      ...(overrideCopy.transportista ? { transportista: overrideCopy.transportista, tra: overrideCopy.transportista } : {}),
+      ...(overrideCopy.taller ? { taller: overrideCopy.taller, tal: overrideCopy.taller } : {}),
+      ...(overrideCopy.llaves ? { llaves: overrideCopy.llaves } : {}),
+      ...(overrideCopy.aireAcondicionado ? { aire_acondicionado: overrideCopy.aireAcondicionado } : {}),
+      ...(overrideCopy.unicoPropietario ? { unico_propietario: overrideCopy.unicoPropietario } : {}),
+      ...(overrideCopy.condicionado ? { condicionado: overrideCopy.condicionado } : {}),
+      ...(overrideCopy.multas ? { multas: overrideCopy.multas, mul: overrideCopy.multas } : {}),
+      ...(overrideCopy.tag ? { tag: overrideCopy.tag } : {}),
+      ...(overrideCopy.vencRevisionTecnica ? { vencimiento_revision_tecnica: overrideCopy.vencRevisionTecnica, vrt: overrideCopy.vencRevisionTecnica } : {}),
+      ...(overrideCopy.vencPermisoCirculacion ? { vencimiento_permiso_circulacion: overrideCopy.vencPermisoCirculacion, vpc: overrideCopy.vencPermisoCirculacion } : {}),
+      ...(overrideCopy.vencSeguroObligatorio ? { vencimiento_seguro_obligatorio: overrideCopy.vencSeguroObligatorio, vso: overrideCopy.vencSeguroObligatorio } : {}),
+      ...(overrideCopy.pruebaMotor ? { prueba_motor: overrideCopy.pruebaMotor, pdm: overrideCopy.pruebaMotor } : {}),
+      ...(overrideCopy.pruebaDesplazamiento ? { prueba_desplazamiento: overrideCopy.pruebaDesplazamiento, pdd: overrideCopy.pruebaDesplazamiento } : {}),
+      ...(overrideCopy.estadoAirbags ? { estado_airbags: overrideCopy.estadoAirbags, eda: overrideCopy.estadoAirbags } : {}),
+      ...(overrideCopy.lotDocumentsJson
+        ? { documentos_lote_json: overrideCopy.lotDocumentsJson, lot_documents_json: overrideCopy.lotDocumentsJson }
         : {}),
       ...(override.nombrePropietarioAnterior ? { nombre_propietario_anterior: override.nombrePropietarioAnterior, npa: override.nombrePropietarioAnterior } : {}),
       ...(override.rutPropietarioAnterior ? { rut_propietario_anterior: override.rutPropietarioAnterior, rpa: override.rutPropietarioAnterior } : {}),
@@ -3983,9 +4108,26 @@ export function CatalogHomeClient({
             "glo3d.n_de_chasis",
           ]),
         },
-        { label: "Marca", value: getLookupValue(selectedVehicleLookup, ["marca", "brand", "make", "glo3d.make"]) ?? raw.marca },
-        { label: "Modelo", value: getLookupValue(selectedVehicleLookup, ["modelo", "model"]) ?? getModel(selectedVehicle) },
-        { label: "Año", value: getLookupValue(selectedVehicleLookup, ["ano", "anio", "year", "glo3d.year"]) },
+        {
+          label: "Marca",
+          value:
+            selectedVehicleOverride?.brand ??
+            getLookupValue(selectedVehicleLookup, ["marca", "brand", "make", "glo3d.make", "autored.marca"]) ??
+            raw.marca,
+        },
+        {
+          label: "Modelo",
+          value:
+            selectedVehicleOverride?.model ??
+            getLookupValue(selectedVehicleLookup, ["modelo", "model", "model2", "glo3d.model2", "autored.modelo"]) ??
+            getModel(selectedVehicle),
+        },
+        {
+          label: "Año",
+          value:
+            selectedVehicleOverride?.year ??
+            getLookupValue(selectedVehicleLookup, ["ano", "anio", "year", "glo3d.year", "autored.ano"]),
+        },
         {
           label: "Tipo de vehículo",
           value: getLookupValue(selectedVehicleLookup, [
@@ -5494,6 +5636,41 @@ export function CatalogHomeClient({
     return () => window.clearTimeout(timeout);
   }, [glo3dCooldownUntil]);
 
+  const mergeImportedVehicleDetails = (
+    previous: EditorVehicleDetails | undefined,
+    imported: EditorVehicleDetails,
+  ): EditorVehicleDetails => {
+    const manualPreserveKeys: Array<keyof EditorVehicleDetails> = [
+      "extendedDescription",
+      "lot",
+      "auctionDate",
+      "location",
+      "status",
+      "vehicleCondition",
+      "originalPrice",
+      "precioMinimoRemate",
+      "promoPrice",
+      "promoEnabled",
+      "lotDocumentsJson",
+    ];
+    const merged: EditorVehicleDetails = { ...imported };
+    for (const key of manualPreserveKeys) {
+      const previousValue = previous?.[key];
+      const importedValue = imported[key];
+      const importedEmpty =
+        importedValue === undefined ||
+        importedValue === null ||
+        importedValue === "" ||
+        importedValue === false;
+      const previousPresent =
+        previousValue !== undefined && previousValue !== null && previousValue !== "";
+      if (importedEmpty && previousPresent) {
+        Object.assign(merged, { [key]: previousValue });
+      }
+    }
+    return merged;
+  };
+
   const applyImportedPatentPayload = useCallback(
     (payload: {
       item: CatalogItem;
@@ -5515,15 +5692,16 @@ export function CatalogHomeClient({
           payload.item,
         ]),
       );
-      if (payload.vehicleDetails) {
+      const importedVehicleDetails = payload.vehicleDetails;
+      if (importedVehicleDetails) {
         setConfig((prev) => ({
           ...prev,
           vehicleDetails: {
             ...prev.vehicleDetails,
-            [vehicleKey]: {
-              ...(prev.vehicleDetails?.[vehicleKey] ?? {}),
-              ...payload.vehicleDetails,
-            },
+            [vehicleKey]: mergeImportedVehicleDetails(
+              prev.vehicleDetails?.[vehicleKey],
+              importedVehicleDetails,
+            ),
           },
         }));
       }
@@ -6383,6 +6561,15 @@ export function CatalogHomeClient({
         setManagingVehicleKey(resolvedKey);
       }
 
+      if (
+        editingVehicleKey &&
+        (editingVehicleKey === managingVehicleKey || editingVehicleKey === resolvedKey)
+      ) {
+        const syncedItem = applyDetailsOverride(payload.item, payload.vehicleDetails);
+        setEditingVehicleKey(resolvedKey);
+        setEditingDetails(buildDetailsDraft(syncedItem, payload.vehicleDetails));
+      }
+
       showSystemNotice(
         "success",
         "Unidad sincronizada",
@@ -6408,6 +6595,7 @@ export function CatalogHomeClient({
     applyImportedPatentPayload,
     assertGlo3dClientAllowed,
     config,
+    editingVehicleKey,
     itemsByKey,
     managingVehicleKey,
     markGlo3dClientCooldown,
@@ -12353,6 +12541,52 @@ export function CatalogHomeClient({
                   Esta sección concentra estado comercial, narrativa y campos de publicación.
                   Los links crudos de Glo3D se administran automáticamente y están ocultos para evitar confusión.
                 </p>
+                <div className="mb-3 rounded-lg border border-cyan-200 bg-white/80 p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Título y subtítulo (home)
+                  </p>
+                  <p className="mb-2 text-xs text-slate-600">
+                    El título se genera al sincronizar con marca, modelo y año, pero puedes editarlo manualmente.
+                  </p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1 md:col-span-2">
+                      <input
+                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm font-semibold"
+                        placeholder="Título principal (ej. NISSAN KICKS 1.6 2020)"
+                        value={editingDetails.title ?? ""}
+                        onChange={(event) =>
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), title: event.target.value }))
+                        }
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const autoTitle = buildAutoVehicleTitle(editingDetails);
+                          if (!autoTitle) {
+                            showSystemNotice(
+                              "info",
+                              "Sin datos para título",
+                              "Completa marca, modelo o año para generar el título automáticamente.",
+                            );
+                            return;
+                          }
+                          setEditingDetails((prev) => ({ ...(prev ?? {}), title: autoTitle }));
+                        }}
+                        className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
+                      >
+                        Regenerar título desde marca/modelo/año
+                      </button>
+                    </div>
+                    <input
+                      className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                      placeholder="Subtítulo / etiqueta (ej. DIESEL, 4X4, ÚNICO DUEÑO)"
+                      value={editingDetails.subtitle ?? ""}
+                      onChange={(event) =>
+                        setEditingDetails((prev) => ({ ...(prev ?? {}), subtitle: event.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Estado" value={editingDetails.status ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), status: event.target.value }))} />
                   <select

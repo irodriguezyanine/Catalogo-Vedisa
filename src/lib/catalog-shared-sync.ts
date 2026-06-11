@@ -187,12 +187,19 @@ function buildInventarioPayload(
   const details = resolveVehicleDetails(config, vehicleKey);
   const title = manual?.title ?? details?.title ?? `Unidad ${patente}`;
   const parsedTitle = title.trim();
-  const split = parsedTitle.split(/\s+/);
-  const marca = manual?.brand ?? details?.brand ?? split[0] ?? "Sin Marca";
+  const split = parsedTitle.split(/\s+/).filter(Boolean);
+  const titleLooksLikePlaceholder =
+    /^unidad\s+[a-z0-9]{5,10}$/i.test(parsedTitle) ||
+    parsedTitle.toLowerCase().startsWith("unidad ");
+  const marcaFromTitle =
+    !titleLooksLikePlaceholder && split.length > 0 ? split[0] : undefined;
+  const modeloFromTitle =
+    !titleLooksLikePlaceholder && split.length > 1 ? split.slice(1).join(" ").trim() : undefined;
+  const marca = manual?.brand ?? details?.brand ?? marcaFromTitle ?? "Sin Marca";
   const modelo =
     manual?.model ??
     details?.model ??
-    split.slice(1).join(" ").trim() ??
+    modeloFromTitle ??
     details?.version ??
     "Sin Modelo";
   const valorMinimo =
