@@ -834,13 +834,191 @@ function normalizeGlo3dTechnicalFields(
   return result;
 }
 
+function collectPatentCandidatesFromUnknown(node: unknown, out: Set<string>): void {
+  if (node == null) return;
+  if (typeof node === "string") {
+    const compact = normalizeStock(node);
+    if (/^[A-Z]{4}\d{2}$/.test(compact)) out.add(compact);
+    const fromText = extractPatentFromText(node);
+    if (fromText) out.add(fromText);
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const entry of node) collectPatentCandidatesFromUnknown(entry, out);
+    return;
+  }
+  if (typeof node === "object") {
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      collectPatentCandidatesFromUnknown(value, out);
+    }
+  }
+}
+
+function extractPatentFromGlo3dItem(item: Record<string, unknown>): string | undefined {
+  const technicalFields = normalizeGlo3dTechnicalFields(item);
+  const customSpecFields = extractCustomSpecFieldMap(item);
+  const merged = { ...item, ...technicalFields, ...customSpecFields };
+
+  const direct = normalizeStock(
+    getStringFromKeys(merged, [
+      "stock_number",
+      "stock",
+      "PPU",
+      "ppu",
+      "patente",
+      "plate",
+      "license_plate",
+    ]) ?? pickString(merged, ["patente", "ppu", "stock_number", "plate"]),
+  );
+  if (/^[A-Z]{4}\d{2}$/.test(direct)) return direct;
+
+  const fromText = [
+    pickString(merged, ["showName", "name", "title", "description"]),
+    pickString(customSpecFields, ["ppu", "patente", "plate"]),
+  ]
+    .map((value) => extractPatentFromText(value))
+    .find((value): value is string => !!value);
+  if (fromText) return fromText;
+
+  const candidates = new Set<string>();
+  collectPatentCandidatesFromUnknown(item, candidates);
+  return candidates.values().next().value;
+}
+
+function glo3dItemMatchesPatent(item: Record<string, unknown>, target: string): boolean {
+  const candidates = new Set<string>();
+  collectPatentCandidatesFromUnknown(item, candidates);
+  return candidates.has(target);
+}
+
+function buildGlo3dEntryFromRaw(item: Record<string, unknown>): Glo3dInventoryEntry | null {
+  const technicalFields = normalizeGlo3dTechnicalFields(item);
+  const embed =
+    extractEmbedUrl(item.src_with_params) ??
+    extractEmbedUrl(item.src) ??
+    extractEmbedUrl(item.iframe_with_params) ??
+    extractEmbedUrl(item.iframe);
+  const glo3dId = extractGlo3dId(embed);
+  const fallbackView3d = pickString(item, [
+    "url_3d",
+    "glo3d_url",
+    "iframe",
+    "iframe_with_params",
+    "src",
+    "src_with_params",
+  ]);
+  const view3dUrlFromRaw = extractEmbedUrl(fallbackView3d);
+
+  if (glo3dId) {
+    const view3dUrl = buildGlo3dIframeNovaUrl(glo3dId);
+    return {
+      view3dUrl,
+      technicalFields: { ...technicalFields, foto3d: view3dUrl },
+      raw: item,
+    };
+  }
+  if (embed && /(?:iframe|iframeNova)\//i.test(embed)) {
+    const view3dUrl = normalizeGlo3dUrl(embed);
+    return {
+      view3dUrl,
+      technicalFields: { ...technicalFields, foto3d: view3dUrl },
+      raw: item,
+    };
+  }
+  return {
+    view3dUrl: view3dUrlFromRaw,
+    technicalFields: view3dUrlFromRaw
+      ? { ...technicalFields, foto3d: view3dUrlFromRaw }
+      : technicalFields,
+    raw: item,
+  };
+}
+
+async function fetchGlo3dInventoryPage(
+  page: number,
+  search?: string,
+): Promise<{
+  data: Array<Record<string, unknown>>;
+  remaining: number;
+  ok: boolean;
+}> {
+  const username = process.env.GLO3D_API_USERNAME ?? process.env.VITE_GLO3D_API_USERNAME;
+  const password = process.env.GLO3D_API_PASSWORD ?? process.env.VITE_GLO3D_API_PASSWORD;
+  if (!username || !password) {
+    return { data: [], remaining: 0, ok: false };
+  }
+
+  const authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+  const body =
+    page === 0
+      ? JSON.stringify(
+          search?.trim()
+            ? { pageSize: 200, search: search.trim(), query: search.trim() }
+            : { pageSize: 200 },
+        )
+      : JSON.stringify(
+          search?.trim()
+            ? { page, pageSize: 200, search: search.trim(), query: search.trim() }
+            : { page, pageSize: 200 },
+        );
+
+  const response = await fetch(GLO3D_INVENTORY_POST_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: authHeader,
+    },
+    body,
+    cache: "no-store",
+  });
+  if (!response.ok) return { data: [], remaining: 0, ok: false };
+
+  const payload = (await response.json()) as {
+    data?: Array<Record<string, unknown>>;
+    remaining?: number;
+  };
+  return {
+    data: payload.data ?? [],
+    remaining: payload.remaining ?? 0,
+    ok: true,
+  };
+}
+
+async function fetchGlo3dByPatentScan(patent: string): Promise<Glo3dInventoryEntry | null> {
+  const target = normalizeStock(patent);
+  if (!target) return null;
+
+  const tryPages = async (search?: string, maxPages = 40) => {
+    let page = 0;
+    while (page < maxPages) {
+      const payload = await fetchGlo3dInventoryPage(page, search);
+      if (!payload.ok) break;
+      for (const item of payload.data) {
+        if (!glo3dItemMatchesPatent(item, target)) continue;
+        const entry = buildGlo3dEntryFromRaw(item);
+        if (entry) return entry;
+      }
+      if (payload.remaining <= 0 || payload.data.length === 0) break;
+      page += 1;
+    }
+    return null;
+  };
+
+  const fromSearch = await tryPages(target, 6);
+  if (fromSearch) return fromSearch;
+
+  return tryPages(undefined, 40);
+}
+
 export async function fetchGlo3dRecordByPatent(
   patent: string,
 ): Promise<Glo3dInventoryEntry | null> {
   const stock = normalizeStock(patent);
   if (!stock) return null;
   const resolved = await fetchGlo3dByStocks([stock]);
-  return resolved.get(stock) ?? null;
+  if (resolved.has(stock)) return resolved.get(stock) ?? null;
+  return fetchGlo3dByPatentScan(stock);
 }
 
 async function fetchGlo3dByStocks(stocks: string[]): Promise<Map<string, Glo3dInventoryEntry>> {
@@ -874,74 +1052,12 @@ async function fetchGlo3dByStocks(stocks: string[]): Promise<Map<string, Glo3dIn
 
     const data = payload.data ?? [];
     for (const item of data) {
-      const technicalFields = normalizeGlo3dTechnicalFields(item);
-      const stock = normalizeStock(
-        getStringFromKeys(item, [
-          "stock_number",
-          "stock",
-          "PPU",
-          "ppu",
-          "patente",
-          "plate",
-        ]) ?? pickString(technicalFields, ["patente", "ppu", "stock_number"]),
-      );
+      const stock = extractPatentFromGlo3dItem(item);
       if (!stock || !pending.has(stock)) continue;
-
-      const embed =
-        extractEmbedUrl(item.src_with_params) ??
-        extractEmbedUrl(item.src) ??
-        extractEmbedUrl(item.iframe_with_params) ??
-        extractEmbedUrl(item.iframe);
-
-      const glo3dId = extractGlo3dId(embed);
-      const fallbackView3d = pickString(item, [
-        "url_3d",
-        "glo3d_url",
-        "iframe",
-        "iframe_with_params",
-        "src",
-        "src_with_params",
-      ]);
-      const view3dUrlFromRaw = extractEmbedUrl(fallbackView3d);
-
-      if (glo3dId) {
-        const view3dUrl = buildGlo3dIframeNovaUrl(glo3dId);
-        resolved.set(stock, {
-          view3dUrl,
-          technicalFields: {
-            ...technicalFields,
-            foto3d: view3dUrl,
-          },
-          raw: item,
-        });
-        pending.delete(stock);
-        continue;
-      }
-
-      if (embed && /(?:iframe|iframeNova)\//i.test(embed)) {
-        const view3dUrl = normalizeGlo3dUrl(embed);
-        resolved.set(stock, {
-          view3dUrl,
-          technicalFields: {
-            ...technicalFields,
-            foto3d: view3dUrl,
-          },
-          raw: item,
-        });
-        pending.delete(stock);
-        continue;
-      }
-
-      if (Object.keys(technicalFields).length > 0 || view3dUrlFromRaw) {
-        resolved.set(stock, {
-          view3dUrl: view3dUrlFromRaw,
-          technicalFields: view3dUrlFromRaw
-            ? { ...technicalFields, foto3d: view3dUrlFromRaw }
-            : technicalFields,
-          raw: item,
-        });
-        pending.delete(stock);
-      }
+      const entry = buildGlo3dEntryFromRaw(item);
+      if (!entry) continue;
+      resolved.set(stock, entry);
+      pending.delete(stock);
     }
 
     if ((payload.remaining ?? 0) <= 0 || data.length === 0) break;

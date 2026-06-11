@@ -518,7 +518,63 @@ function extractPatentTokens(value: string): string[] {
   const normalized = matches
     .map((token) => normalizePatentToken(token))
     .filter((token) => /^[A-Z]{4}\d{2}$/.test(token));
+  const compact = normalizePatentToken(raw);
+  if (/^[A-Z]{4}\d{2}$/.test(compact)) normalized.push(compact);
   return Array.from(new Set(normalized));
+}
+
+function getCatalogItemDedupeKey(item: CatalogItem): string {
+  const patent = normalizePatentToken(getPatent(item));
+  if (patent && patent !== "—") return patent;
+  return getVehicleKey(item);
+}
+
+function dedupeCatalogItemsByVehicleKey(list: CatalogItem[]): CatalogItem[] {
+  const map = new Map<string, CatalogItem>();
+  for (const item of list) {
+    const dedupeKey = getCatalogItemDedupeKey(item);
+    const existing = map.get(dedupeKey);
+    if (!existing) {
+      map.set(dedupeKey, item);
+      continue;
+    }
+    const existingHasPatent = getPatent(existing) !== "—";
+    const incomingHasPatent = getPatent(item) !== "—";
+    if (!existingHasPatent && incomingHasPatent) {
+      map.set(dedupeKey, item);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function isAssignedVehicleKey(
+  assignedKeys: Set<string>,
+  item: CatalogItem,
+): boolean {
+  const key = getVehicleKey(item);
+  if (assignedKeys.has(key)) return true;
+  const patent = normalizePatentToken(getPatent(item));
+  return patent.length > 0 && assignedKeys.has(patent);
+}
+
+function matchesInventoryPatentSearch(
+  item: CatalogItem,
+  rawTerm: string,
+  patentTokens: string[],
+): boolean {
+  const patent = normalizePatentToken(getPatent(item));
+  const key = normalizePatentToken(getVehicleKey(item));
+  if (patentTokens.length > 0) {
+    return patentTokens.some((token) => patent === token || key === token);
+  }
+  const query = normalizeText(rawTerm);
+  if (!query) return false;
+  const patentQuery = normalizePatentToken(rawTerm);
+  if (patentQuery.length >= 3 && (patent.includes(patentQuery) || key.includes(patentQuery))) {
+    return true;
+  }
+  const sample = normalizeText(`${patent} ${key} ${getModel(item)} ${item.title} ${item.subtitle ?? ""}`);
+  return sample.includes(query);
 }
 
 function normalizeLookupKey(value: string): string {
@@ -2215,7 +2271,8 @@ export function CatalogHomeClient({
   const [saving, setSaving] = useState(false);
   const [autoSaveState, setAutoSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string>("");
-  const [syncRetrying, setSyncRetrying] = useState(false);
+  const [liveFeedItems, setLiveFeedItems] = useState<CatalogItem[]>(feed.items);
+  const lastAutoImportPatentRef = useRef("");
   const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
   const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
@@ -2603,7 +2660,11 @@ export function CatalogHomeClient({
     }`
   ), []);
 
-  const rawItems = feed.items;
+  const rawItems = liveFeedItems;
+
+  useEffect(() => {
+    setLiveFeedItems(feed.items);
+  }, [feed.items]);
   const updateVehicleUrlParam = useCallback((vehicleKey?: string) => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
@@ -2892,11 +2953,12 @@ export function CatalogHomeClient({
   );
 
   const items = useMemo(() => {
-    const mergedByKey = new Map<string, CatalogItem>();
-    for (const item of [...rawItems, ...manualItems, ...importedInventoryItems]) {
-      mergedByKey.set(getVehicleKey(item), item);
-    }
-    return Array.from(mergedByKey.values()).map((item) =>
+    const merged = dedupeCatalogItemsByVehicleKey([
+      ...rawItems,
+      ...manualItems,
+      ...importedInventoryItems,
+    ]);
+    return merged.map((item) =>
       applyDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
     );
   }, [rawItems, manualItems, importedInventoryItems, config.vehicleDetails]);
@@ -4492,22 +4554,12 @@ export function CatalogHomeClient({
 
   const batchAssignCandidates = useMemo(() => {
     if (!batchAssignTarget) return [] as CatalogItem[];
-    const query = normalizeText(batchAssignSearchTerm);
-    const patentTokens = batchAssignPatentTokens;
-    const source = items.filter((item) => {
-      const key = getVehicleKey(item);
-      const patent = getPatent(item);
-      if (patentTokens.length > 0) {
-        return (
-          patentTokens.includes(normalizePatentToken(patent)) ||
-          patentTokens.includes(normalizePatentToken(key))
-        );
-      }
-      if (!query) return true;
-      const sample = normalizeText(`${patent} ${getModel(item)} ${item.title} ${item.subtitle ?? ""}`);
-      return sample.includes(query);
-    });
-    return source;
+    if (!batchAssignSearchTerm.trim()) return [] as CatalogItem[];
+    return dedupeCatalogItemsByVehicleKey(
+      items.filter((item) =>
+        matchesInventoryPatentSearch(item, batchAssignSearchTerm, batchAssignPatentTokens),
+      ),
+    );
   }, [batchAssignSearchTerm, batchAssignPatentTokens, batchAssignTarget, items]);
 
   useEffect(() => {
@@ -4540,37 +4592,21 @@ export function CatalogHomeClient({
 
   const groupManageItems = useMemo(() => {
     if (!groupManageTarget) return [] as CatalogItem[];
-    const baseItems =
+    const assignedKeys = new Set(
       groupManageTarget.type === "auction"
-        ? activeInventoryItems.filter(
-            (item) =>
-              (config.vehicleUpcomingAuctionIds[getVehicleKey(item)] ?? "") ===
-              groupManageTarget.auctionId,
-          )
-        : activeInventoryItems.filter((item) =>
-            (config.sectionVehicleIds[groupManageTarget.sectionId] ?? []).includes(
-              getVehicleKey(item),
-            ),
-          );
-    const query = normalizeText(groupManageSearchTerm);
+        ? Object.entries(config.vehicleUpcomingAuctionIds)
+            .filter(([, auctionId]) => auctionId === groupManageTarget.auctionId)
+            .map(([vehicleKey]) => vehicleKey)
+        : config.sectionVehicleIds[groupManageTarget.sectionId] ?? [],
+    );
+    const baseItems = dedupeCatalogItemsByVehicleKey(
+      activeInventoryItems.filter((item) => isAssignedVehicleKey(assignedKeys, item)),
+    );
+    if (!groupManageSearchTerm.trim()) return baseItems;
     const patentTokens = extractPatentTokens(groupManageSearchTerm);
-    if (patentTokens.length > 0) {
-      return baseItems.filter((item) => {
-        const patent = getPatent(item);
-        const key = getVehicleKey(item);
-        return (
-          patentTokens.includes(normalizePatentToken(patent)) ||
-          patentTokens.includes(normalizePatentToken(key))
-        );
-      });
-    }
-    if (!query) return baseItems;
-    return baseItems.filter((item) => {
-      const sample = normalizeText(
-        `${getPatent(item)} ${getModel(item)} ${item.title} ${item.subtitle ?? ""}`,
-      );
-      return sample.includes(query);
-    });
+    return baseItems.filter((item) =>
+      matchesInventoryPatentSearch(item, groupManageSearchTerm, patentTokens),
+    );
   }, [
     groupManageTarget,
     groupManageSearchTerm,
@@ -5294,9 +5330,11 @@ export function CatalogHomeClient({
   };
 
   const openBatchAssignModal = (target: BatchAssignTarget) => {
+    setGroupManageTarget(null);
     setBatchAssignTarget(target);
     setBatchAssignSearchTerm("");
     setBatchAssignSelectedKeys([]);
+    lastAutoImportPatentRef.current = "";
   };
 
   const importPatentsForBatchAssign = async () => {
@@ -5355,6 +5393,7 @@ export function CatalogHomeClient({
       }
       setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...importedKeys])));
     } catch (error) {
+      lastAutoImportPatentRef.current = "";
       showSystemNotice(
         "error",
         "Importación fallida",
@@ -5365,10 +5404,30 @@ export function CatalogHomeClient({
     }
   };
 
+  useEffect(() => {
+    if (!batchAssignTarget || batchAssignImporting) return;
+    const tokens = extractPatentTokens(batchAssignSearchTerm);
+    if (tokens.length !== 1) return;
+    const patent = tokens[0];
+    if (lastAutoImportPatentRef.current === patent) return;
+    const hasLocal = items.some((item) => {
+      const itemPatent = normalizePatentToken(getPatent(item));
+      const itemKey = normalizePatentToken(getVehicleKey(item));
+      return itemPatent === patent || itemKey === patent;
+    });
+    if (hasLocal) return;
+    const timeout = window.setTimeout(() => {
+      lastAutoImportPatentRef.current = patent;
+      void importPatentsForBatchAssign();
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [batchAssignSearchTerm, batchAssignTarget, batchAssignImporting, items]);
+
   const closeBatchAssignModal = () => {
     setBatchAssignTarget(null);
     setBatchAssignSearchTerm("");
     setBatchAssignSelectedKeys([]);
+    lastAutoImportPatentRef.current = "";
   };
 
   const openGroupManageModal = (target: GroupManageTarget) => {
@@ -5410,10 +5469,22 @@ export function CatalogHomeClient({
       showSystemNotice("info", "Sin selección", "Selecciona al menos un vehículo para agregar.");
       return;
     }
+    const canonicalKeys = batchAssignSelectedKeys.map((vehicleKey) => {
+      const direct = itemsByKey.get(vehicleKey);
+      if (direct) return getVehicleKey(direct);
+      const patent = normalizePatentToken(vehicleKey);
+      const byPatent = items.find(
+        (item) =>
+          normalizePatentToken(getPatent(item)) === patent ||
+          normalizePatentToken(getVehicleKey(item)) === patent,
+      );
+      return byPatent ? getVehicleKey(byPatent) : vehicleKey;
+    });
+    const uniqueKeys = Array.from(new Set(canonicalKeys));
     if (batchAssignTarget.type === "auction") {
       setConfig((prev) => {
         const nextAuctionMap = { ...prev.vehicleUpcomingAuctionIds };
-        for (const vehicleKey of batchAssignSelectedKeys) {
+        for (const vehicleKey of uniqueKeys) {
           nextAuctionMap[vehicleKey] = batchAssignTarget.auctionId;
         }
         return { ...prev, vehicleUpcomingAuctionIds: nextAuctionMap };
@@ -5421,7 +5492,7 @@ export function CatalogHomeClient({
     } else {
       setConfig((prev) => {
         const current = new Set(prev.sectionVehicleIds[batchAssignTarget.sectionId] ?? []);
-        for (const vehicleKey of batchAssignSelectedKeys) current.add(vehicleKey);
+        for (const vehicleKey of uniqueKeys) current.add(vehicleKey);
         return {
           ...prev,
           sectionVehicleIds: {
@@ -5834,25 +5905,6 @@ export function CatalogHomeClient({
     }
   }, [showSystemNotice]);
 
-  const retrySharedSync = useCallback(async () => {
-    setSyncRetrying(true);
-    try {
-      const response = await fetch("/api/admin/editor-config/sync", { method: "POST" });
-      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
-      showSystemNotice("success", "Sincronización compartida", "Se reintentó la sincronización y finalizó correctamente.");
-    } catch (error) {
-      showSystemNotice(
-        "error",
-        "Sincronización compartida",
-        error instanceof Error ? error.message : "No se pudo completar el reintento.",
-      );
-    } finally {
-      setSyncRetrying(false);
-    }
-  }, [showSystemNotice]);
 
   useEffect(() => {
     const isAdminEditorOpen = isAdmin && adminView === "editor";
@@ -5870,26 +5922,39 @@ export function CatalogHomeClient({
     return () => window.clearTimeout(timeout);
   }, [adminView, config, isAdmin, isBootstrapping, persistEditorConfig]);
 
-  const revalidateInventory = async () => {
+  const refreshInventoryAndSync = useCallback(async () => {
     setRevalidating(true);
     try {
-      const response = await fetch("/api/admin/revalidate", { method: "POST" });
-      if (!response.ok) throw new Error("Error al revalidar");
+      const response = await fetch("/api/admin/refresh-inventory", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        items?: CatalogItem[];
+        itemCount?: number;
+        source?: string;
+      };
+      if (!response.ok || !payload.ok || !payload.items) {
+        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
+      }
+      setLiveFeedItems(payload.items);
+      setImportedInventoryItems([]);
+      lastAutoImportPatentRef.current = "";
+      router.refresh();
       showSystemNotice(
         "success",
         "Inventario actualizado",
-        "El catálogo se actualizó con los vehículos en bodega del sistema interno. Recarga la página para ver los cambios.",
+        `Se cargó inventario desde Glo3D y Tasaciones (${payload.itemCount ?? payload.items.length} unidades, origen ${payload.source ?? "mixto"}) y se sincronizó con Subastas/Tasaciones.`,
       );
-    } catch {
+    } catch (error) {
       showSystemNotice(
         "error",
         "Error al actualizar",
-        "No se pudo actualizar el inventario. Intenta nuevamente.",
+        error instanceof Error ? error.message : "No se pudo actualizar inventario y sincronizar.",
       );
     } finally {
       setRevalidating(false);
     }
-  };
+  }, [router, showSystemNotice]);
 
   const importRainworxLot = async () => {
     const url = rainworxLotUrl.trim();
@@ -6928,24 +6993,14 @@ export function CatalogHomeClient({
                         : "Guardado automático activo"}
                 </span>
                 <button
-                  onClick={revalidateInventory}
+                  onClick={() => void refreshInventoryAndSync()}
                   disabled={revalidating}
                   className="ui-focus inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:opacity-60"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 ${revalidating ? "animate-spin" : ""}`}>
                     <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.262.263A7 7 0 0 0 17.25 10a.75.75 0 0 0-1.5 0 5.48 5.48 0 0 1-.438 1.424ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.466l.312.311h-2.433a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.537a.75.75 0 0 0-1.5 0v2.033l-.262-.263A7 7 0 0 0 2.75 10a.75.75 0 0 0 1.5 0c0-.51.07-1.003.438-1.424Z" clipRule="evenodd" />
                   </svg>
-                  {revalidating ? "Actualizando..." : "Actualizar inventario"}
-                </button>
-                <button
-                  onClick={retrySharedSync}
-                  disabled={syncRetrying}
-                  className="ui-focus inline-flex items-center gap-1.5 rounded-md border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 shadow-sm transition hover:bg-sky-100 disabled:opacity-60"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 ${syncRetrying ? "animate-spin" : ""}`}>
-                    <path d="M10 2a8 8 0 1 0 7.747 10h-2.08A6 6 0 1 1 10 4v2l4-3-4-3v2Z" />
-                  </svg>
-                  {syncRetrying ? "Reintentando..." : "Reintentar sync"}
+                  {revalidating ? "Actualizando..." : "Actualizar inventario y sync"}
                 </button>
               </div>
             </div>
@@ -11068,29 +11123,24 @@ export function CatalogHomeClient({
 
             <input
               value={batchAssignSearchTerm}
-              onChange={(event) => setBatchAssignSearchTerm(event.target.value)}
-              placeholder="Buscar por patente, modelo o título..."
+              onChange={(event) => {
+                setBatchAssignSearchTerm(event.target.value);
+                lastAutoImportPatentRef.current = "";
+              }}
+              placeholder="Buscar por patente (ej. TJSX32)..."
               className="ui-focus mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
 
-            {batchAssignCandidates.length === 0 && batchAssignPatentTokens.length > 0 ? (
-              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
-                <p className="text-sm text-slate-700">
-                  Esta patente no está en el inventario cargado del catálogo. Se importará primero desde
-                  Glo3D (visor y ficha base) y se completará con Autored si hace falta, para agregarla al
-                  evento y sincronizar con Tasaciones y Subastas.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void importPatentsForBatchAssign()}
-                  disabled={batchAssignImporting}
-                  className="ui-focus mt-2 rounded-md bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-500 disabled:opacity-60"
-                >
-                  {batchAssignImporting
-                    ? "Importando desde Glo3D..."
-                    : `Importar ${batchAssignPatentTokens.join(", ")} desde Glo3D`}
-                </button>
-              </div>
+            {batchAssignImporting ? (
+              <p className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
+                Buscando en Glo3D y completando ficha para agregar al evento...
+              </p>
+            ) : null}
+
+            {!batchAssignSearchTerm.trim() ? (
+              <p className="mb-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                Escribe una patente para buscar. Si no está cargada, se importará automáticamente desde Glo3D.
+              </p>
             ) : null}
 
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -11121,30 +11171,46 @@ export function CatalogHomeClient({
                     ? (config.vehicleUpcomingAuctionIds[key] ?? "") === batchAssignTarget.auctionId
                     : (config.sectionVehicleIds[batchAssignTarget.sectionId] ?? []).includes(key);
                 return (
-                  <label
+                  <div
                     key={`assign-batch-${key}`}
                     className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${
                       checked ? "border-cyan-300 bg-cyan-50" : "border-slate-200 bg-white"
                     }`}
                   >
-                    <div>
+                    <button
+                      type="button"
+                      onClick={() => toggleBatchAssignVehicle(key)}
+                      className="ui-focus min-w-0 flex-1 text-left"
+                    >
                       <p className="font-semibold text-slate-900">{getModel(item)}</p>
                       <p className="text-xs text-slate-500">
                         {getPatent(item)} {alreadyInTarget ? "· ya agregado" : ""}
                       </p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleBatchAssignVehicle(key)}
-                      className="ui-focus h-4 w-4"
-                    />
-                  </label>
+                    </button>
+                    <span
+                      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                        checked
+                          ? "border-cyan-600 bg-cyan-600 text-white"
+                          : "border-slate-300 bg-white text-transparent"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor">
+                        <path
+                          fillRule="evenodd"
+                          d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.333a1 1 0 0 1-1.435.02L3.29 10.02a1 1 0 1 1 1.414-1.414l3.18 3.18 6.53-6.61a1 1 0 0 1 1.49-.006Z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    </span>
+                  </div>
                 );
               })}
-              {batchAssignCandidates.length === 0 ? (
+              {batchAssignCandidates.length === 0 &&
+              batchAssignSearchTerm.trim() &&
+              !batchAssignImporting ? (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm text-slate-500">
-                  Sin resultados. Intenta con otra patente o modelo.
+                  Sin resultados en inventario. Si la patente existe en Glo3D, se importará automáticamente.
                 </p>
               ) : null}
             </div>

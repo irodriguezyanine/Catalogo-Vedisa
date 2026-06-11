@@ -284,15 +284,17 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
     };
   }
 
-  if (!glo3d && !autored) {
-    throw new Error(
-      `No se encontró ${patente} en Glo3D ni en Autored. Verifica la patente y las credenciales GLO3D_API_USERNAME / GLO3D_API_PASSWORD.`,
-    );
-  }
-
   if (!glo3d) {
+    const hasGlo3dCredentials = Boolean(
+      process.env.GLO3D_API_USERNAME ?? process.env.VITE_GLO3D_API_USERNAME,
+    );
+    if (!hasGlo3dCredentials) {
+      throw new Error(
+        `No se pudo consultar Glo3D para ${patente}. Configura GLO3D_API_USERNAME y GLO3D_API_PASSWORD en Vercel.`,
+      );
+    }
     throw new Error(
-      `No se encontró ${patente} en Glo3D (fuente principal). La unidad debe existir primero en el visor Glo3D antes de agregarla al evento.`,
+      `No se encontró ${patente} en Glo3D. Verifica que el visor esté publicado y pulsa "Actualizar inventario y sync".`,
     );
   }
 
