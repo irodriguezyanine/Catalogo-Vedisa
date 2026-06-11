@@ -64,6 +64,7 @@ type EditorVehicleCategoryFilter = "all" | "livianos" | "pesados" | "maquinaria"
 type BatchAssignTarget =
   | { type: "section"; sectionId: "ventas-directas" | "novedades" | "catalogo" }
   | { type: "auction"; auctionId: string };
+type GroupManageTarget = BatchAssignTarget;
 type SortOption = "recomendado" | "relevancia" | "fecha-remate" | "precio-asc" | "precio-desc" | "titulo";
 type QuickFilterId =
   | "sedan"
@@ -2277,6 +2278,8 @@ export function CatalogHomeClient({
   const [batchAssignTarget, setBatchAssignTarget] = useState<BatchAssignTarget | null>(null);
   const [batchAssignSearchTerm, setBatchAssignSearchTerm] = useState("");
   const [batchAssignSelectedKeys, setBatchAssignSelectedKeys] = useState<string[]>([]);
+  const [groupManageTarget, setGroupManageTarget] = useState<GroupManageTarget | null>(null);
+  const [groupManageSearchTerm, setGroupManageSearchTerm] = useState("");
   const [manualDraft, setManualDraft] = useState<ManualPublicationDraft>(
     EMPTY_MANUAL_PUBLICATION_DRAFT,
   );
@@ -4509,6 +4512,58 @@ export function CatalogHomeClient({
     return SECTION_LABELS[batchAssignTarget.sectionId];
   }, [batchAssignTarget, sortedUpcomingAuctions]);
 
+  const groupManageTargetLabel = useMemo(() => {
+    if (!groupManageTarget) return "";
+    if (groupManageTarget.type === "auction") {
+      const auction = sortedUpcomingAuctions.find((entry) => entry.id === groupManageTarget.auctionId);
+      return auction
+        ? `${auction.name} (${formatAuctionWindowLabel(auction)})`
+        : "Evento seleccionado";
+    }
+    return SECTION_LABELS[groupManageTarget.sectionId];
+  }, [groupManageTarget, sortedUpcomingAuctions]);
+
+  const groupManageItems = useMemo(() => {
+    if (!groupManageTarget) return [] as CatalogItem[];
+    const baseItems =
+      groupManageTarget.type === "auction"
+        ? activeInventoryItems.filter(
+            (item) =>
+              (config.vehicleUpcomingAuctionIds[getVehicleKey(item)] ?? "") ===
+              groupManageTarget.auctionId,
+          )
+        : activeInventoryItems.filter((item) =>
+            (config.sectionVehicleIds[groupManageTarget.sectionId] ?? []).includes(
+              getVehicleKey(item),
+            ),
+          );
+    const query = normalizeText(groupManageSearchTerm);
+    const patentTokens = extractPatentTokens(groupManageSearchTerm);
+    if (patentTokens.length > 0) {
+      return baseItems.filter((item) => {
+        const patent = getPatent(item);
+        const key = getVehicleKey(item);
+        return (
+          patentTokens.includes(normalizePatentToken(patent)) ||
+          patentTokens.includes(normalizePatentToken(key))
+        );
+      });
+    }
+    if (!query) return baseItems;
+    return baseItems.filter((item) => {
+      const sample = normalizeText(
+        `${getPatent(item)} ${getModel(item)} ${item.title} ${item.subtitle ?? ""}`,
+      );
+      return sample.includes(query);
+    });
+  }, [
+    groupManageTarget,
+    groupManageSearchTerm,
+    activeInventoryItems,
+    config.vehicleUpcomingAuctionIds,
+    config.sectionVehicleIds,
+  ]);
+
   const sectionVehicleCounts = useMemo(
     () =>
       ({
@@ -5233,6 +5288,39 @@ export function CatalogHomeClient({
     setBatchAssignTarget(null);
     setBatchAssignSearchTerm("");
     setBatchAssignSelectedKeys([]);
+  };
+
+  const openGroupManageModal = (target: GroupManageTarget) => {
+    setGroupManageTarget(target);
+    setGroupManageSearchTerm("");
+  };
+
+  const closeGroupManageModal = () => {
+    setGroupManageTarget(null);
+    setGroupManageSearchTerm("");
+  };
+
+  const removeVehicleFromGroupTarget = (vehicleKey: string) => {
+    if (!groupManageTarget) return;
+    if (groupManageTarget.type === "auction") {
+      setConfig((prev) => {
+        const nextAuctionMap = { ...prev.vehicleUpcomingAuctionIds };
+        if (nextAuctionMap[vehicleKey] === groupManageTarget.auctionId) {
+          delete nextAuctionMap[vehicleKey];
+        }
+        return { ...prev, vehicleUpcomingAuctionIds: nextAuctionMap };
+      });
+    } else {
+      setConfig((prev) => ({
+        ...prev,
+        sectionVehicleIds: {
+          ...prev.sectionVehicleIds,
+          [groupManageTarget.sectionId]: (prev.sectionVehicleIds[groupManageTarget.sectionId] ?? []).filter(
+            (key) => key !== vehicleKey,
+          ),
+        },
+      }));
+    }
   };
 
   const addBatchVehiclesToTarget = () => {
@@ -7659,12 +7747,12 @@ export function CatalogHomeClient({
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              setEditorGroupFilter(sectionId);
-                              setAuctionFilterId("");
-                              setEditorPage(1);
-                              setAdminTab("vehiculos");
-                            }}
+                            onClick={() =>
+                              openGroupManageModal({
+                                type: "section",
+                                sectionId: sectionId as "ventas-directas" | "novedades" | "catalogo",
+                              })
+                            }
                             className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
                             aria-label={`Ver y gestionar ${SECTION_LABELS[sectionId]}`}
                             title="Ver y gestionar"
@@ -7775,12 +7863,9 @@ export function CatalogHomeClient({
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setAuctionFilterId(auction.id);
-                                    setEditorGroupFilter("proximos-remates");
-                                    setEditorPage(1);
-                                    setAdminTab("vehiculos");
-                                  }}
+                                  onClick={() =>
+                                    openGroupManageModal({ type: "auction", auctionId: auction.id })
+                                  }
                                   className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
                                   aria-label={`Ver y gestionar ${auction.name}`}
                                   title="Ver y gestionar"
@@ -10686,6 +10771,189 @@ export function CatalogHomeClient({
         </div>
       ) : null}
 
+      {isAdmin && groupManageTarget ? (
+        <div
+          className="fixed inset-0 z-[71] flex items-center justify-center bg-slate-900/70 p-4"
+          onClick={closeGroupManageModal}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Gestionar unidades del grupo"
+            className="max-h-[92vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">
+                  Ver y gestionar
+                </p>
+                <h3 className="text-lg font-bold text-slate-900">{groupManageTargetLabel}</h3>
+                <p className="text-xs text-slate-500">
+                  {groupManageItems.length} unidad(es) en este grupo
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeGroupManageModal}
+                className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <input
+                value={groupManageSearchTerm}
+                onChange={(event) => setGroupManageSearchTerm(event.target.value)}
+                placeholder="Buscar por patente o modelo..."
+                className="ui-focus min-w-[14rem] flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!groupManageTarget) return;
+                  openBatchAssignModal(groupManageTarget);
+                }}
+                className="ui-focus inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+              >
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] text-white">
+                  +
+                </span>
+                Agregar unidades
+              </button>
+            </div>
+
+            <div className="max-h-[52vh] space-y-2 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+              {groupManageItems.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-slate-500">
+                  No hay unidades en este grupo con el filtro actual.
+                </p>
+              ) : (
+                groupManageItems.map((item) => {
+                  const key = getVehicleKey(item);
+                  const hidden = mergedHiddenVehicleIds.has(key);
+                  return (
+                    <article
+                      key={`group-manage-${key}`}
+                      className="grid grid-cols-1 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 sm:grid-cols-[1.4fr_auto_1fr_auto]"
+                    >
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          {getPatent(item)}
+                          <span
+                            className={`inline-flex h-1.5 w-1.5 rounded-full ${
+                              hidden ? "bg-rose-500" : "bg-emerald-500"
+                            }`}
+                            aria-hidden="true"
+                          />
+                          <span className="normal-case tracking-normal text-[11px] text-slate-500">
+                            {hidden ? "Oculto" : "Visible"}
+                          </span>
+                        </p>
+                        <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">
+                          {getModel(item)}
+                        </p>
+                      </div>
+                      <div className="mx-auto h-12 w-20 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={item.thumbnail ?? item.images[0] ?? "/placeholder-car.svg"}
+                          alt={`Miniatura ${getModel(item)}`}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                          onError={(event) => {
+                            event.currentTarget.src = "/placeholder-car.svg";
+                          }}
+                        />
+                      </div>
+                      <div className="min-w-0 text-xs text-slate-600 sm:text-right">
+                        <p className="line-clamp-1">
+                          {formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ??
+                            "Precio no definido"}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setManagingVehicleKey(key)}
+                          className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700 transition hover:bg-cyan-100"
+                          aria-label={`Gestionar unidad ${getPatent(item)}`}
+                          title="Gestionar unidad"
+                        >
+                          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                            <path d="M13.586 2.586a2 2 0 0 1 2.828 2.828l-8.2 8.2a1 1 0 0 1-.475.264l-3 0.75a1 1 0 0 1-1.212-1.213l.75-3a1 1 0 0 1 .264-.474l8.2-8.2ZM12.172 4 5.24 10.932l-.39 1.56 1.56-.39L13.344 5.17 12.172 4Z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextHidden = !hidden;
+                            toggleHidden(key);
+                            showSystemNotice(
+                              "success",
+                              nextHidden ? "Unidad oculta del home" : "Unidad visible en home",
+                              nextHidden
+                                ? `${getPatent(item)} quedó oculta del home, sin eliminarse del inventario.`
+                                : `${getPatent(item)} volvió a mostrarse en el home.`,
+                            );
+                          }}
+                          className={`ui-focus inline-flex h-7 w-7 items-center justify-center rounded border transition ${
+                            hidden
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                          }`}
+                          aria-label={`${hidden ? "Mostrar" : "Ocultar"} en home ${getPatent(item)}`}
+                          title={hidden ? "Mostrar en home" : "Ocultar del home"}
+                        >
+                          {hidden ? (
+                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16s-6.63-2-8.37-5.42a1.3 1.3 0 0 1 0-1.16C3.37 6 6.62 4 10 4Zm0 2c-2.6 0-5.16 1.5-6.71 4 .01.02.02.04.03.05C4.84 12.5 7.4 14 10 14s5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6Zm0 1.75A2.25 2.25 0 1 1 10 12.25 2.25 2.25 0 0 1 10 7.75Z" />
+                            </svg>
+                          ) : (
+                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16c-1.72 0-3.42-.52-4.95-1.5l1.5-1.5c1.06.63 2.24.97 3.45.97 2.6 0 5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6c-1.2 0-2.38.34-3.43.96L5.1 5.49A9.85 9.85 0 0 1 10 4Zm7.2 13.6a.75.75 0 0 1-1.06 0l-13-13a.75.75 0 1 1 1.06-1.06l13 13a.75.75 0 0 1 0 1.06ZM10 7.75c.7 0 1.33.32 1.75.83L8.58 11.75A2.25 2.25 0 0 1 10 7.75Z" />
+                            </svg>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            removeVehicleFromGroupTarget(key);
+                            showSystemNotice(
+                              "success",
+                              "Unidad removida del grupo",
+                              `${getPatent(item)} ya no pertenece a ${groupManageTargetLabel}.`,
+                            );
+                          }}
+                          className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700 transition hover:bg-rose-100"
+                          aria-label={`Quitar ${getPatent(item)} del grupo`}
+                          title="Quitar del grupo"
+                        >
+                          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                            <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Z" />
+                          </svg>
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={closeGroupManageModal}
+                className="ui-focus rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {isAdmin && batchAssignTarget ? (
         <div
           className="fixed inset-0 z-[72] flex items-center justify-center bg-slate-900/70 p-4"
@@ -10939,7 +11207,7 @@ export function CatalogHomeClient({
 
       {isAdmin && managingVehicleKey && managingItem ? (
         <div
-          className="fixed inset-0 z-[62] flex items-center justify-center bg-slate-900/70 p-4"
+          className="fixed inset-0 z-[76] flex items-center justify-center bg-slate-900/70 p-4"
           onClick={() => setManagingVehicleKey(null)}
         >
           <div
