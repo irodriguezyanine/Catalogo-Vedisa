@@ -9,6 +9,11 @@ import {
   openGlo3dCircuit,
   sleepMs,
 } from "@/lib/glo3d-api";
+import {
+  autoredRecordHasIdentity,
+  sanitizeMarcaValue,
+  sanitizeModeloValue,
+} from "@/lib/vehicle-identity";
 import type { CatalogFeed, CatalogItem, CatalogSource } from "@/types/catalog";
 
 export { Glo3dRateLimitError, getGlo3dCircuitRetryAfterMs, isGlo3dCircuitOpen };
@@ -562,7 +567,10 @@ function mapAwsItem(item: Record<string, unknown>): AwsVehicle {
     id: pickString(merged, ["id", "product_id", "uuid", "stock_number", "sku"]),
     patente,
     marca: pickString(merged, ["brand", "brand_name", "make", "marca", "original_brand_name"]),
-    modelo: pickString(merged, ["model", "modelo", "showName", "original_model_name"]),
+    modelo: sanitizeModeloValue(
+      pickString(merged, ["model", "modelo", "original_model_name", "model2"]),
+      patente ?? undefined,
+    ),
     ano: pickString(merged, ["ano", "anio", "year", "fields_year"]),
     version: pickString(merged, ["version", "ver", "trim", "fields_ver"]),
     descripcion: pickString(merged, ["descripcion", "description", "showName", "tipo_de_vehiculo"]),
@@ -714,15 +722,15 @@ function normalizeGlo3dTechnicalFields(
     "dv",
     "verificador",
   ]);
-  const marca = pickString(merged, ["marca", "brand", "make", "original_brand_name"]);
+  const patente = pickString(merged, ["patente", "PPU", "ppu", "plate", "stock_number"]);
+  const marca = sanitizeMarcaValue(
+    pickString(merged, ["marca", "brand", "make", "original_brand_name"]),
+  );
   const tipo = pickString(merged, ["tipo", "type", "condition_type", "tipo_unidad"]);
-  const modelo = pickString(merged, [
-    "modelo",
-    "model",
-    "original_model_name",
-    "showName",
-    "model2",
-  ]);
+  const modelo = sanitizeModeloValue(
+    pickString(merged, ["modelo", "model", "original_model_name", "model2"]),
+    patente,
+  );
   const version = pickString(merged, ["version", "ver", "trim"]);
   const color = pickString(merged, ["color", "color_exterior", "color_vehiculo", "exterior_color"]);
   const combustible = pickString(merged, [
@@ -775,7 +783,6 @@ function normalizeGlo3dTechnicalFields(
     "acondicionado",
   ]);
   const ano = pickString(merged, ["ano", "anio", "year", "fields_year"]);
-  const patente = pickString(merged, ["patente", "PPU", "ppu", "plate", "stock_number"]);
   const nombrePropietarioAnterior = pickString(merged, [
     "nombre_propietario_anterior",
     "previous_owner_name",
@@ -1092,8 +1099,10 @@ function glo3dEntryToCatalogRow(patente: string, entry: Glo3dInventoryEntry): Re
     patente,
     stock_number: patente,
     PPU: patente,
-    marca: pickString(fields, ["marca", "brand", "make"]) ?? "Sin Marca",
-    modelo: pickString(fields, ["modelo", "model", "model2"]) ?? "Sin Modelo",
+    marca: sanitizeMarcaValue(pickString(fields, ["marca", "brand", "make"])) ?? "Sin Marca",
+    modelo:
+      sanitizeModeloValue(pickString(fields, ["modelo", "model", "model2"]), patente) ??
+      "Sin Modelo",
     ano: pickString(fields, ["ano", "anio", "year"]),
     version: pickString(fields, ["version", "trim", "ver"]),
     kilometraje: pickString(fields, ["kilometraje", "km", "odometro", "odometer"]),
@@ -1501,8 +1510,14 @@ function normalizeAutoredTechnicalFields(
   const merged = { ...autoredRaw, ...flat };
   const result: Record<string, unknown> = {};
 
-  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]);
-  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]);
+  const patente = pickString(merged, ["patente", "PPU", "ppu", "plate", "stock_number"]);
+  const marca = sanitizeMarcaValue(
+    pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]),
+  );
+  const modelo = sanitizeModeloValue(
+    pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]),
+    patente,
+  );
   const ano = pickString(merged, ["ano", "anio", "year", "año"]);
   const version = pickString(merged, ["version", "trim", "ver"]);
 
@@ -1656,7 +1671,12 @@ export async function fetchAutoredRecordByPatent(
 
   let record: Record<string, unknown> | null = null;
 
-  if (AUTORED_API_URL) {
+  const tasacionesRecord = await fetchTasacionesRecordByPatent(normalized);
+  if (tasacionesRecord && autoredRecordHasIdentity(tasacionesRecord, normalized)) {
+    record = tasacionesRecord;
+  }
+
+  if (!record && AUTORED_API_URL) {
     const token = process.env.CATALOG_SOURCE_API_TOKEN;
     const paramNames = ["patente", "ppu", "PPU", "plate"];
     for (const paramName of paramNames) {
@@ -1666,7 +1686,12 @@ export async function fetchAutoredRecordByPatent(
         method: "GET",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { "x-api-key": token } : {}),
+          ...(token
+            ? {
+                "x-api-key": token,
+                Authorization: `Bearer ${token}`,
+              }
+            : {}),
         },
         cache: options?.forceRefresh ? "no-store" : undefined,
         next: options?.forceRefresh ? undefined : { revalidate: 120 },
@@ -1680,15 +1705,15 @@ export async function fetchAutoredRecordByPatent(
           : payload && typeof payload === "object" && !Array.isArray(payload)
             ? (payload as Record<string, unknown>)
             : null;
-      if (candidate && Object.keys(candidate).length > 0) {
+      if (candidate && autoredRecordHasIdentity(candidate, normalized)) {
         record = candidate;
         break;
       }
     }
   }
 
-  if (!record) {
-    record = await fetchTasacionesRecordByPatent(normalized);
+  if (!record && tasacionesRecord) {
+    record = tasacionesRecord;
   }
 
   autoredPatentCache.set(normalized, {
@@ -1707,42 +1732,55 @@ export async function fetchTasacionesRecordByPatent(
   if (!normalized) return null;
 
   const token = process.env.CATALOG_SOURCE_API_TOKEN;
-  const endpoint = apiBase.includes("/api/")
+  const baseEndpoint = apiBase.includes("/api/")
     ? new URL(apiBase)
     : new URL("/api/inventario-publico", apiBase);
-  endpoint.searchParams.set("patente", normalized);
-  endpoint.searchParams.set("limit", "1");
-  endpoint.searchParams.set(
-    "incluir_historicos",
-    process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
-  );
 
-  const response = await fetch(endpoint.toString(), {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { "x-api-key": token } : {}),
-    },
-    cache: "no-store",
-  });
-  if (!response.ok) return null;
+  for (const paramName of ["patente", "ppu", "PPU", "plate"]) {
+    const endpoint = new URL(baseEndpoint.toString());
+    endpoint.searchParams.set(paramName, normalized);
+    endpoint.searchParams.set("limit", "1");
+    endpoint.searchParams.set(
+      "incluir_historicos",
+      process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
+    );
 
-  const payload = (await response.json()) as unknown;
-  const rows = extractRowsFromPayload(payload);
-  if (rows.length === 0) return null;
+    const response = await fetch(endpoint.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token
+          ? {
+              "x-api-key": token,
+              Authorization: `Bearer ${token}`,
+            }
+          : {}),
+      },
+      cache: "no-store",
+    });
+    if (!response.ok) continue;
 
-  const match =
-    rows.find((row) => normalizeStock(String(row.patente ?? row.PPU ?? row.stock_number ?? "")) === normalized) ??
-    rows[0];
-  const autoredNode = match.autored_campos ?? match.autored;
-  if (autoredNode && typeof autoredNode === "object" && !Array.isArray(autoredNode)) {
-    return {
-      ...(autoredNode as Record<string, unknown>),
-      ...match,
-      origen: "tasaciones+autored",
-    };
+    const payload = (await response.json()) as unknown;
+    const rows = extractRowsFromPayload(payload);
+    if (rows.length === 0) continue;
+
+    const match =
+      rows.find(
+        (row) =>
+          normalizeStock(String(row.patente ?? row.PPU ?? row.stock_number ?? "")) === normalized,
+      ) ?? rows[0];
+    const autoredNode = match.autored_campos ?? match.autored;
+    if (autoredNode && typeof autoredNode === "object" && !Array.isArray(autoredNode)) {
+      return {
+        ...(autoredNode as Record<string, unknown>),
+        ...match,
+        origen: "tasaciones+autored",
+      };
+    }
+    return { ...match, origen: "tasaciones" };
   }
-  return { ...match, origen: "tasaciones" };
+
+  return null;
 }
 
 async function enrichWithAutoredFallback(

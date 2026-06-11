@@ -12,6 +12,12 @@ import {
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
 import { sleepMs } from "@/lib/glo3d-api";
+import {
+  autoredRecordHasIdentity,
+  looksLikeChileanPatent,
+  sanitizeMarcaValue,
+  sanitizeModeloValue,
+} from "@/lib/vehicle-identity";
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
 
@@ -102,6 +108,35 @@ function sanitizeIdentityValue(
   if (normalizePatent(trimmed) === normalizePatent(patente)) return undefined;
   if (trimmed.toLowerCase() === "unidad") return undefined;
   return trimmed;
+}
+
+function parseIdentityFromVehicleTitle(
+  title: string | undefined,
+  patente: string,
+): { marca?: string; modelo?: string; ano?: string } {
+  if (!title?.trim()) return {};
+  const cleaned = title.trim().replace(/\s+/g, " ");
+  if (looksLikeChileanPatent(cleaned) || normalizePatent(cleaned) === normalizePatent(patente)) {
+    return {};
+  }
+  const yearMatch = cleaned.match(/\b(19|20)\d{2}\b/);
+  const ano = yearMatch?.[0];
+  const withoutYear = ano ? cleaned.replace(yearMatch![0], "").trim() : cleaned;
+  const tokens = withoutYear.split(" ").filter(Boolean);
+  if (tokens.length >= 2) {
+    const parsedMarca = sanitizeMarcaValue(tokens[0]);
+    const parsedModelo = sanitizeModeloValue(tokens.slice(1).join(" "), patente);
+    return {
+      marca: parsedMarca,
+      modelo: parsedModelo,
+      ano,
+    };
+  }
+  if (tokens.length === 1) {
+    const parsedModelo = sanitizeModeloValue(tokens[0], patente);
+    return { modelo: parsedModelo, ano };
+  }
+  return ano ? { ano } : {};
 }
 
 function isDerivedPlaceholderIdentity(
@@ -260,7 +295,8 @@ function normalizeAutoredImportRecord(
 ): Record<string, unknown> | null {
   if (!raw) return null;
   const merged = buildMergedRecord(raw);
-  const marca = pickString(merged, [
+  const patente = pickString(merged, ["patente", "PPU", "ppu", "plate", "stock_number"]) ?? "";
+  let marca = pickString(merged, [
     "marca",
     "brand",
     "make",
@@ -272,7 +308,7 @@ function normalizeAutoredImportRecord(
     "make_name",
     "nombre_fabricante",
   ]);
-  const modelo = pickString(merged, [
+  let modelo = pickString(merged, [
     "modelo",
     "model",
     "model2",
@@ -280,9 +316,8 @@ function normalizeAutoredImportRecord(
     "vehiculo_modelo",
     "nombre_modelo",
     "model_name",
-    "nombre_vehiculo",
   ]);
-  const ano = pickString(merged, [
+  let ano = pickString(merged, [
     "ano",
     "anio",
     "year",
@@ -292,6 +327,17 @@ function normalizeAutoredImportRecord(
     "fabricacion",
     "year_manufacture",
   ]);
+  if (!marca || !modelo || !ano) {
+    const titleIdentity = parseIdentityFromVehicleTitle(
+      pickString(merged, ["titulo", "nombre_vehiculo", "vehiculo", "vehicle_name", "nombre"]),
+      patente,
+    );
+    marca = marca ?? titleIdentity.marca;
+    modelo = modelo ?? titleIdentity.modelo;
+    ano = ano ?? titleIdentity.ano;
+  }
+  marca = sanitizeMarcaValue(marca);
+  modelo = sanitizeModeloValue(modelo, patente);
   const version = pickString(merged, ["version", "trim", "ver", "version_vehiculo"]);
   const vin = pickString(merged, ["vin", "n_de_vin", "numero_vin", "chasis_vin"]);
   const numeroMotor = pickString(merged, [
@@ -786,19 +832,18 @@ export async function importVehicleByPatent(
     }
   }
 
-  const autoredSynced = Boolean(
-    autored &&
-      (sanitizeIdentityValue(
-        pickString(buildMergedRecord(autored), ["marca", "brand", "make"]),
-        patente,
-      ) ||
-        sanitizeIdentityValue(
-          pickString(buildMergedRecord(autored), ["modelo", "model", "model2"]),
-          patente,
-        )),
-  );
+  const autoredSynced = autoredRecordHasIdentity(autored, patente);
 
   const payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
+  payload.patente = patente;
+  payload.PPU = patente;
+  payload.stock_number = patente;
+  if (!sanitizeModeloValue(String(payload.modelo ?? ""), patente)) {
+    payload.modelo = "Sin Modelo";
+  }
+  if (!sanitizeMarcaValue(String(payload.marca ?? ""))) {
+    payload.marca = "Sin Marca";
+  }
   const shouldPersist = Boolean(glo3d || autored || options?.forceRefresh);
 
   if (existingRow) {

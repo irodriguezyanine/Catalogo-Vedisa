@@ -86,7 +86,7 @@ type QuickFilterId =
   | "bus"
   | "semiremolque";
 type CardDensity = "compact" | "detailed";
-type DetailEditorTabId = "general" | "tecnica";
+type DetailEditorTabId = "descripcion" | "general" | "tecnica" | "publicacion" | "fotos";
 type ClientLeadForm = {
   name: string;
   phone: string;
@@ -355,6 +355,31 @@ function buildAutoVehicleTitle(details: EditorVehicleDetails): string {
   ) as string[];
   return parts.join(" ").trim();
 }
+
+function EditorLabeledField({
+  label,
+  children,
+  className = "",
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={`block space-y-1 ${className}`}>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+const DETAIL_EDITOR_TABS: Array<[DetailEditorTabId, string]> = [
+  ["descripcion", "Descripción"],
+  ["general", "Información del vehículo"],
+  ["tecnica", "Detalles técnicos"],
+  ["publicacion", "Publicación"],
+  ["fotos", "Fotos"],
+];
 
 function resolveEstadoRetiroForVehicleKey(
   vehicleKey: string,
@@ -2580,7 +2605,7 @@ export function CatalogHomeClient({
   const [selectedInventoryKeys, setSelectedInventoryKeys] = useState<string[]>([]);
   const [editingVehicleKey, setEditingVehicleKey] = useState<string | null>(null);
   const [managingVehicleKey, setManagingVehicleKey] = useState<string | null>(null);
-  const [managingVehicleSyncing, setManagingVehicleSyncing] = useState(false);
+  const [syncingVehicleKey, setSyncingVehicleKey] = useState<string | null>(null);
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
   const [newAuctionName, setNewAuctionName] = useState("");
   const [newAuctionDate, setNewAuctionDate] = useState("");
@@ -2783,7 +2808,7 @@ export function CatalogHomeClient({
   }, [syncManualObservations]);
 
   useEffect(() => {
-    if (!editingDetails || detailEditorTab !== "general") return;
+    if (!editingDetails || detailEditorTab !== "descripcion") return;
     const editor = manualObservationsEditorRef.current;
     if (!editor) return;
     const desiredHtml =
@@ -6397,7 +6422,7 @@ export function CatalogHomeClient({
     setEditingDetails(
       buildDetailsDraft(item, getEditorOverrideForItem(item, config.vehicleDetails)),
     );
-    setDetailEditorTab("general");
+    setDetailEditorTab("descripcion");
     setDetailRainworxUrl("");
   };
 
@@ -6527,118 +6552,126 @@ export function CatalogHomeClient({
     }
   }, [router, showSystemNotice]);
 
+  const syncVehicleWithGlo3dAutored = useCallback(
+    async (vehicleKey: string) => {
+      const skipGlo3dFetch = glo3dClientCooldownUntilRef.current > Date.now();
+      const currentItem = itemsByKey.get(vehicleKey);
+      if (!currentItem) {
+        showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
+        return;
+      }
+      if (vehicleKey.startsWith("manual-")) {
+        showSystemNotice(
+          "info",
+          "Solo inventario Glo3D",
+          "Las unidades manuales no se sincronizan con Glo3D/Autored.",
+        );
+        return;
+      }
+
+      const patente = normalizePatentToken(getPatent(currentItem));
+      if (!patente || patente === "—") {
+        showSystemNotice("error", "Sin patente", "Esta unidad no tiene patente para sincronizar.");
+        return;
+      }
+      setSyncingVehicleKey(vehicleKey);
+      try {
+        const estadoRetiro = resolveEstadoRetiroForVehicleKey(
+          vehicleKey,
+          config,
+          sortedUpcomingAuctions,
+        );
+        const response = await fetch("/api/admin/import-patent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true, skipGlo3dFetch }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          error?: string;
+          item?: CatalogItem;
+          vehicleDetails?: EditorVehicleDetails;
+          source?: string;
+          hasGlo3dViewer?: boolean;
+          glo3dRateLimited?: boolean;
+          autoredSynced?: boolean;
+          skippedGlo3dFetch?: boolean;
+          retryAfterMs?: number;
+        };
+        if (!response.ok || !payload.ok || !payload.item) {
+          throw new Error(payload.error ?? `No se pudo sincronizar ${patente}.`);
+        }
+        if (payload.glo3dRateLimited) {
+          markGlo3dClientCooldown(payload.retryAfterMs ?? GLO3D_CLIENT_COOLDOWN_MS);
+        }
+
+        const resolvedKey = applyImportedPatentPayload({
+          item: payload.item,
+          vehicleDetails: payload.vehicleDetails,
+          patente,
+          hasGlo3dViewer: payload.hasGlo3dViewer,
+        });
+        if (managingVehicleKey === vehicleKey && resolvedKey !== vehicleKey) {
+          setManagingVehicleKey(resolvedKey);
+        }
+
+        if (
+          editingVehicleKey &&
+          (editingVehicleKey === vehicleKey || editingVehicleKey === resolvedKey)
+        ) {
+          const syncedItem = applyDetailsOverride(payload.item, payload.vehicleDetails);
+          setEditingVehicleKey(resolvedKey);
+          setEditingDetails(buildDetailsDraft(syncedItem, payload.vehicleDetails));
+        }
+
+        const autoredNote = payload.autoredSynced
+          ? " Autored aplicado."
+          : " Autored no devolvió marca/modelo (revisa CATALOG_SOURCE_AUTORED_API_URL).";
+        const glo3dNote =
+          payload.glo3dRateLimited || payload.skippedGlo3dFetch
+            ? " Glo3D en pausa: se usó el visor local."
+            : payload.hasGlo3dViewer
+              ? " Visor 3D actualizado."
+              : "";
+        showSystemNotice(
+          payload.autoredSynced ? "success" : "info",
+          payload.autoredSynced ? "Unidad sincronizada" : "Sincronización parcial",
+          `${patente} actualizado.${glo3dNote}${autoredNote}`,
+        );
+      } catch (error) {
+        const message =
+          error instanceof DOMException && error.name === "TimeoutError"
+            ? "La sincronización tardó demasiado. Espera unos segundos y vuelve a intentar."
+            : error instanceof Error
+              ? error.message
+              : "No se pudo sincronizar la unidad.";
+        if (isGlo3dRateLimitMessage(message)) markGlo3dClientCooldown();
+        showSystemNotice(
+          "error",
+          isGlo3dRateLimitMessage(message) ? "Glo3D saturado" : "Sincronización fallida",
+          message,
+        );
+      } finally {
+        setSyncingVehicleKey((current) => (current === vehicleKey ? null : current));
+      }
+    },
+    [
+      applyImportedPatentPayload,
+      config,
+      editingVehicleKey,
+      itemsByKey,
+      managingVehicleKey,
+      markGlo3dClientCooldown,
+      showSystemNotice,
+      sortedUpcomingAuctions,
+    ],
+  );
+
   const syncManagingVehicleWithGlo3dAutored = useCallback(async () => {
     if (!managingVehicleKey) return;
-    const skipGlo3dFetch = glo3dClientCooldownUntilRef.current > Date.now();
-    const currentItem = itemsByKey.get(managingVehicleKey);
-    if (!currentItem) {
-      showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
-      return;
-    }
-    if (managingVehicleKey.startsWith("manual-")) {
-      showSystemNotice(
-        "info",
-        "Solo inventario Glo3D",
-        "Las unidades manuales no se sincronizan con Glo3D/Autored.",
-      );
-      return;
-    }
-
-    const patente = normalizePatentToken(getPatent(currentItem));
-    if (!patente || patente === "—") {
-      showSystemNotice("error", "Sin patente", "Esta unidad no tiene patente para sincronizar.");
-      return;
-    }
-    setManagingVehicleSyncing(true);
-    try {
-      const estadoRetiro = resolveEstadoRetiroForVehicleKey(
-        managingVehicleKey,
-        config,
-        sortedUpcomingAuctions,
-      );
-      const response = await fetch("/api/admin/import-patent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true, skipGlo3dFetch }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        item?: CatalogItem;
-        vehicleDetails?: EditorVehicleDetails;
-        source?: string;
-        hasGlo3dViewer?: boolean;
-        glo3dRateLimited?: boolean;
-        autoredSynced?: boolean;
-        skippedGlo3dFetch?: boolean;
-        retryAfterMs?: number;
-      };
-      if (!response.ok || !payload.ok || !payload.item) {
-        throw new Error(payload.error ?? `No se pudo sincronizar ${patente}.`);
-      }
-      if (payload.glo3dRateLimited) {
-        markGlo3dClientCooldown(payload.retryAfterMs ?? GLO3D_CLIENT_COOLDOWN_MS);
-      }
-
-      const resolvedKey = applyImportedPatentPayload({
-        item: payload.item,
-        vehicleDetails: payload.vehicleDetails,
-        patente,
-        hasGlo3dViewer: payload.hasGlo3dViewer,
-      });
-      if (resolvedKey !== managingVehicleKey) {
-        setManagingVehicleKey(resolvedKey);
-      }
-
-      if (
-        editingVehicleKey &&
-        (editingVehicleKey === managingVehicleKey || editingVehicleKey === resolvedKey)
-      ) {
-        const syncedItem = applyDetailsOverride(payload.item, payload.vehicleDetails);
-        setEditingVehicleKey(resolvedKey);
-        setEditingDetails(buildDetailsDraft(syncedItem, payload.vehicleDetails));
-      }
-
-      const autoredNote = payload.autoredSynced
-        ? " Autored aplicado."
-        : " Autored no devolvió marca/modelo (revisa CATALOG_SOURCE_AUTORED_API_URL).";
-      const glo3dNote = payload.glo3dRateLimited || payload.skippedGlo3dFetch
-        ? " Glo3D en pausa: se usó el visor local."
-        : payload.hasGlo3dViewer
-          ? " Visor 3D actualizado."
-          : "";
-      showSystemNotice(
-        payload.autoredSynced ? "success" : "info",
-        payload.autoredSynced ? "Unidad sincronizada" : "Sincronización parcial",
-        `${patente} actualizado.${glo3dNote}${autoredNote}`,
-      );
-    } catch (error) {
-      const message =
-        error instanceof DOMException && error.name === "TimeoutError"
-          ? "La sincronización tardó demasiado. Espera unos segundos y vuelve a intentar."
-          : error instanceof Error
-            ? error.message
-            : "No se pudo sincronizar la unidad.";
-      if (isGlo3dRateLimitMessage(message)) markGlo3dClientCooldown();
-      showSystemNotice(
-        "error",
-        isGlo3dRateLimitMessage(message) ? "Glo3D saturado" : "Sincronización fallida",
-        message,
-      );
-    } finally {
-      setManagingVehicleSyncing(false);
-    }
-  }, [
-    applyImportedPatentPayload,
-    config,
-    editingVehicleKey,
-    itemsByKey,
-    managingVehicleKey,
-    markGlo3dClientCooldown,
-    showSystemNotice,
-    sortedUpcomingAuctions,
-  ]);
+    await syncVehicleWithGlo3dAutored(managingVehicleKey);
+  }, [managingVehicleKey, syncVehicleWithGlo3dAutored]);
 
   const importRainworxLot = async () => {
     const url = rainworxLotUrl.trim();
@@ -12147,18 +12180,22 @@ export function CatalogHomeClient({
                 <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">
                   Gestionar unidad
                 </p>
-                <h3 className="text-lg font-bold text-slate-900">{getModel(managingItem)}</h3>
+                <h3 className="text-lg font-bold text-slate-900">
+                  {managingItem.title?.trim() && !isPlaceholderVehicleLabel(managingItem.title)
+                    ? managingItem.title
+                    : getModel(managingItem)}
+                </h3>
                 <p className="text-xs text-slate-500">Patente {getPatent(managingItem)}</p>
                 {!managingVehicleKey.startsWith("manual-") ? (
                   <>
                     <button
                       type="button"
                       onClick={() => void syncManagingVehicleWithGlo3dAutored()}
-                      disabled={managingVehicleSyncing}
+                      disabled={Boolean(syncingVehicleKey)}
                       className="ui-focus mt-2 inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
                       title="Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
                     >
-                      {managingVehicleSyncing ? "Sincronizando…" : "Sincronizar Glo3D + Autored"}
+                      {syncingVehicleKey === managingVehicleKey ? "Sincronizando…" : "Sincronizar Glo3D + Autored"}
                     </button>
                     {Date.now() < glo3dCooldownUntil ? (
                       <p className="mt-1 max-w-md text-xs text-amber-800">
@@ -12365,31 +12402,88 @@ export function CatalogHomeClient({
 
       {isAdmin && editingVehicleKey && editingDetails && editingItem ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-slate-900/70 p-4" onClick={cancelDetailsEditor}>
-          <div role="dialog" aria-modal="true" aria-label="Editar detalle manual" className="max-h-[92vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">Editar detalle manual</h3>
-                <p className="text-xs text-slate-500">
-                  {getPatent(editingItem)} · {getModel(editingItem)}
-                </p>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Editar ficha del vehículo"
+            className="max-h-[94vh] w-full max-w-5xl overflow-auto rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-cyan-50/30 p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Editar ficha</p>
+                  <EditorLabeledField label="Título (como se ve en el home)">
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-lg font-bold text-slate-900"
+                      placeholder="Ej. NISSAN KICKS 1.6 2020"
+                      value={editingDetails.title ?? ""}
+                      onChange={(event) =>
+                        setEditingDetails((prev) => ({ ...(prev ?? {}), title: event.target.value }))
+                      }
+                    />
+                  </EditorLabeledField>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800">
+                      {editingDetails.patente?.trim() || getPatent(editingItem)}
+                    </span>
+                    <input
+                      className="min-w-[200px] flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-700"
+                      placeholder="Subtítulo / chips (DIESEL, 4X4, ÚNICO DUEÑO…)"
+                      value={editingDetails.subtitle ?? ""}
+                      onChange={(event) =>
+                        setEditingDetails((prev) => ({ ...(prev ?? {}), subtitle: event.target.value }))
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const autoTitle = buildAutoVehicleTitle(editingDetails);
+                        if (!autoTitle) {
+                          showSystemNotice(
+                            "info",
+                            "Sin datos para título",
+                            "Completa marca, modelo o año en la pestaña Información.",
+                          );
+                          return;
+                        }
+                        setEditingDetails((prev) => ({ ...(prev ?? {}), title: autoTitle }));
+                      }}
+                      className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
+                    >
+                      Auto-título
+                    </button>
+                    {!editingVehicleKey.startsWith("manual-") ? (
+                      <button
+                        type="button"
+                        onClick={() => void syncVehicleWithGlo3dAutored(editingVehicleKey)}
+                        disabled={Boolean(syncingVehicleKey)}
+                        className="ui-focus rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800 disabled:opacity-60"
+                      >
+                        {syncingVehicleKey === editingVehicleKey ? "Sync…" : "Sync Glo3D + Autored"}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={cancelDetailsEditor}
+                  className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50"
+                >
+                  Cerrar
+                </button>
               </div>
-              <button type="button" onClick={cancelDetailsEditor} className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50">
-                Cerrar
-              </button>
             </div>
 
-            <div className="mb-3 flex flex-wrap gap-2">
-              {([
-                ["general", "Información del vehículo"],
-                ["tecnica", "Detalles técnicos"],
-              ] as Array<[DetailEditorTabId, string]>).map(([tabId, label]) => (
+            <div className="mb-4 flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+              {DETAIL_EDITOR_TABS.map(([tabId, label]) => (
                 <button
                   key={tabId}
                   type="button"
                   onClick={() => setDetailEditorTab(tabId)}
-                  className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  className={`ui-focus rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                     detailEditorTab === tabId
-                      ? "bg-cyan-600 text-white"
+                      ? "bg-cyan-600 text-white shadow-sm"
                       : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                   }`}
                 >
@@ -12398,7 +12492,54 @@ export function CatalogHomeClient({
               ))}
             </div>
 
-            <div className="rounded-xl border border-emerald-200/90 bg-emerald-50/60 p-3">
+            {detailEditorTab === "descripcion" ? (
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                <p className="text-xs text-slate-600">
+                  Mismo contenido que la pestaña Descripción del home. Usa el editor para observaciones,
+                  condiciones y narrativa comercial.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 rounded border border-slate-300 bg-white px-2 py-2">
+                  <button type="button" onClick={() => runObservationsCommand("bold")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs font-bold text-slate-700">B</button>
+                  <button type="button" onClick={() => runObservationsCommand("italic")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs italic text-slate-700">I</button>
+                  <button type="button" onClick={() => runObservationsCommand("underline")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs underline text-slate-700">U</button>
+                  <button type="button" onClick={() => runObservationsCommand("insertUnorderedList")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700">Lista</button>
+                </div>
+                <div
+                  ref={manualObservationsEditorRef}
+                  className="ui-focus min-h-[220px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-relaxed text-slate-800"
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={(event) => syncManualObservations(event.currentTarget.innerHTML)}
+                  aria-label="Editor de descripción ampliada con formato HTML"
+                />
+              </div>
+            ) : null}
+
+            {detailEditorTab === "publicacion" ? (
+              <div className="space-y-4">
+                <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+                  <EditorLabeledField label="Estado comercial">
+                    <input className="w-full rounded border border-slate-300 px-3 py-2 text-sm" value={editingDetails.status ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), status: event.target.value }))} />
+                  </EditorLabeledField>
+                  <EditorLabeledField label="Condición del vehículo">
+                    <select className="w-full rounded border border-slate-300 px-3 py-2 text-sm" value={editingDetails.vehicleCondition ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), vehicleCondition: event.target.value }))}>
+                      <option value="">Seleccionar…</option>
+                      {VEHICLE_CONDITION_OPTIONS.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </EditorLabeledField>
+                  <EditorLabeledField label="Ubicación comercial">
+                    <input className="w-full rounded border border-slate-300 px-3 py-2 text-sm" value={editingDetails.location ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), location: event.target.value }))} />
+                  </EditorLabeledField>
+                  <EditorLabeledField label="Lote">
+                    <input className="w-full rounded border border-slate-300 px-3 py-2 text-sm" value={editingDetails.lot ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), lot: event.target.value }))} />
+                  </EditorLabeledField>
+                  <EditorLabeledField label="Fecha remate" className="md:col-span-2">
+                    <input className={getEditorInputClass("auctionDate")} value={editingDetails.auctionDate ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), auctionDate: event.target.value }))} />
+                  </EditorLabeledField>
+                </div>
+                <div className="rounded-xl border border-emerald-200/90 bg-emerald-50/60 p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
                 Importar URL de Rainworx
               </p>
@@ -12432,7 +12573,9 @@ export function CatalogHomeClient({
                   {detailRainworxImporting ? "Sincronizando…" : "Importar desde esta URL"}
                 </button>
               </div>
-            </div>
+                </div>
+              </div>
+            ) : null}
 
             {detailEditorTab === "general" ? (
               <div className="space-y-4">
@@ -12462,7 +12605,7 @@ export function CatalogHomeClient({
                     <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Tipo de vehículo" value={editingDetails.tipoVehiculo ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), tipoVehiculo: event.target.value }))} />
                     <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Tipo" value={editingDetails.tipo ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), tipo: event.target.value }))} />
                     <select
-                      className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                      className="rounded border border-slate-300 px-3 py-2 text-sm"
                       value={normalizeVehicleCategoryValue(editingDetails.category ?? "")}
                       onChange={(event) =>
                         setEditingDetails((prev) => ({
@@ -12478,10 +12621,27 @@ export function CatalogHomeClient({
                         </option>
                       ))}
                     </select>
+                    <select
+                      className="rounded border border-slate-300 px-3 py-2 text-sm"
+                      value={editingDetails.vehicleCondition ?? ""}
+                      onChange={(event) =>
+                        setEditingDetails((prev) => ({
+                          ...(prev ?? {}),
+                          vehicleCondition: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Condición</option>
+                      {VEHICLE_CONDITION_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
-            ) : (
+            ) : detailEditorTab === "tecnica" ? (
               <div className="space-y-4">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -12575,188 +12735,33 @@ export function CatalogHomeClient({
                   </div>
                 </div>
               </div>
-            )}
-
-            {detailEditorTab === "general" ? (
-              <div className="mt-4 rounded-xl border border-cyan-100 bg-cyan-50/40 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-700">
-                  Configuración editorial y comercial
-                </p>
-                <p className="mb-3 text-xs text-cyan-900/80">
-                  Esta sección concentra estado comercial, narrativa y campos de publicación.
-                  Los links crudos de Glo3D se administran automáticamente y están ocultos para evitar confusión.
-                </p>
-                <div className="mb-3 rounded-lg border border-cyan-200 bg-white/80 p-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Título y subtítulo (home)
-                  </p>
-                  <p className="mb-2 text-xs text-slate-600">
-                    El título se genera al sincronizar con marca, modelo y año, pero puedes editarlo manualmente.
-                  </p>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-1 md:col-span-2">
-                      <input
-                        className="w-full rounded border border-slate-300 px-3 py-2 text-sm font-semibold"
-                        placeholder="Título principal (ej. NISSAN KICKS 1.6 2020)"
-                        value={editingDetails.title ?? ""}
-                        onChange={(event) =>
-                          setEditingDetails((prev) => ({ ...(prev ?? {}), title: event.target.value }))
-                        }
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const autoTitle = buildAutoVehicleTitle(editingDetails);
-                          if (!autoTitle) {
-                            showSystemNotice(
-                              "info",
-                              "Sin datos para título",
-                              "Completa marca, modelo o año para generar el título automáticamente.",
-                            );
-                            return;
-                          }
-                          setEditingDetails((prev) => ({ ...(prev ?? {}), title: autoTitle }));
-                        }}
-                        className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
-                      >
-                        Regenerar título desde marca/modelo/año
-                      </button>
-                    </div>
-                    <input
-                      className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                      placeholder="Subtítulo / etiqueta (ej. DIESEL, 4X4, ÚNICO DUEÑO)"
-                      value={editingDetails.subtitle ?? ""}
-                      onChange={(event) =>
-                        setEditingDetails((prev) => ({ ...(prev ?? {}), subtitle: event.target.value }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Estado" value={editingDetails.status ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), status: event.target.value }))} />
-                  <select
-                    className="rounded border border-slate-300 px-3 py-2 text-sm"
-                    value={editingDetails.vehicleCondition ?? ""}
+            ) : detailEditorTab === "fotos" ? (
+              <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
+                <EditorLabeledField label="Miniatura (URL)">
+                  <input
+                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                    value={editingDetails.thumbnail ?? ""}
                     onChange={(event) =>
-                      setEditingDetails((prev) => ({ ...(prev ?? {}), vehicleCondition: event.target.value }))
+                      setEditingDetails((prev) => ({ ...(prev ?? {}), thumbnail: event.target.value }))
                     }
-                  >
-                    <option value="">Condición del vehículo</option>
-                    {VEHICLE_CONDITION_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                  <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Ubicación comercial" value={editingDetails.location ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), location: event.target.value }))} />
-                  <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Lote" value={editingDetails.lot ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), lot: event.target.value }))} />
-                  <div className="space-y-1 md:col-span-2">
-                    <input className={getEditorInputClass("auctionDate")} placeholder="Fecha remate (YYYY-MM-DD o DD/MM/YYYY)" value={editingDetails.auctionDate ?? ""} onChange={(event) => setEditingDetails((prev) => ({ ...(prev ?? {}), auctionDate: event.target.value }))} />
-                    {getEditorFieldError("auctionDate") ? <p className="text-xs text-rose-600">{getEditorFieldError("auctionDate")}</p> : null}
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Observaciones (editor HTML)
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2 rounded border border-slate-300 bg-white px-2 py-2">
-                      <button type="button" onClick={() => runObservationsCommand("bold")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs font-bold text-slate-700">B</button>
-                      <button type="button" onClick={() => runObservationsCommand("italic")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs italic text-slate-700">I</button>
-                      <button type="button" onClick={() => runObservationsCommand("underline")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs underline text-slate-700">U</button>
-                      <button type="button" onClick={() => runObservationsCommand("insertUnorderedList")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700">Lista</button>
-                      <button type="button" onClick={() => runObservationsCommand("insertOrderedList")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700">1.2.3</button>
-                      <select
-                        className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
-                        defaultValue="3"
-                        onChange={(event) => runObservationsCommand("fontSize", event.target.value)}
-                      >
-                        <option value="2">Tamaño S</option>
-                        <option value="3">Tamaño M</option>
-                        <option value="4">Tamaño L</option>
-                        <option value="5">Tamaño XL</option>
-                      </select>
-                      <select
-                        className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
-                        defaultValue="Arial"
-                        onChange={(event) => runObservationsCommand("fontName", event.target.value)}
-                      >
-                        <option value="Arial">Arial</option>
-                        <option value="Georgia">Georgia</option>
-                        <option value="Tahoma">Tahoma</option>
-                        <option value="Verdana">Verdana</option>
-                        <option value="Courier New">Courier</option>
-                      </select>
-                      <input
-                        type="color"
-                        title="Color de texto"
-                        className="ui-focus h-8 w-10 cursor-pointer rounded border border-slate-300 bg-white p-1"
-                        defaultValue="#0f172a"
-                        onChange={(event) => runObservationsCommand("foreColor", event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const url = window.prompt("URL del enlace");
-                          if (!url) return;
-                          runObservationsCommand("createLink", url);
-                        }}
-                        className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
-                      >
-                        Link
-                      </button>
-                      <button type="button" onClick={() => runObservationsCommand("removeFormat")} className="ui-focus rounded border border-slate-300 px-2 py-1 text-xs text-slate-700">Limpiar estilo</button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          applyObservationsTemplate(DEFAULT_OBSERVATIONS_TEMPLATE_HTML);
-                          showSystemNotice("success", "Plantilla base aplicada", "Se cargó la plantilla de observaciones recomendada.");
-                        }}
-                        className="ui-focus rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"
-                      >
-                        Plantilla base
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          applyObservationsTemplate(observationsTemplateHtml || DEFAULT_OBSERVATIONS_TEMPLATE_HTML);
-                          showSystemNotice("success", "Plantilla cargada", "Se insertó la plantilla guardada en este navegador.");
-                        }}
-                        className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
-                      >
-                        Usar plantilla guardada
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const editor = manualObservationsEditorRef.current;
-                          if (!editor || !editor.innerHTML.trim()) {
-                            showSystemNotice("error", "Plantilla vacía", "Escribe o pega contenido antes de guardar plantilla.");
-                            return;
-                          }
-                          const html = editor.innerHTML;
-                          setObservationsTemplateHtml(html);
-                          if (typeof window !== "undefined") {
-                            window.localStorage.setItem(OBSERVATIONS_TEMPLATE_STORAGE_KEY, html);
-                          }
-                          showSystemNotice("success", "Plantilla guardada", "La plantilla quedó guardada para próximos vehículos.");
-                        }}
-                        className="ui-focus rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
-                      >
-                        Guardar como plantilla
-                      </button>
-                    </div>
-                    <div
-                      ref={manualObservationsEditorRef}
-                      contentEditable
-                      suppressContentEditableWarning
-                      onInput={(event) => syncManualObservations(event.currentTarget.innerHTML)}
-                      className="ui-focus min-h-52 rounded border border-slate-300 bg-white px-3 py-3 text-sm leading-relaxed text-slate-800"
-                      aria-label="Editor de observaciones con formato HTML"
-                    />
-                    <p className="text-xs text-slate-500">
-                      Puedes usar negritas, listas, colores, tamaño y tipo de letra. Se guarda como HTML y puedes reutilizar plantillas.
-                    </p>
-                  </div>
-                </div>
+                  />
+                </EditorLabeledField>
+                {editingDetails.thumbnail?.startsWith("http") ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={editingDetails.thumbnail} alt="Miniatura" className="h-32 w-auto rounded-lg border border-slate-200 object-cover" />
+                ) : null}
+                <EditorLabeledField label="Galería (URLs separadas por coma)">
+                  <textarea
+                    className="min-h-28 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                    value={editingDetails.imagesCsv ?? ""}
+                    onChange={(event) =>
+                      setEditingDetails((prev) => ({ ...(prev ?? {}), imagesCsv: event.target.value }))
+                    }
+                  />
+                </EditorLabeledField>
+                <p className="text-xs text-slate-500">
+                  Las fotos de Glo3D/Autored se sincronizan automáticamente. Aquí puedes ajustar o agregar URLs manualmente.
+                </p>
               </div>
             ) : null}
 
