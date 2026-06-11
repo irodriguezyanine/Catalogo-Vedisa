@@ -447,8 +447,8 @@ function resolveEstadoRetiroForVehicleKey(
   return "en_tasacion";
 }
 
-const GLO3D_CLIENT_COOLDOWN_MS = 90_000;
-const GLO3D_MIN_CLIENT_COOLDOWN_MS = 90_000;
+const GLO3D_CLIENT_COOLDOWN_MS = 30_000;
+const GLO3D_MIN_CLIENT_COOLDOWN_MS = 30_000;
 const GLO3D_COOLDOWN_STORAGE_KEY = "vedisa:glo3d-cooldown-until";
 const GLO3D_BATCH_IMPORT_MAX = 8;
 
