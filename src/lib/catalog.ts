@@ -98,7 +98,7 @@ function extractPatentFromText(value?: string): string | undefined {
   return match?.[1];
 }
 
-function normalizeRow(row: Record<string, unknown>): CatalogItem | null {
+export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | null {
   const id =
     getStringFromKeys(row, ["id", "uuid", "vehicle_id", "inventario_id"]) ??
     crypto.randomUUID();
@@ -268,7 +268,40 @@ async function fetchFromTasacionesApi(): Promise<CatalogItem[] | null> {
 
   const payload = (await response.json()) as unknown;
   const rows = extractRowsFromPayload(payload);
-  return rows.map(normalizeRow).filter((item): item is CatalogItem => !!item);
+  return rows.map(catalogRowToItem).filter((item): item is CatalogItem => !!item);
+}
+
+function normalizePatentLookup(value: string): string {
+  return value.trim().toUpperCase().replace(/\s+/g, "").replace(/-/g, "");
+}
+
+export async function fetchInventarioRowByPatent(
+  patent: string,
+): Promise<Record<string, unknown> | null> {
+  const normalized = normalizePatentLookup(patent);
+  if (!normalized) return null;
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseAnonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseKey = serviceRoleKey ?? supabaseAnonKey;
+  if (!supabaseUrl || !supabaseKey) return null;
+
+  const supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const table = process.env.CATALOG_SUPABASE_TABLE ?? "inventario";
+  const { data } = await supabase
+    .from(table)
+    .select("*")
+    .eq("patente", normalized)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data || typeof data !== "object") return null;
+  return data as Record<string, unknown>;
 }
 
 async function fetchFromSupabase(): Promise<CatalogItem[]> {
@@ -307,7 +340,7 @@ async function fetchFromSupabase(): Promise<CatalogItem[]> {
     (entry): entry is Record<string, unknown> =>
       typeof entry === "object" && entry !== null && !Array.isArray(entry),
   );
-  return rows.map(normalizeRow).filter((item): item is CatalogItem => !!item);
+  return rows.map(catalogRowToItem).filter((item): item is CatalogItem => !!item);
 }
 
 type AwsVehicle = {
@@ -1097,7 +1130,7 @@ function itemNeedsTechnicalFallback(item: CatalogItem): boolean {
   return fieldsToCheck.some((aliases) => !getStringFromKeys(raw, aliases));
 }
 
-async function fetchAutoredByPatent(
+export async function fetchAutoredRecordByPatent(
   patent: string,
 ): Promise<Record<string, unknown> | null> {
   if (!AUTORED_API_URL) return null;
@@ -1143,7 +1176,7 @@ async function enrichWithAutoredFallback(
   const byStock = new Map<string, Record<string, unknown>>();
   for (const entry of limitedCandidates) {
     try {
-      const autored = await fetchAutoredByPatent(entry.stock);
+      const autored = await fetchAutoredRecordByPatent(entry.stock);
       if (autored) byStock.set(entry.stock, normalizeAutoredTechnicalFields(autored));
     } catch {
       // noop: no bloquea catálogo si Autored falla

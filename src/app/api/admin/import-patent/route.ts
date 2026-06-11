@@ -1,0 +1,32 @@
+import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
+import { importVehicleByPatent } from "@/lib/catalog-import-patent";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export async function POST(req: Request) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(ADMIN_SESSION_COOKIE_NAME)?.value;
+  const session = verifyAdminSessionToken(token);
+  if (!session.valid || !session.email) {
+    return Response.json({ ok: false, error: "No autorizado." }, { status: 401 });
+  }
+
+  const body = (await req.json().catch(() => ({}))) as { patente?: string };
+  const patente = String(body.patente ?? "").trim();
+  if (!patente) {
+    return Response.json({ ok: false, error: "Debes indicar una patente." }, { status: 400 });
+  }
+
+  try {
+    const result = await importVehicleByPatent(patente);
+    revalidatePath("/");
+    revalidatePath("/api/catalogo");
+    return Response.json({ ok: true, ...result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "No se pudo importar la patente.";
+    return Response.json({ ok: false, error: message }, { status: 400 });
+  }
+}

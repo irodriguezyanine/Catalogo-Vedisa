@@ -2280,6 +2280,8 @@ export function CatalogHomeClient({
   const [batchAssignSelectedKeys, setBatchAssignSelectedKeys] = useState<string[]>([]);
   const [groupManageTarget, setGroupManageTarget] = useState<GroupManageTarget | null>(null);
   const [groupManageSearchTerm, setGroupManageSearchTerm] = useState("");
+  const [importedInventoryItems, setImportedInventoryItems] = useState<CatalogItem[]>([]);
+  const [batchAssignImporting, setBatchAssignImporting] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualPublicationDraft>(
     EMPTY_MANUAL_PUBLICATION_DRAFT,
   );
@@ -2889,13 +2891,15 @@ export function CatalogHomeClient({
     [config.manualPublications],
   );
 
-  const items = useMemo(
-    () =>
-      [...rawItems, ...manualItems].map((item) =>
-        applyDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
-      ),
-    [rawItems, manualItems, config.vehicleDetails],
-  );
+  const items = useMemo(() => {
+    const mergedByKey = new Map<string, CatalogItem>();
+    for (const item of [...rawItems, ...manualItems, ...importedInventoryItems]) {
+      mergedByKey.set(getVehicleKey(item), item);
+    }
+    return Array.from(mergedByKey.values()).map((item) =>
+      applyDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
+    );
+  }, [rawItems, manualItems, importedInventoryItems, config.vehicleDetails]);
 
   const itemsByKey = useMemo(() => {
     const map = new Map<string, CatalogItem>();
@@ -4481,10 +4485,15 @@ export function CatalogHomeClient({
     return source;
   }, [activeManagedCategory, assignSearchTerm, items]);
 
+  const batchAssignPatentTokens = useMemo(
+    () => extractPatentTokens(batchAssignSearchTerm),
+    [batchAssignSearchTerm],
+  );
+
   const batchAssignCandidates = useMemo(() => {
     if (!batchAssignTarget) return [] as CatalogItem[];
     const query = normalizeText(batchAssignSearchTerm);
-    const patentTokens = extractPatentTokens(batchAssignSearchTerm);
+    const patentTokens = batchAssignPatentTokens;
     const source = items.filter((item) => {
       const key = getVehicleKey(item);
       const patent = getPatent(item);
@@ -4499,7 +4508,13 @@ export function CatalogHomeClient({
       return sample.includes(query);
     });
     return source;
-  }, [batchAssignSearchTerm, batchAssignTarget, items]);
+  }, [batchAssignSearchTerm, batchAssignPatentTokens, batchAssignTarget, items]);
+
+  useEffect(() => {
+    if (!batchAssignTarget) return;
+    const visible = new Set(batchAssignCandidates.map((item) => getVehicleKey(item)));
+    setBatchAssignSelectedKeys((prev) => prev.filter((key) => visible.has(key)));
+  }, [batchAssignCandidates, batchAssignTarget]);
 
   const batchAssignTargetLabel = useMemo(() => {
     if (!batchAssignTarget) return "";
@@ -5282,6 +5297,71 @@ export function CatalogHomeClient({
     setBatchAssignTarget(target);
     setBatchAssignSearchTerm("");
     setBatchAssignSelectedKeys([]);
+  };
+
+  const importPatentsForBatchAssign = async () => {
+    const patentTokens = extractPatentTokens(batchAssignSearchTerm);
+    if (patentTokens.length === 0) {
+      showSystemNotice("info", "Sin patente", "Ingresa al menos una patente para importar.");
+      return;
+    }
+    setBatchAssignImporting(true);
+    const importedKeys: string[] = [];
+    try {
+      for (const patente of patentTokens) {
+        const response = await fetch("/api/admin/import-patent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ patente }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          error?: string;
+          item?: CatalogItem;
+          vehicleDetails?: EditorVehicleDetails;
+          source?: "inventario" | "autored";
+          created?: boolean;
+          patente?: string;
+        };
+        if (!response.ok || !payload.ok || !payload.item) {
+          throw new Error(payload.error ?? `No se pudo importar ${patente}.`);
+        }
+        const vehicleKey = getVehicleKey(payload.item);
+        importedKeys.push(vehicleKey);
+        setImportedInventoryItems((prev) => {
+          const next = prev.filter((entry) => getVehicleKey(entry) !== vehicleKey);
+          return [...next, payload.item!];
+        });
+        if (payload.vehicleDetails) {
+          setConfig((prev) => ({
+            ...prev,
+            vehicleDetails: {
+              ...prev.vehicleDetails,
+              [vehicleKey]: {
+                ...(prev.vehicleDetails?.[vehicleKey] ?? {}),
+                ...payload.vehicleDetails,
+              },
+            },
+          }));
+        }
+        showSystemNotice(
+          "success",
+          payload.created ? "Unidad importada" : "Unidad encontrada",
+          payload.created
+            ? `${patente} se creó en inventario compartido con datos de Autored.`
+            : `${patente} ya existía en inventario compartido y quedó disponible para agregar.`,
+        );
+      }
+      setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...importedKeys])));
+    } catch (error) {
+      showSystemNotice(
+        "error",
+        "Importación fallida",
+        error instanceof Error ? error.message : "No se pudo importar la patente.",
+      );
+    } finally {
+      setBatchAssignImporting(false);
+    }
   };
 
   const closeBatchAssignModal = () => {
@@ -10991,6 +11071,26 @@ export function CatalogHomeClient({
               placeholder="Buscar por patente, modelo o título..."
               className="ui-focus mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
+
+            {batchAssignCandidates.length === 0 && batchAssignPatentTokens.length > 0 ? (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                <p className="text-sm text-slate-700">
+                  Esta patente no está en el inventario cargado del catálogo. Puedes traerla desde
+                  inventario compartido o Autored para agregarla al evento y sincronizar con Tasaciones
+                  y Subastas.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void importPatentsForBatchAssign()}
+                  disabled={batchAssignImporting}
+                  className="ui-focus mt-2 rounded-md bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-500 disabled:opacity-60"
+                >
+                  {batchAssignImporting
+                    ? "Importando..."
+                    : `Importar ${batchAssignPatentTokens.join(", ")} desde Autored`}
+                </button>
+              </div>
+            ) : null}
 
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-slate-600">
