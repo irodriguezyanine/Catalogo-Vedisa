@@ -1,6 +1,6 @@
-const GLO3D_MIN_INTERVAL_MS = Number(process.env.GLO3D_MIN_INTERVAL_MS ?? "600");
-const GLO3D_CIRCUIT_COOLDOWN_MS = Number(process.env.GLO3D_CIRCUIT_COOLDOWN_MS ?? "45000");
-const GLO3D_MAX_RETRIES = Number(process.env.GLO3D_MAX_RETRIES ?? "2");
+const GLO3D_MIN_INTERVAL_MS = Number(process.env.GLO3D_MIN_INTERVAL_MS ?? "1500");
+const GLO3D_CIRCUIT_COOLDOWN_MS = Number(process.env.GLO3D_CIRCUIT_COOLDOWN_MS ?? "120000");
+const GLO3D_MAX_RETRIES = Number(process.env.GLO3D_MAX_RETRIES ?? "1");
 
 let lastGlo3dHttpAt = 0;
 let circuitOpenUntil = 0;

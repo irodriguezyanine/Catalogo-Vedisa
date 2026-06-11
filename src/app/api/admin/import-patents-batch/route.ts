@@ -19,6 +19,7 @@ export async function POST(req: Request) {
     patentes?: string[];
     estadoRetiro?: string;
     forceRefresh?: boolean;
+    skipGlo3dFetch?: boolean;
   };
   const patentes = Array.isArray(body.patentes)
     ? body.patentes.map((value) => String(value ?? "").trim()).filter(Boolean)
@@ -37,6 +38,7 @@ export async function POST(req: Request) {
     const batch = await importVehiclesByPatentsBatch(patentes, {
       estadoRetiro: body.estadoRetiro,
       forceRefresh: body.forceRefresh,
+      skipGlo3dFetch: body.skipGlo3dFetch,
     });
     revalidatePath("/");
     revalidatePath("/api/catalogo");

@@ -906,9 +906,6 @@ export async function importVehicleByPatent(
         if (!glo3d && existingRowEarly) {
           glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
         }
-        if (!glo3d && !existingRowEarly) {
-          throw error;
-        }
       } else {
         throw error;
       }
@@ -1002,7 +999,10 @@ export async function importVehicleByPatent(
     });
   }
 
-  if (!glo3d) {
+  if (!glo3d && !autoredSynced) {
+    if (glo3dRateLimited) {
+      throw new Glo3dRateLimitError(getGlo3dCircuitRetryAfterMs());
+    }
     const hasGlo3dCredentials = Boolean(
       process.env.GLO3D_API_USERNAME ??
         process.env.VITE_GLO3D_API_USERNAME ??
@@ -1014,14 +1014,14 @@ export async function importVehicleByPatent(
       );
     }
     throw new Error(
-      `No se encontró ${requestedPatente} en Glo3D (o la API está saturada). Verifica la patente exacta (ej. TJSX32, no TSJX32), espera unos segundos y pulsa "Actualizar inventario y sync".`,
+      `No se encontró ${requestedPatente} en Glo3D ni datos útiles en Autored. Verifica la patente exacta (ej. TJSX32).`,
     );
   }
 
   const persisted = await persistInventarioRow(patente, payload, null, options);
   const row = buildCatalogRow(patente, persisted.row, glo3d, autored);
   const images = [
-    ...extractGlo3dImages(glo3d),
+    ...(glo3d ? extractGlo3dImages(glo3d) : []),
     ...extractAutoredImages(autored),
     ...normalizeImageList(row.imagenes),
   ];
@@ -1031,12 +1031,12 @@ export async function importVehicleByPatent(
   return buildImportPatentResult({
     item,
     vehicleDetails: buildVehicleDetailsFromSources(patente, row, glo3d, autored, images),
-    source: resolveImportSource(glo3d, autored, false),
+    source: glo3d ? resolveImportSource(glo3d, autored, false) : "autored",
     created: persisted.created,
     patente,
     requestedPatente,
     correctedPatente,
-    hasGlo3dViewer: Boolean(glo3d.view3dUrl),
+    hasGlo3dViewer: Boolean(glo3d?.view3dUrl),
     skippedGlo3dFetch,
     skippedAutoredFetch,
     glo3dRateLimited,

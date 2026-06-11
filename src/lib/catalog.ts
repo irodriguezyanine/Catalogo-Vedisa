@@ -1308,21 +1308,6 @@ async function fetchGlo3dByPatentScan(
   if (searchPayload.ok) {
     const found = resolveGlo3dEntryFromPayload(searchPayload.data, target);
     if (found) return { entry: found, rateLimited: false };
-    if (searchPayload.data.length > 0) {
-      return { entry: null, rateLimited: false };
-    }
-  }
-
-  if (!searchPayload.ok) {
-    const fallbackPage = await fetchGlo3dInventoryPage(0);
-    if (fallbackPage.rateLimited) {
-      openGlo3dCircuit();
-      return { entry: null, rateLimited: true };
-    }
-    if (fallbackPage.ok) {
-      const found = resolveGlo3dEntryFromPayload(fallbackPage.data, target);
-      if (found) return { entry: found, rateLimited: false };
-    }
   }
 
   return { entry: null, rateLimited: false };
