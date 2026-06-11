@@ -10,6 +10,11 @@ import {
   sleepMs,
 } from "@/lib/glo3d-api";
 import {
+  fetchAutoredV2VehicleByPatent,
+  invalidateAutoredTokenCache,
+  isAutoredApiConfigured,
+} from "@/lib/autored-api";
+import {
   autoredRecordHasIdentity,
   sanitizeMarcaValue,
   sanitizeModeloValue,
@@ -1692,12 +1697,27 @@ export async function fetchAutoredRecordByPatent(
 
   let record: Record<string, unknown> | null = null;
 
+  if (options?.forceRefresh) {
+    invalidateAutoredTokenCache();
+  }
+
+  if (isAutoredApiConfigured()) {
+    try {
+      const autoredV2 = await fetchAutoredV2VehicleByPatent(normalized, options);
+      if (autoredV2 && autoredRecordHasIdentity(autoredV2, normalized)) {
+        record = autoredV2;
+      }
+    } catch (error) {
+      console.warn(`[autored] V2 lookup falló para ${normalized}:`, error);
+    }
+  }
+
   const tasacionesRecord = await fetchTasacionesRecordByPatent(normalized);
-  if (tasacionesRecord && autoredRecordHasIdentity(tasacionesRecord, normalized)) {
+  if (!record && tasacionesRecord && autoredRecordHasIdentity(tasacionesRecord, normalized)) {
     record = tasacionesRecord;
   }
 
-  if (!record && AUTORED_API_URL) {
+  if (!record && AUTORED_API_URL && !isAutoredApiConfigured()) {
     const token = process.env.CATALOG_SOURCE_API_TOKEN;
     const paramNames = ["patente", "ppu", "PPU", "plate"];
     for (const paramName of paramNames) {

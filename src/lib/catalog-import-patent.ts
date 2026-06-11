@@ -14,6 +14,7 @@ import {
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
 import { sleepMs } from "@/lib/glo3d-api";
+import { isAutoredApiConfigured } from "@/lib/autored-api";
 import {
   autoredRecordHasIdentity,
   looksLikeChileanPatent,
@@ -55,7 +56,9 @@ function resolveAutoredSyncReason(
   autored: Record<string, unknown> | null,
 ): ImportPatentResult["autoredReason"] {
   if (autoredSynced) return "synced";
-  if (!process.env.CATALOG_SOURCE_AUTORED_API_URL) return "not_configured";
+  if (!isAutoredApiConfigured() && !process.env.CATALOG_SOURCE_AUTORED_API_URL) {
+    return "not_configured";
+  }
   if (!autored) return "no_record";
   return "no_identity";
 }
@@ -70,7 +73,7 @@ function buildImportPatentResult(
   return {
     ...base,
     autoredSynced,
-    autoredConfigured: Boolean(process.env.CATALOG_SOURCE_AUTORED_API_URL),
+    autoredConfigured: isAutoredApiConfigured() || Boolean(process.env.CATALOG_SOURCE_AUTORED_API_URL),
     autoredReason: resolveAutoredSyncReason(autoredSynced, base.autored),
   };
 }
@@ -359,6 +362,7 @@ function normalizeAutoredImportRecord(
     "fabricante",
     "nombre_marca",
     "brand_name",
+    "original_brand_name",
     "make_name",
     "nombre_fabricante",
   ]);
@@ -370,6 +374,7 @@ function normalizeAutoredImportRecord(
     "vehiculo_modelo",
     "nombre_modelo",
     "model_name",
+    "original_model_name",
   ]);
   let ano = pickString(merged, [
     "ano",

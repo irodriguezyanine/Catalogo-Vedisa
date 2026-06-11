@@ -66,9 +66,11 @@ export function autoredRecordHasIdentity(
     }
     return undefined;
   };
-  const marca = sanitizeMarcaValue(read(["marca", "brand", "make", "vehicle_brand"]));
+  const marca = sanitizeMarcaValue(
+    read(["marca", "brand", "make", "vehicle_brand", "brand_name", "original_brand_name"]),
+  );
   const modelo = sanitizeModeloValue(
-    read(["modelo", "model", "model2", "vehicle_model"]),
+    read(["modelo", "model", "model2", "vehicle_model", "model_name", "original_model_name"]),
     patente,
   );
   return Boolean(marca || modelo);

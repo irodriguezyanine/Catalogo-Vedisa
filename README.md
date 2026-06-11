@@ -24,7 +24,9 @@ Campos principales:
 - `CATALOG_SOURCE_API_LIMIT`: límite solicitado al endpoint público.
 - `CATALOG_SOURCE_API_ESTADO`: estado de inventario solicitado (recomendado `en_bodega`).
 - `CATALOG_SOURCE_API_INCLUIR_HISTORICOS`: envía `incluir_historicos=true|false` al endpoint.
-- `CATALOG_SOURCE_AUTORED_API_URL`: endpoint para enriquecer por patente (fallback técnico).
+- `AUTORED_API_EMAIL` / `AUTORED_API_PASSWORD`: credenciales API Autored V2 (`POST /auth/login` + `GET /vehicles/info?licensePlate=`).
+- `AUTORED_API_BASE_URL` (opcional): por defecto `https://app.autored.cl/api/v2`.
+- `CATALOG_SOURCE_AUTORED_API_URL`: endpoint legacy GET (solo si no usas email/password).
 - `CATALOG_AUTORED_MAX_LOOKUPS`: máximo de patentes a consultar por ciclo para fallback Autored.
 - `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`: fallback a Supabase.
 - `CATALOG_SUPABASE_TABLE`: tabla origen (por defecto `inventario`).

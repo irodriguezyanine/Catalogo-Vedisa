@@ -6679,7 +6679,7 @@ export function CatalogHomeClient({
         const autoredNote = payload.autoredSynced
           ? " Autored aplicado."
           : payload.autoredReason === "not_configured"
-            ? " Autored no está configurado: falta CATALOG_SOURCE_AUTORED_API_URL en Vercel."
+            ? " Autored no está configurado: agrega AUTORED_API_EMAIL y AUTORED_API_PASSWORD en Vercel."
             : payload.autoredReason === "no_record"
               ? " Tasaciones/Autored no tienen ficha para esta patente."
               : " Autored respondió sin marca/modelo útiles para esta patente.";
