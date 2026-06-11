@@ -564,6 +564,24 @@ function vehicleNeedsQuickSync(
   return !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) && vehicleTitleNeedsSync(item, vehicleKey, editorConfig);
 }
 
+function vehicleNeedsAssignEnrich(
+  item: CatalogItem,
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+): boolean {
+  if (vehicleKey.startsWith("manual-")) return false;
+  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const brand = details?.brand ?? String((item.raw as Record<string, unknown>).marca ?? "");
+  const model = details?.model ?? getModel(item);
+  const title = details?.title ?? item.title;
+  return (
+    isPlaceholderVehicleLabel(title) ||
+    isPlaceholderVehicleLabel(brand) ||
+    isPlaceholderVehicleLabel(model) ||
+    vehicleTitleNeedsSync(item, vehicleKey, editorConfig)
+  );
+}
+
 function resolveVehicleThumbnailSrc(item: CatalogItem): string {
   const candidate =
     item.thumbnail ?? item.images.find((url) => url.startsWith("http") && !url.includes("placeholder"));
@@ -6313,7 +6331,7 @@ export function CatalogHomeClient({
               normalizePatentToken(getPatent(item)) === normalizePatentToken(vehicleKey) ||
               normalizePatentToken(getVehicleKey(item)) === normalizePatentToken(vehicleKey),
           );
-        if (patentSource && !vehicleNeedsSourceSync(patentSource, vehicleKey, config)) {
+        if (patentSource && !vehicleNeedsAssignEnrich(patentSource, vehicleKey, config)) {
           continue;
         }
         const patente = normalizePatentToken(
@@ -6322,52 +6340,64 @@ export function CatalogHomeClient({
         if (patente && patente !== "—") patentsToEnrich.push(patente);
       }
 
+      const glo3dOnCooldown = glo3dClientCooldownUntilRef.current > Date.now();
       if (patentsToEnrich.length > 0) {
-        if (!assertGlo3dClientAllowed()) return;
-        const endpoint =
-          patentsToEnrich.length > 1
-            ? "/api/admin/import-patents-batch"
-            : "/api/admin/import-patent";
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
+        if (!glo3dOnCooldown && !assertGlo3dClientAllowed()) return;
+        try {
+          const endpoint =
             patentsToEnrich.length > 1
-              ? { patentes: patentsToEnrich, estadoRetiro, forceRefresh: true }
-              : { patente: patentsToEnrich[0], estadoRetiro, forceRefresh: true },
-          ),
-          signal: AbortSignal.timeout(120_000),
-        });
-        const payload = (await response.json().catch(() => ({}))) as {
-          ok?: boolean;
-          error?: string;
-          item?: CatalogItem;
-          vehicleDetails?: EditorVehicleDetails;
-          results?: Array<{ item: CatalogItem; vehicleDetails?: EditorVehicleDetails }>;
-          errors?: Array<{ patente: string; error: string }>;
-          rateLimited?: boolean;
-        };
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload.error ?? "No se pudo enriquecer las unidades seleccionadas.");
-        }
-        if (payload.rateLimited) markGlo3dClientCooldown();
-
-        const rows =
-          payload.results ??
-          (payload.item ? [{ item: payload.item, vehicleDetails: payload.vehicleDetails }] : []);
-        for (const row of rows) {
-          const resolvedKey = applyImportedPatentPayload({
-            item: row.item,
-            vehicleDetails: row.vehicleDetails,
+              ? "/api/admin/import-patents-batch"
+              : "/api/admin/import-patent";
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+              patentsToEnrich.length > 1
+                ? {
+                    patentes: patentsToEnrich,
+                    estadoRetiro,
+                    forceRefresh: !glo3dOnCooldown,
+                    skipGlo3dFetch: glo3dOnCooldown,
+                  }
+                : {
+                    patente: patentsToEnrich[0],
+                    estadoRetiro,
+                    forceRefresh: !glo3dOnCooldown,
+                    skipGlo3dFetch: glo3dOnCooldown,
+                  },
+            ),
+            signal: AbortSignal.timeout(120_000),
           });
-          enrichedItems.set(resolvedKey, row.item);
-          if (row.vehicleDetails) enrichedDetails[resolvedKey] = row.vehicleDetails;
-        }
-
-        if (payload.errors && payload.errors.length > 0) {
-          const first = payload.errors[0];
-          if (isGlo3dRateLimitMessage(first.error)) markGlo3dClientCooldown();
-          throw new Error(`${first.patente}: ${first.error}`);
+          const payload = (await response.json().catch(() => ({}))) as {
+            ok?: boolean;
+            error?: string;
+            item?: CatalogItem;
+            vehicleDetails?: EditorVehicleDetails;
+            results?: Array<{ item: CatalogItem; vehicleDetails?: EditorVehicleDetails }>;
+            errors?: Array<{ patente: string; error: string }>;
+            rateLimited?: boolean;
+            retryAfterMs?: number;
+          };
+          if (!glo3dOnCooldown && isGlo3dRateLimitResponse(response, payload)) {
+            markGlo3dClientCooldown(payload.retryAfterMs);
+          }
+          if (response.ok && payload.ok) {
+            const rows =
+              payload.results ??
+              (payload.item ? [{ item: payload.item, vehicleDetails: payload.vehicleDetails }] : []);
+            for (const row of rows) {
+              const resolvedKey = applyImportedPatentPayload({
+                item: row.item,
+                vehicleDetails: row.vehicleDetails,
+              });
+              enrichedItems.set(resolvedKey, row.item);
+              if (row.vehicleDetails) enrichedDetails[resolvedKey] = row.vehicleDetails;
+            }
+          } else if (!glo3dOnCooldown) {
+            throw new Error(payload.error ?? "No se pudo enriquecer las unidades seleccionadas.");
+          }
+        } catch (enrichError) {
+          if (!glo3dOnCooldown) throw enrichError;
         }
       }
 
@@ -6411,10 +6441,13 @@ export function CatalogHomeClient({
         };
       });
 
+      const enrichedCount = enrichedItems.size;
       showSystemNotice(
         "success",
         "Unidades agregadas",
-        `${batchAssignSelectedKeys.length} vehículo(s) enriquecido(s) con Glo3D y Autored, guardados en inventario compartido y asignados a ${batchAssignTargetLabel}.`,
+        enrichedCount > 0
+          ? `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} (${enrichedCount} actualizado(s) desde Autored/Glo3D).`
+          : `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel}.`,
       );
       closeBatchAssignModal();
     } catch (error) {
@@ -12372,9 +12405,11 @@ export function CatalogHomeClient({
                         {getPatent(item)}{" "}
                         {vehicleNeedsQuickSync(item, key, config)
                           ? "· sin sync"
-                          : vehicleNeedsSourceSync(item, key, config)
+                          : vehicleNeedsAssignEnrich(item, key, config)
                             ? "· ficha incompleta"
-                            : "· ficha OK"}
+                            : vehicleNeedsSourceSync(item, key, config)
+                              ? "· sin fotos Glo3D"
+                              : "· ficha OK"}
                         {alreadyInTarget ? " · ya agregado" : ""}
                       </p>
                     </button>
