@@ -281,13 +281,25 @@ function extractRowsFromPayload(payload: unknown): Record<string, unknown>[] {
     const nestedArray =
       (Array.isArray(container.items) && container.items) ||
       (Array.isArray(container.data) && container.data) ||
-      (Array.isArray(container.results) && container.results);
+      (Array.isArray(container.results) && container.results) ||
+      (Array.isArray(container.vehiculos) && container.vehiculos);
 
     if (nestedArray) {
       return nestedArray.filter(
         (entry): entry is Record<string, unknown> =>
           typeof entry === "object" && entry !== null,
       );
+    }
+
+    const singleNode =
+      container.vehiculo ??
+      container.vehicle ??
+      container.autored ??
+      container.datos ??
+      container.result ??
+      container.registro;
+    if (singleNode && typeof singleNode === "object" && !Array.isArray(singleNode)) {
+      return [singleNode as Record<string, unknown>];
     }
   }
 
@@ -1618,41 +1630,104 @@ function itemNeedsTechnicalFallback(item: CatalogItem): boolean {
 
 export async function fetchAutoredRecordByPatent(
   patent: string,
+  options?: { forceRefresh?: boolean },
 ): Promise<Record<string, unknown> | null> {
-  if (!AUTORED_API_URL) return null;
   const normalized = normalizeStock(patent);
-  const cached = autoredPatentCache.get(normalized);
-  if (cached && cached.expires > Date.now()) {
-    return cached.record;
+  if (!normalized) return null;
+
+  if (!options?.forceRefresh) {
+    const cached = autoredPatentCache.get(normalized);
+    if (cached && cached.expires > Date.now()) {
+      return cached.record;
+    }
+  } else {
+    autoredPatentCache.delete(normalized);
   }
 
-  const token = process.env.CATALOG_SOURCE_API_TOKEN;
-  const url = new URL(AUTORED_API_URL);
-  url.searchParams.set("patente", normalized);
+  let record: Record<string, unknown> | null = null;
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { "x-api-key": token } : {}),
-    },
-    next: { revalidate: 120 },
-  });
-  if (!response.ok) return null;
+  if (AUTORED_API_URL) {
+    const token = process.env.CATALOG_SOURCE_API_TOKEN;
+    const url = new URL(AUTORED_API_URL);
+    url.searchParams.set("patente", normalized);
 
-  const payload = (await response.json()) as unknown;
-  const rows = extractRowsFromPayload(payload);
-  const record =
-    rows.length > 0
-      ? rows[0]
-      : payload && typeof payload === "object" && !Array.isArray(payload)
-        ? (payload as Record<string, unknown>)
-        : null;
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "x-api-key": token } : {}),
+      },
+      cache: options?.forceRefresh ? "no-store" : undefined,
+      next: options?.forceRefresh ? undefined : { revalidate: 120 },
+    });
+    if (response.ok) {
+      const payload = (await response.json()) as unknown;
+      const rows = extractRowsFromPayload(payload);
+      record =
+        rows.length > 0
+          ? rows[0]
+          : payload && typeof payload === "object" && !Array.isArray(payload)
+            ? (payload as Record<string, unknown>)
+            : null;
+    }
+  }
+
+  if (!record) {
+    record = await fetchTasacionesRecordByPatent(normalized);
+  }
+
   autoredPatentCache.set(normalized, {
     expires: Date.now() + AUTORED_CACHE_TTL_MS,
     record,
   });
   return record;
+}
+
+export async function fetchTasacionesRecordByPatent(
+  patent: string,
+): Promise<Record<string, unknown> | null> {
+  const apiBase = process.env.CATALOG_SOURCE_API_URL;
+  if (!apiBase) return null;
+  const normalized = normalizeStock(patent);
+  if (!normalized) return null;
+
+  const token = process.env.CATALOG_SOURCE_API_TOKEN;
+  const endpoint = apiBase.includes("/api/")
+    ? new URL(apiBase)
+    : new URL("/api/inventario-publico", apiBase);
+  endpoint.searchParams.set("patente", normalized);
+  endpoint.searchParams.set("limit", "1");
+  endpoint.searchParams.set(
+    "incluir_historicos",
+    process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
+  );
+
+  const response = await fetch(endpoint.toString(), {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "x-api-key": token } : {}),
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) return null;
+
+  const payload = (await response.json()) as unknown;
+  const rows = extractRowsFromPayload(payload);
+  if (rows.length === 0) return null;
+
+  const match =
+    rows.find((row) => normalizeStock(String(row.patente ?? row.PPU ?? row.stock_number ?? "")) === normalized) ??
+    rows[0];
+  const autoredNode = match.autored_campos ?? match.autored;
+  if (autoredNode && typeof autoredNode === "object" && !Array.isArray(autoredNode)) {
+    return {
+      ...(autoredNode as Record<string, unknown>),
+      ...match,
+      origen: "tasaciones+autored",
+    };
+  }
+  return { ...match, origen: "tasaciones" };
 }
 
 async function enrichWithAutoredFallback(

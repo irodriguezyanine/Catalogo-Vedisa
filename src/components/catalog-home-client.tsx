@@ -6189,6 +6189,8 @@ export function CatalogHomeClient({
   };
 
   const openDetailsEditor = (item: CatalogItem) => {
+    setGroupManageTarget(null);
+    setManagingVehicleKey(null);
     const key = getVehicleKey(item);
     setEditingVehicleKey(key);
     setEditingDetails(
@@ -6346,15 +6348,6 @@ export function CatalogHomeClient({
       showSystemNotice("error", "Sin patente", "Esta unidad no tiene patente para sincronizar.");
       return;
     }
-    if (!vehicleNeedsSourceSync(currentItem, managingVehicleKey, config)) {
-      showSystemNotice(
-        "info",
-        "Ficha completa",
-        `${patente} ya tiene miniatura y datos técnicos cargados.`,
-      );
-      return;
-    }
-
     setManagingVehicleSyncing(true);
     try {
       const estadoRetiro = resolveEstadoRetiroForVehicleKey(
@@ -12138,7 +12131,7 @@ export function CatalogHomeClient({
       ) : null}
 
       {isAdmin && editingVehicleKey && editingDetails && editingItem ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/70 p-4" onClick={cancelDetailsEditor}>
+        <div className="fixed inset-0 z-[82] flex items-center justify-center bg-slate-900/70 p-4" onClick={cancelDetailsEditor}>
           <div role="dialog" aria-modal="true" aria-label="Editar detalle manual" className="max-h-[92vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>

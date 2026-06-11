@@ -5,6 +5,7 @@ import {
   fetchAutoredRecordByPatent,
   fetchGlo3dRecordByPatent,
   fetchInventarioRowByPatent,
+  fetchTasacionesRecordByPatent,
   Glo3dRateLimitError,
   resolveCanonicalPatentFromGlo3dEntry,
   type Glo3dInventoryEntry,
@@ -219,6 +220,109 @@ function extractAutoredImages(autored?: Record<string, unknown> | null): string[
   return [...new Set(candidates.filter((url) => url.startsWith("http")))];
 }
 
+function normalizeAutoredImportRecord(
+  raw?: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!raw) return null;
+  const merged = buildMergedRecord(raw);
+  const marca = pickString(merged, [
+    "marca",
+    "brand",
+    "make",
+    "vehicle_brand",
+    "vehiculo_marca",
+    "fabricante",
+    "nombre_marca",
+  ]);
+  const modelo = pickString(merged, [
+    "modelo",
+    "model",
+    "model2",
+    "vehicle_model",
+    "vehiculo_modelo",
+    "nombre_modelo",
+  ]);
+  const ano = pickString(merged, ["ano", "anio", "year", "año", "agno"]);
+  const version = pickString(merged, ["version", "trim", "ver", "version_vehiculo"]);
+  const vin = pickString(merged, ["vin", "n_de_vin", "numero_vin", "chasis_vin"]);
+  const numeroMotor = pickString(merged, [
+    "numero_motor",
+    "n_de_motor",
+    "nro_motor",
+    "motor",
+    "engine_number",
+    "ndm",
+  ]);
+  const numeroSerie = pickString(merged, ["numero_serie", "n_de_serie", "nro_serie", "serie", "nds"]);
+  const numeroChasis = pickString(merged, [
+    "numero_chasis",
+    "n_de_chasis",
+    "nro_chasis",
+    "chasis",
+    "chassis_number",
+  ]);
+  const tipoVehiculo = pickString(merged, [
+    "tipo_vehiculo",
+    "tipo_de_vehiculo",
+    "vehicle_type",
+    "tipo",
+    "clase_vehiculo",
+  ]);
+  const transmision = pickString(merged, [
+    "transmision",
+    "transmisión",
+    "caja",
+    "tipo_caja",
+    "transmission",
+    "tipo_transmision",
+  ]);
+  const color = pickString(merged, ["color", "color_exterior", "color_vehiculo", "exterior_color"]);
+  const cilindrada = pickString(merged, ["cilindrada", "cc", "motor_cc", "engine_cc", "capacidad_motor"]);
+
+  const normalized: Record<string, unknown> = { ...merged, ...raw };
+  if (marca) {
+    normalized.marca = marca;
+    normalized.brand = marca;
+  }
+  if (modelo) {
+    normalized.modelo = modelo;
+    normalized.model = modelo;
+  }
+  if (ano) {
+    normalized.ano = ano;
+    normalized.anio = ano;
+    normalized.year = ano;
+  }
+  if (version) normalized.version = version;
+  if (vin) normalized.vin = vin;
+  if (numeroMotor) {
+    normalized.numero_motor = numeroMotor;
+    normalized.n_de_motor = numeroMotor;
+  }
+  if (numeroSerie) {
+    normalized.numero_serie = numeroSerie;
+    normalized.n_de_serie = numeroSerie;
+  }
+  if (numeroChasis) {
+    normalized.numero_chasis = numeroChasis;
+    normalized.n_de_chasis = numeroChasis;
+  }
+  if (tipoVehiculo) {
+    normalized.tipo_vehiculo = tipoVehiculo;
+    normalized.tipo_de_vehiculo = tipoVehiculo;
+  }
+  if (transmision) {
+    normalized.transmision = transmision;
+    normalized.caja = transmision;
+  }
+  if (color) normalized.color = color;
+  if (cilindrada) {
+    normalized.cilindrada = cilindrada;
+    normalized.cc = cilindrada;
+  }
+  return normalized;
+}
+
 function resolveEstadoRetiro(options?: ImportPatentOptions): string {
   const value = options?.estadoRetiro?.trim();
   if (!value) return ESTADO_RETIRO_DEFAULT;
@@ -246,21 +350,14 @@ function buildVehicleDetailsFromSources(
   images: string[] = [],
 ): EditorVehicleDetails {
   const glo3dFields = glo3d?.technicalFields ?? {};
-  const autoredMerged = autored ? buildMergedRecord(autored) : {};
-  const merged = mergePreferMeaningful(autoredMerged, glo3dFields);
+  const autoredMerged = autored ? buildMergedRecord(normalizeAutoredImportRecord(autored) ?? autored) : {};
+  const rowMerged = buildMergedRecord(row);
+  const merged = mergePreferMeaningful(autoredMerged, mergePreferMeaningful(glo3dFields, rowMerged));
 
-  const marca =
-    pickString(row, ["marca", "brand"]) ??
-    pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]);
-  const modelo =
-    pickString(row, ["modelo", "model"]) ??
-    pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]);
-  const ano =
-    pickString(row, ["ano", "año", "year"]) ??
-    pickString(merged, ["ano", "anio", "year", "año"]);
-  const version =
-    pickString(row, ["version", "trim"]) ??
-    pickString(merged, ["version", "trim", "ver"]);
+  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]);
+  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]);
+  const ano = pickString(merged, ["ano", "anio", "year", "año"]);
+  const version = pickString(merged, ["version", "trim", "ver"]);
   const title =
     [marca, modelo, ano].filter(Boolean).join(" ").trim() || `Unidad ${patente}`;
   const thumbnail = images[0] ?? pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]);
@@ -281,38 +378,17 @@ function buildVehicleDetailsFromSources(
     patenteVerifier:
       pickString(row, ["patente_verifier", "patente_dv", "ppu_dv", "dv"]) ??
       pickString(glo3dFields, ["patente_verifier", "patente_dv", "ppu_dv", "dv"]),
-    vin:
-      pickString(row, ["vin", "numero_chasis", "nro_chasis", "n_de_vin"]) ??
-      pickString(glo3dFields, ["n_de_vin", "vin", "numero_chasis"]) ??
-      pickString(autoredMerged, ["vin", "numero_chasis", "nro_chasis", "chasis"]),
-    nChasis:
-      pickString(row, ["n_de_chasis", "numero_chasis", "nro_chasis"]) ??
-      pickString(glo3dFields, ["n_de_chasis", "numero_chasis", "nro_chasis"]),
-    nMotor:
-      pickString(row, ["n_de_motor", "numero_motor", "ndm"]) ??
-      pickString(glo3dFields, ["n_de_motor", "numero_motor", "ndm"]),
-    nSerie:
-      pickString(row, ["n_de_serie", "numero_serie", "nds"]) ??
-      pickString(glo3dFields, ["n_de_serie", "numero_serie", "nds"]),
+    vin: pickString(merged, ["vin", "n_de_vin", "numero_vin", "numero_chasis", "nro_chasis"]),
+    nChasis: pickString(merged, ["n_de_chasis", "numero_chasis", "nro_chasis", "chasis"]),
+    nMotor: pickString(merged, ["n_de_motor", "numero_motor", "nro_motor", "ndm", "motor"]),
+    nSerie: pickString(merged, ["n_de_serie", "numero_serie", "nro_serie", "nds", "serie"]),
     nSiniestro:
       pickString(row, ["n_de_siniestro", "numero_siniestro", "n_s", "ns"]) ??
       pickString(glo3dFields, ["n_de_siniestro", "numero_siniestro", "n_s", "ns", "n°s"]),
-    kilometraje:
-      pickString(row, ["kilometraje", "km"]) ??
-      pickString(glo3dFields, ["kilometraje", "km", "mileage"]) ??
-      pickString(autoredMerged, ["kilometraje", "km", "odometro", "odometer", "mileage"]),
-    color:
-      pickString(row, ["color"]) ??
-      pickString(glo3dFields, ["color", "color_exterior"]) ??
-      pickString(autoredMerged, ["color", "color_exterior"]),
-    combustible:
-      pickString(row, ["combustible", "tipo_combustible"]) ??
-      pickString(glo3dFields, ["combustible", "tipo_combustible", "fuel_type", "engine_fuel_type"]) ??
-      pickString(autoredMerged, ["combustible", "tipo_combustible", "fuel"]),
-    transmision:
-      pickString(row, ["transmision", "caja", "tipo_caja"]) ??
-      pickString(glo3dFields, ["transmision", "caja", "transmission"]) ??
-      pickString(autoredMerged, ["transmision", "caja", "transmission"]),
+    kilometraje: pickString(merged, ["kilometraje", "km", "mileage", "odometro", "odometer"]),
+    color: pickString(merged, ["color", "color_exterior", "color_vehiculo"]),
+    combustible: pickString(merged, ["combustible", "tipo_combustible", "fuel", "fuel_type", "engine_fuel_type"]),
+    transmision: pickString(merged, ["transmision", "caja", "tipo_caja", "transmission", "tipo_transmision"]),
     traccion:
       pickString(row, ["traccion", "tipo_traccion"]) ??
       pickString(glo3dFields, ["traccion", "tipo_traccion", "drive_type"]) ??
@@ -321,10 +397,7 @@ function buildVehicleDetailsFromSources(
       pickString(row, ["aro", "rin"]) ??
       pickString(glo3dFields, ["aro", "rin"]) ??
       pickString(autoredMerged, ["aro", "rin", "wheel_size"]),
-    cilindrada:
-      pickString(row, ["cilindrada", "cc", "motor_cc"]) ??
-      pickString(glo3dFields, ["cilindrada", "cc", "engine_cc"]) ??
-      pickString(autoredMerged, ["cilindrada", "cc", "engine_cc"]),
+    cilindrada: pickString(merged, ["cilindrada", "cc", "motor_cc", "engine_cc", "capacidad_motor"]),
     llaves:
       pickString(row, ["llaves", "keys", "lla"]) ??
       pickString(glo3dFields, ["llaves", "keys", "lla"]),
@@ -373,9 +446,13 @@ function buildVehicleDetailsFromSources(
       pickString(autoredMerged, ["descripcion", "description"]),
     tipo:
       pickString(row, ["tipo", "type"]) ?? pickString(glo3dFields, ["tipo", "type", "tipo_unidad"]),
-    tipoVehiculo:
-      pickString(row, ["tipo_vehiculo", "tipo_de_vehiculo"]) ??
-      pickString(glo3dFields, ["tipo_vehiculo", "tipo_de_vehiculo", "vehicle_type"]),
+    tipoVehiculo: pickString(merged, [
+      "tipo_vehiculo",
+      "tipo_de_vehiculo",
+      "vehicle_type",
+      "tipo",
+      "clase_vehiculo",
+    ]),
     ubicacionFisica:
       pickString(row, ["ubicacion_fisica", "ubi", "ubicacion"]) ??
       pickString(glo3dFields, ["ubicacion_fisica", "ubi", "ubicacion"]),
@@ -398,17 +475,26 @@ function buildInventarioPayloadFromSources(
   options?: ImportPatentOptions,
 ): Record<string, unknown> {
   const glo3dFields = glo3d?.technicalFields ?? {};
-  const autoredMerged = autored ? buildMergedRecord(autored) : {};
+  const autoredNormalized = normalizeAutoredImportRecord(autored);
+  const autoredMerged = autoredNormalized ? buildMergedRecord(autoredNormalized) : {};
   const identity = mergePreferMeaningful(autoredMerged, glo3dFields);
   const technical = mergePreferMeaningful(glo3dFields, autoredMerged);
   const merged = { ...technical, ...identity };
 
-  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand"]) ?? "Sin Marca";
-  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model"]) ?? "Sin Modelo";
+  const marca = pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]) ?? "Sin Marca";
+  const modelo = pickString(merged, ["modelo", "model", "model2", "vehicle_model", "vehiculo_modelo"]) ?? "Sin Modelo";
   const ano = pickString(merged, ["ano", "anio", "year", "año"]);
   const version = pickString(merged, ["version", "trim", "ver"]);
   const kilometraje = pickString(merged, ["kilometraje", "km", "odometro", "odometer", "mileage"]);
   const descripcion = pickString(merged, ["descripcion", "description"]);
+  const vin = pickString(merged, ["vin", "n_de_vin", "numero_vin"]);
+  const numeroMotor = pickString(merged, ["n_de_motor", "numero_motor", "nro_motor", "ndm"]);
+  const numeroSerie = pickString(merged, ["n_de_serie", "numero_serie", "nro_serie", "nds"]);
+  const numeroChasis = pickString(merged, ["n_de_chasis", "numero_chasis", "nro_chasis", "chasis"]);
+  const color = pickString(merged, ["color", "color_exterior"]);
+  const transmision = pickString(merged, ["transmision", "caja", "tipo_caja", "transmission"]);
+  const cilindrada = pickString(merged, ["cilindrada", "cc", "motor_cc"]);
+  const tipoVehiculo = pickString(merged, ["tipo_vehiculo", "tipo_de_vehiculo", "vehicle_type", "tipo"]);
   const glo3dImages = glo3d ? extractGlo3dImages(glo3d) : [];
   const autoredImages = extractAutoredImages(autored);
   const imagenes = [...new Set([...glo3dImages, ...autoredImages])];
@@ -425,6 +511,18 @@ function buildInventarioPayloadFromSources(
     descripcion,
     nombre_vehiculo: nombreVehiculo || null,
     titulo: nombreVehiculo || null,
+    vin: vin ?? null,
+    numero_motor: numeroMotor ?? null,
+    n_de_motor: numeroMotor ?? null,
+    numero_serie: numeroSerie ?? null,
+    n_de_serie: numeroSerie ?? null,
+    numero_chasis: numeroChasis ?? null,
+    n_de_chasis: numeroChasis ?? null,
+    color: color ?? null,
+    transmision: transmision ?? null,
+    caja: transmision ?? null,
+    cilindrada: cilindrada ?? null,
+    tipo_vehiculo: tipoVehiculo ?? null,
     imagenes: imagenes.length > 0 ? imagenes : null,
     glo3d_url: glo3d?.view3dUrl ?? null,
     url_3d: glo3d?.view3dUrl ?? null,
@@ -476,17 +574,32 @@ function inventarioRowHasCompleteGlo3d(row: Record<string, unknown>): boolean {
 function inventarioRowHasCompleteAutored(row: Record<string, unknown>): boolean {
   const marca = pickString(row, ["marca", "brand"]);
   const modelo = pickString(row, ["modelo", "model"]);
-  const hasAutoredBlob = row.autored_campos != null || row.autored != null;
-  return Boolean(marca && modelo) || hasAutoredBlob;
+  if (!marca || !modelo) {
+    const stored = row.autored_campos ?? row.autored;
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      const normalized = normalizeAutoredImportRecord(stored as Record<string, unknown>);
+      return Boolean(
+        pickString(normalized ?? {}, ["marca", "brand"]) &&
+          pickString(normalized ?? {}, ["modelo", "model"]),
+      );
+    }
+    return false;
+  }
+  return true;
 }
 
 async function persistInventarioRow(
   patente: string,
   payload: Record<string, unknown>,
   existingRow: Record<string, unknown> | null,
+  options?: ImportPatentOptions,
 ): Promise<{ row: Record<string, unknown>; created: boolean }> {
   const supabase = getServerSupabase();
-  const finalPayload = existingRow ? mergePreferMeaningful(payload, existingRow) : payload;
+  const finalPayload = existingRow
+    ? options?.forceRefresh
+      ? { ...existingRow, ...payload }
+      : mergePreferMeaningful(payload, existingRow)
+    : payload;
 
   if (!supabase) {
     return { row: finalPayload, created: false };
@@ -532,16 +645,27 @@ export async function importVehicleByPatent(
   let skippedAutoredFetch = false;
 
   let glo3d: Glo3dInventoryEntry | null = null;
-  if (!options?.forceRefresh && existingRowEarly && inventarioRowHasCompleteGlo3d(existingRowEarly)) {
+  if (
+    !options?.forceRefresh &&
+    existingRowEarly &&
+    inventarioRowHasCompleteGlo3d(existingRowEarly)
+  ) {
     glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
     skippedGlo3dFetch = Boolean(glo3d);
   }
-  if (!glo3d) {
+  if (options?.forceRefresh || !glo3d) {
+    if (options?.forceRefresh) skippedGlo3dFetch = false;
     try {
-      glo3d = await fetchGlo3dRecordByPatent(requestedPatente);
+      const fetched = await fetchGlo3dRecordByPatent(requestedPatente);
+      glo3d = fetched ?? glo3d;
     } catch (error) {
-      if (error instanceof Glo3dRateLimitError) throw error;
-      throw error;
+      if (error instanceof Glo3dRateLimitError && glo3d) {
+        // Mantiene datos Glo3D locales si la API está saturada.
+      } else if (error instanceof Glo3dRateLimitError) {
+        throw error;
+      } else {
+        throw error;
+      }
     }
   }
 
@@ -560,12 +684,16 @@ export async function importVehicleByPatent(
   if (!options?.forceRefresh && existingRow && inventarioRowHasCompleteAutored(existingRow)) {
     const stored = existingRow.autored_campos ?? existingRow.autored;
     if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-      autored = stored as Record<string, unknown>;
-      skippedAutoredFetch = true;
+      autored = normalizeAutoredImportRecord(stored as Record<string, unknown>);
+      skippedAutoredFetch = Boolean(autored);
     }
   }
-  if (!autored) {
-    autored = await fetchAutoredRecordByPatent(patente);
+  if (!autored || options?.forceRefresh) {
+    skippedAutoredFetch = false;
+    autored =
+      (await fetchAutoredRecordByPatent(patente, { forceRefresh: options?.forceRefresh })) ??
+      (await fetchTasacionesRecordByPatent(patente));
+    autored = normalizeAutoredImportRecord(autored);
   }
 
   const payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
@@ -573,7 +701,7 @@ export async function importVehicleByPatent(
 
   if (existingRow) {
     const persisted = shouldPersist
-      ? await persistInventarioRow(patente, payload, existingRow)
+      ? await persistInventarioRow(patente, payload, existingRow, options)
       : { row: mergePreferMeaningful(payload, existingRow), created: false };
     const mergedRow = buildCatalogRow(patente, persisted.row, glo3d, autored);
     const images = [
@@ -614,7 +742,7 @@ export async function importVehicleByPatent(
     );
   }
 
-  const persisted = await persistInventarioRow(patente, payload, null);
+  const persisted = await persistInventarioRow(patente, payload, null, options);
   const row = buildCatalogRow(patente, persisted.row, glo3d, autored);
   const images = [
     ...extractGlo3dImages(glo3d),
