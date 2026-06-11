@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
+import { Glo3dRateLimitError } from "@/lib/catalog";
 import { importVehicleByPatent } from "@/lib/catalog-import-patent";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +36,9 @@ export async function POST(req: Request) {
     return Response.json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo importar la patente.";
-    const status = error instanceof Error && error.name === "Glo3dRateLimitError" ? 429 : 400;
-    return Response.json({ ok: false, error: message }, { status });
+    const rateLimited = error instanceof Glo3dRateLimitError;
+    const status = rateLimited ? 429 : 400;
+    const retryAfterMs = rateLimited ? error.retryAfterMs : undefined;
+    return Response.json({ ok: false, error: message, rateLimited, retryAfterMs }, { status });
   }
 }

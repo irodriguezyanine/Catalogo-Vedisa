@@ -303,6 +303,72 @@ function resolveEstadoRetiroForBatchTarget(
     : "en_bodega_a_remate";
 }
 
+function isPlaceholderVehicleLabel(value?: string | null): boolean {
+  if (!value?.trim()) return true;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return (
+    normalized === "sin marca" ||
+    normalized === "sin modelo" ||
+    normalized.includes("sin marca sin modelo") ||
+    normalized === "no informado"
+  );
+}
+
+function resolveEstadoRetiroForVehicleKey(
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+  auctions: UpcomingAuction[],
+): string {
+  if ((editorConfig.sectionVehicleIds?.["ventas-directas"] ?? []).includes(vehicleKey)) {
+    return "en_bodega_a_venta_directa";
+  }
+  const auctionId = editorConfig.vehicleUpcomingAuctionIds?.[vehicleKey];
+  if (auctionId) {
+    const auction = auctions.find((entry) => entry.id === auctionId);
+    return getAuctionEventType(auction ?? { id: auctionId, name: "", date: "" }) ===
+      "venta_directa"
+      ? "en_bodega_a_venta_directa"
+      : "en_bodega_a_remate";
+  }
+  return "en_tasacion";
+}
+
+const GLO3D_CLIENT_COOLDOWN_MS = 60_000;
+const GLO3D_BATCH_IMPORT_MAX = 8;
+
+function isGlo3dRateLimitMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("saturad") ||
+    normalized.includes("429") ||
+    normalized.includes("en pausa") ||
+    normalized.includes("espera")
+  );
+}
+
+function vehicleNeedsSourceSync(
+  item: CatalogItem,
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+): boolean {
+  if (vehicleKey.startsWith("manual-")) return false;
+  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const title = details?.title ?? item.title;
+  const brand = details?.brand ?? String((item.raw as Record<string, unknown>).marca ?? "");
+  const model = details?.model ?? getModel(item);
+  const missingIdentity =
+    isPlaceholderVehicleLabel(title) ||
+    isPlaceholderVehicleLabel(brand) ||
+    isPlaceholderVehicleLabel(model);
+  const missingMedia = !details?.thumbnail && !item.thumbnail;
+  const missingTechnical = !details?.pruebaMotor && !details?.llaves && !details?.kilometraje;
+  return missingIdentity || missingMedia || missingTechnical;
+}
+
 function getAuctionEventOrigin(auction: UpcomingAuction): CommercialEventOrigin {
   if (
     auction.eventOrigin === "subastas" ||
@@ -2321,6 +2387,8 @@ export function CatalogHomeClient({
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string>("");
   const [liveFeedItems, setLiveFeedItems] = useState<CatalogItem[]>(feed.items);
   const lastAutoImportPatentRef = useRef("");
+  const glo3dClientCooldownUntilRef = useRef(0);
+  const [glo3dCooldownUntil, setGlo3dCooldownUntil] = useState(0);
   const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
   const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
@@ -2364,6 +2432,7 @@ export function CatalogHomeClient({
   const [selectedInventoryKeys, setSelectedInventoryKeys] = useState<string[]>([]);
   const [editingVehicleKey, setEditingVehicleKey] = useState<string | null>(null);
   const [managingVehicleKey, setManagingVehicleKey] = useState<string | null>(null);
+  const [managingVehicleSyncing, setManagingVehicleSyncing] = useState(false);
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
   const [newAuctionName, setNewAuctionName] = useState("");
   const [newAuctionDate, setNewAuctionDate] = useState("");
@@ -5399,110 +5468,216 @@ export function CatalogHomeClient({
     lastAutoImportPatentRef.current = "";
   };
 
+  const assertGlo3dClientAllowed = useCallback((): boolean => {
+    const remaining = glo3dClientCooldownUntilRef.current - Date.now();
+    if (remaining <= 0) return true;
+    showSystemNotice(
+      "info",
+      "Glo3D en pausa",
+      `Espera ${Math.ceil(remaining / 1000)} segundos antes de volver a consultar Glo3D.`,
+    );
+    return false;
+  }, [showSystemNotice]);
+
+  const markGlo3dClientCooldown = useCallback((retryAfterMs = GLO3D_CLIENT_COOLDOWN_MS) => {
+    const until = Date.now() + retryAfterMs;
+    glo3dClientCooldownUntilRef.current = until;
+    setGlo3dCooldownUntil(until);
+  }, []);
+
+  useEffect(() => {
+    if (glo3dCooldownUntil <= Date.now()) return;
+    const timeout = window.setTimeout(
+      () => setGlo3dCooldownUntil(0),
+      Math.max(0, glo3dCooldownUntil - Date.now()) + 50,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [glo3dCooldownUntil]);
+
+  const applyImportedPatentPayload = useCallback(
+    (payload: {
+      item: CatalogItem;
+      vehicleDetails?: EditorVehicleDetails;
+      patente?: string;
+      correctedPatente?: boolean;
+      requestedPatente?: string;
+      created?: boolean;
+      hasGlo3dViewer?: boolean;
+    }) => {
+      const vehicleKey = getVehicleKey(payload.item);
+      setImportedInventoryItems((prev) => {
+        const next = prev.filter((entry) => getVehicleKey(entry) !== vehicleKey);
+        return [...next, payload.item];
+      });
+      setLiveFeedItems((prev) =>
+        dedupeCatalogItemsByVehicleKey([
+          ...prev.filter((entry) => getVehicleKey(entry) !== vehicleKey),
+          payload.item,
+        ]),
+      );
+      if (payload.vehicleDetails) {
+        setConfig((prev) => ({
+          ...prev,
+          vehicleDetails: {
+            ...prev.vehicleDetails,
+            [vehicleKey]: {
+              ...(prev.vehicleDetails?.[vehicleKey] ?? {}),
+              ...payload.vehicleDetails,
+            },
+          },
+        }));
+      }
+      return vehicleKey;
+    },
+    [],
+  );
+
   const importPatentsForBatchAssign = async () => {
+    if (!assertGlo3dClientAllowed()) return;
     const singlePatent = resolveAutoImportPatent(batchAssignSearchTerm);
-    const patentTokens = singlePatent ? [singlePatent] : extractPatentTokens(batchAssignSearchTerm);
+    const patentTokens = (singlePatent ? [singlePatent] : extractPatentTokens(batchAssignSearchTerm)).slice(
+      0,
+      GLO3D_BATCH_IMPORT_MAX,
+    );
     if (patentTokens.length === 0) {
-      showSystemNotice("info", "Sin patente", "Ingresa al menos una patente para importar.");
+      showSystemNotice("info", "Sin patente", "Ingresa al menos una patente válida (ej. TJSX32).");
       return;
     }
+
+    const alreadyComplete = patentTokens.filter((patente) => {
+      const local = items.find(
+        (item) =>
+          normalizePatentToken(getPatent(item)) === patente ||
+          normalizePatentToken(getVehicleKey(item)) === patente,
+      );
+      return local ? !vehicleNeedsSourceSync(local, getVehicleKey(local), config) : false;
+    });
+    if (alreadyComplete.length === patentTokens.length) {
+      const keys = patentTokens
+        .map((patente) => {
+          const local = items.find(
+            (item) =>
+              normalizePatentToken(getPatent(item)) === patente ||
+              normalizePatentToken(getVehicleKey(item)) === patente,
+          );
+          return local ? getVehicleKey(local) : "";
+        })
+        .filter(Boolean);
+      setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...keys])));
+      showSystemNotice(
+        "info",
+        "Ya en inventario",
+        "La patente ya está cargada con ficha completa. Solo selecciónala y agrega al grupo.",
+      );
+      return;
+    }
+
     setBatchAssignImporting(true);
     const importedKeys: string[] = [];
     try {
-      for (const patente of patentTokens) {
-        const response = await fetch("/api/admin/import-patent", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ patente }),
-          signal: AbortSignal.timeout(45_000),
-        });
-        const payload = (await response.json().catch(() => ({}))) as {
-          ok?: boolean;
-          error?: string;
-          item?: CatalogItem;
+      const endpoint =
+        patentTokens.length > 1 ? "/api/admin/import-patents-batch" : "/api/admin/import-patent";
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          patentTokens.length > 1
+            ? { patentes: patentTokens }
+            : { patente: patentTokens[0] },
+        ),
+        signal: AbortSignal.timeout(90_000),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        item?: CatalogItem;
+        vehicleDetails?: EditorVehicleDetails;
+        created?: boolean;
+        patente?: string;
+        requestedPatente?: string;
+        correctedPatente?: boolean;
+        hasGlo3dViewer?: boolean;
+        results?: Array<{
+          item: CatalogItem;
           vehicleDetails?: EditorVehicleDetails;
-          source?: "inventario" | "glo3d" | "glo3d+autored" | "autored";
-          created?: boolean;
           patente?: string;
-          requestedPatente?: string;
-          correctedPatente?: boolean;
+          created?: boolean;
           hasGlo3dViewer?: boolean;
-        };
-        if (!response.ok || !payload.ok || !payload.item) {
-          throw new Error(payload.error ?? `No se pudo importar ${patente}.`);
-        }
-        const resolvedPatente = payload.patente ?? patente;
-        if (payload.correctedPatente && resolvedPatente !== normalizePatentToken(batchAssignSearchTerm)) {
-          setBatchAssignSearchTerm(resolvedPatente);
-          lastAutoImportPatentRef.current = resolvedPatente;
-          showSystemNotice(
-            "info",
-            "Patente corregida",
-            `En Glo3D la patente es ${resolvedPatente}${payload.requestedPatente ? ` (buscaste ${payload.requestedPatente})` : ""}.`,
-          );
-        }
-        const vehicleKey = getVehicleKey(payload.item);
-        importedKeys.push(vehicleKey);
-        setImportedInventoryItems((prev) => {
-          const next = prev.filter((entry) => getVehicleKey(entry) !== vehicleKey);
-          return [...next, payload.item!];
-        });
-        if (payload.vehicleDetails) {
-          setConfig((prev) => ({
-            ...prev,
-            vehicleDetails: {
-              ...prev.vehicleDetails,
-              [vehicleKey]: {
-                ...(prev.vehicleDetails?.[vehicleKey] ?? {}),
-                ...payload.vehicleDetails,
+        }>;
+        errors?: Array<{ patente: string; error: string }>;
+        rateLimited?: boolean;
+      };
+
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "No se pudo importar desde Glo3D.");
+      }
+      if (payload.rateLimited) {
+        markGlo3dClientCooldown();
+      }
+
+      const rows =
+        payload.results ??
+        (payload.item
+          ? [
+              {
+                item: payload.item,
+                vehicleDetails: payload.vehicleDetails,
+                patente: payload.patente,
+                created: payload.created,
+                hasGlo3dViewer: payload.hasGlo3dViewer,
+                correctedPatente: payload.correctedPatente,
+                requestedPatente: payload.requestedPatente,
               },
-            },
-          }));
-        }
+            ]
+          : []);
+
+      for (const row of rows) {
+        const key = applyImportedPatentPayload({
+          item: row.item,
+          vehicleDetails: row.vehicleDetails,
+          patente: row.patente,
+          created: row.created,
+          hasGlo3dViewer: row.hasGlo3dViewer,
+        });
+        importedKeys.push(key);
+      }
+
+      if (payload.errors && payload.errors.length > 0) {
+        const first = payload.errors[0];
+        if (isGlo3dRateLimitMessage(first.error)) markGlo3dClientCooldown();
+        showSystemNotice(
+          "info",
+          "Importación parcial",
+          `${importedKeys.length} importada(s). ${first.patente}: ${first.error}`,
+        );
+      } else {
         showSystemNotice(
           "success",
-          payload.created ? "Unidad importada" : "Unidad encontrada",
-          payload.created
-            ? `${resolvedPatente} se creó en inventario compartido desde Glo3D${payload.hasGlo3dViewer ? " con visor 3D" : ""}.`
-            : `${resolvedPatente} quedó disponible para agregar${payload.hasGlo3dViewer ? " con visor Glo3D" : ""}.`,
+          "Importación lista",
+          `${importedKeys.length} unidad(es) sincronizada(s) con Glo3D/Autored.`,
         );
       }
+
       setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...importedKeys])));
+      lastAutoImportPatentRef.current = patentTokens[0] ?? "";
     } catch (error) {
       lastAutoImportPatentRef.current = "";
       const message =
         error instanceof DOMException && error.name === "TimeoutError"
-          ? "Glo3D tardó demasiado en responder. Espera unos segundos y vuelve a intentar con la patente exacta (ej. TJSX32)."
+          ? "Glo3D tardó demasiado. Espera unos segundos y vuelve a intentar."
           : error instanceof Error
             ? error.message
             : "No se pudo importar la patente.";
+      if (isGlo3dRateLimitMessage(message)) markGlo3dClientCooldown();
       showSystemNotice(
         "error",
-        message.includes("saturada") ? "Glo3D saturado" : "Importación fallida",
+        isGlo3dRateLimitMessage(message) ? "Glo3D saturado" : "Importación fallida",
         message,
       );
     } finally {
       setBatchAssignImporting(false);
     }
   };
-
-  useEffect(() => {
-    if (!batchAssignTarget || batchAssignImporting) return;
-    const patent = resolveAutoImportPatent(batchAssignSearchTerm);
-    if (!patent) return;
-    if (lastAutoImportPatentRef.current === patent) return;
-    const hasLocal = items.some((item) => {
-      const itemPatent = normalizePatentToken(getPatent(item));
-      const itemKey = normalizePatentToken(getVehicleKey(item));
-      return itemPatent === patent || itemKey === patent;
-    });
-    if (hasLocal) return;
-    const timeout = window.setTimeout(() => {
-      lastAutoImportPatentRef.current = patent;
-      void importPatentsForBatchAssign();
-    }, 800);
-    return () => window.clearTimeout(timeout);
-  }, [batchAssignSearchTerm, batchAssignTarget, batchAssignImporting, items]);
 
   const closeBatchAssignModal = () => {
     setBatchAssignTarget(null);
@@ -5571,6 +5746,7 @@ export function CatalogHomeClient({
     try {
       const enrichedItems = new Map<string, CatalogItem>();
       const enrichedDetails: Record<string, EditorVehicleDetails> = {};
+      const patentsToEnrich: string[] = [];
 
       for (const vehicleKey of uniqueKeys) {
         const direct = itemsByKey.get(vehicleKey);
@@ -5581,50 +5757,66 @@ export function CatalogHomeClient({
               normalizePatentToken(getPatent(item)) === normalizePatentToken(vehicleKey) ||
               normalizePatentToken(getVehicleKey(item)) === normalizePatentToken(vehicleKey),
           );
+        if (patentSource && !vehicleNeedsSourceSync(patentSource, vehicleKey, config)) {
+          continue;
+        }
         const patente = normalizePatentToken(
           patentSource ? getPatent(patentSource) : vehicleKey,
         );
-        const response = await fetch("/api/admin/import-patent", {
+        if (patente && patente !== "—") patentsToEnrich.push(patente);
+      }
+
+      if (patentsToEnrich.length > 0) {
+        if (!assertGlo3dClientAllowed()) return;
+        const endpoint =
+          patentsToEnrich.length > 1
+            ? "/api/admin/import-patents-batch"
+            : "/api/admin/import-patent";
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true }),
-          signal: AbortSignal.timeout(60_000),
+          body: JSON.stringify(
+            patentsToEnrich.length > 1
+              ? { patentes: patentsToEnrich, estadoRetiro, forceRefresh: true }
+              : { patente: patentsToEnrich[0], estadoRetiro, forceRefresh: true },
+          ),
+          signal: AbortSignal.timeout(120_000),
         });
         const payload = (await response.json().catch(() => ({}))) as {
           ok?: boolean;
           error?: string;
           item?: CatalogItem;
           vehicleDetails?: EditorVehicleDetails;
+          results?: Array<{ item: CatalogItem; vehicleDetails?: EditorVehicleDetails }>;
+          errors?: Array<{ patente: string; error: string }>;
+          rateLimited?: boolean;
         };
-        if (!response.ok || !payload.ok || !payload.item) {
-          throw new Error(payload.error ?? `No se pudo enriquecer ${patente}.`);
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error ?? "No se pudo enriquecer las unidades seleccionadas.");
         }
-        const resolvedKey = getVehicleKey(payload.item);
-        enrichedItems.set(resolvedKey, payload.item);
-        if (payload.vehicleDetails) {
-          enrichedDetails[resolvedKey] = payload.vehicleDetails;
+        if (payload.rateLimited) markGlo3dClientCooldown();
+
+        const rows =
+          payload.results ??
+          (payload.item ? [{ item: payload.item, vehicleDetails: payload.vehicleDetails }] : []);
+        for (const row of rows) {
+          const resolvedKey = applyImportedPatentPayload({
+            item: row.item,
+            vehicleDetails: row.vehicleDetails,
+          });
+          enrichedItems.set(resolvedKey, row.item);
+          if (row.vehicleDetails) enrichedDetails[resolvedKey] = row.vehicleDetails;
+        }
+
+        if (payload.errors && payload.errors.length > 0) {
+          const first = payload.errors[0];
+          if (isGlo3dRateLimitMessage(first.error)) markGlo3dClientCooldown();
+          throw new Error(`${first.patente}: ${first.error}`);
         }
       }
 
       const keysToAssign = Array.from(
         new Set([...uniqueKeys, ...Array.from(enrichedItems.keys())]),
-      );
-
-      setImportedInventoryItems((prev) => {
-        let next = [...prev];
-        for (const item of enrichedItems.values()) {
-          const key = getVehicleKey(item);
-          next = next.filter((entry) => getVehicleKey(entry) !== key);
-          next.push(item);
-        }
-        return next;
-      });
-
-      setLiveFeedItems((prev) =>
-        dedupeCatalogItemsByVehicleKey([
-          ...prev.filter((entry) => !enrichedItems.has(getVehicleKey(entry))),
-          ...Array.from(enrichedItems.values()),
-        ]),
       );
 
       setConfig((prev) => {
@@ -6131,6 +6323,104 @@ export function CatalogHomeClient({
       setRevalidating(false);
     }
   }, [router, showSystemNotice]);
+
+  const syncManagingVehicleWithGlo3dAutored = useCallback(async () => {
+    if (!managingVehicleKey) return;
+    if (!assertGlo3dClientAllowed()) return;
+    const currentItem = itemsByKey.get(managingVehicleKey);
+    if (!currentItem) {
+      showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
+      return;
+    }
+    if (managingVehicleKey.startsWith("manual-")) {
+      showSystemNotice(
+        "info",
+        "Solo inventario Glo3D",
+        "Las unidades manuales no se sincronizan con Glo3D/Autored.",
+      );
+      return;
+    }
+
+    const patente = normalizePatentToken(getPatent(currentItem));
+    if (!patente || patente === "—") {
+      showSystemNotice("error", "Sin patente", "Esta unidad no tiene patente para sincronizar.");
+      return;
+    }
+    if (!vehicleNeedsSourceSync(currentItem, managingVehicleKey, config)) {
+      showSystemNotice(
+        "info",
+        "Ficha completa",
+        `${patente} ya tiene miniatura y datos técnicos cargados.`,
+      );
+      return;
+    }
+
+    setManagingVehicleSyncing(true);
+    try {
+      const estadoRetiro = resolveEstadoRetiroForVehicleKey(
+        managingVehicleKey,
+        config,
+        sortedUpcomingAuctions,
+      );
+      const response = await fetch("/api/admin/import-patent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        item?: CatalogItem;
+        vehicleDetails?: EditorVehicleDetails;
+        source?: string;
+        hasGlo3dViewer?: boolean;
+      };
+      if (!response.ok || !payload.ok || !payload.item) {
+        throw new Error(payload.error ?? `No se pudo sincronizar ${patente}.`);
+      }
+
+      const resolvedKey = applyImportedPatentPayload({
+        item: payload.item,
+        vehicleDetails: payload.vehicleDetails,
+        patente,
+        hasGlo3dViewer: payload.hasGlo3dViewer,
+      });
+      if (resolvedKey !== managingVehicleKey) {
+        setManagingVehicleKey(resolvedKey);
+      }
+
+      showSystemNotice(
+        "success",
+        "Unidad sincronizada",
+        `${patente} se actualizó con datos de Glo3D${payload.hasGlo3dViewer ? " (visor 3D)" : ""}${payload.source?.includes("autored") ? " y Autored" : ""}. Revisa el home para confirmar miniatura y ficha.`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof DOMException && error.name === "TimeoutError"
+          ? "La sincronización tardó demasiado. Espera unos segundos y vuelve a intentar."
+          : error instanceof Error
+            ? error.message
+            : "No se pudo sincronizar la unidad.";
+      if (isGlo3dRateLimitMessage(message)) markGlo3dClientCooldown();
+      showSystemNotice(
+        "error",
+        isGlo3dRateLimitMessage(message) ? "Glo3D saturado" : "Sincronización fallida",
+        message,
+      );
+    } finally {
+      setManagingVehicleSyncing(false);
+    }
+  }, [
+    applyImportedPatentPayload,
+    assertGlo3dClientAllowed,
+    config,
+    itemsByKey,
+    managingVehicleKey,
+    markGlo3dClientCooldown,
+    showSystemNotice,
+    sortedUpcomingAuctions,
+  ]);
 
   const importRainworxLot = async () => {
     const url = rainworxLotUrl.trim();
@@ -11337,26 +11627,48 @@ export function CatalogHomeClient({
               </button>
             </div>
 
-            <input
-              value={batchAssignSearchTerm}
-              onChange={(event) => {
-                setBatchAssignSearchTerm(event.target.value);
-                lastAutoImportPatentRef.current = "";
-              }}
-              placeholder="Buscar por patente (ej. TJSX32)..."
-              className="ui-focus mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
+            <div className="mb-3 flex flex-wrap gap-2">
+              <input
+                value={batchAssignSearchTerm}
+                onChange={(event) => {
+                  setBatchAssignSearchTerm(event.target.value);
+                  lastAutoImportPatentRef.current = "";
+                }}
+                placeholder="Buscar por patente (ej. TJSX32)..."
+                className="ui-focus min-w-[220px] flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => void importPatentsForBatchAssign()}
+                disabled={
+                  batchAssignImporting ||
+                  !resolveAutoImportPatent(batchAssignSearchTerm) ||
+                  Date.now() < glo3dCooldownUntil
+                }
+                className="ui-focus rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {batchAssignImporting ? "Importando…" : "Importar Glo3D"}
+              </button>
+            </div>
 
             {batchAssignImporting ? (
               <p className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
-                Buscando en Glo3D y completando ficha... Verifica que la patente sea exacta (ej.{" "}
-                <strong>TJSX32</strong>, no TSJX32). Puede tardar hasta 30 segundos.
+                Consultando Glo3D y Autored (una patente a la vez para no saturar la API). Usa la
+                patente exacta, por ejemplo <strong>TJSX32</strong>.
+              </p>
+            ) : null}
+
+            {Date.now() < glo3dCooldownUntil ? (
+              <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Glo3D en pausa breve por límite de consultas. Espera unos segundos antes de importar
+                otra patente.
               </p>
             ) : null}
 
             {!batchAssignSearchTerm.trim() ? (
               <p className="mb-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                Escribe una patente para buscar. Si no está cargada, se importará automáticamente desde Glo3D.
+                Busca en inventario local primero. Si no aparece, escribe la patente completa y pulsa
+                &quot;Importar Glo3D&quot; (no se importa solo al escribir).
               </p>
             ) : null}
 
@@ -11408,7 +11720,9 @@ export function CatalogHomeClient({
                     >
                       <p className="font-semibold text-slate-900">{getModel(item)}</p>
                       <p className="text-xs text-slate-500">
-                        {getPatent(item)} {alreadyInTarget ? "· ya agregado" : ""}
+                        {getPatent(item)}{" "}
+                        {vehicleNeedsSourceSync(item, key, config) ? "· ficha incompleta" : "· ficha OK"}
+                        {alreadyInTarget ? " · ya agregado" : ""}
                       </p>
                     </button>
                     <span
@@ -11434,7 +11748,8 @@ export function CatalogHomeClient({
               batchAssignSearchTerm.trim() &&
               !batchAssignImporting ? (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm text-slate-500">
-                  Sin resultados en inventario. Si la patente existe en Glo3D, se importará automáticamente.
+                  Sin resultados en inventario local. Pulsa &quot;Importar Glo3D&quot; para traer la
+                  patente desde Glo3D + Autored.
                 </p>
               ) : null}
             </div>
@@ -11616,6 +11931,17 @@ export function CatalogHomeClient({
                 </p>
                 <h3 className="text-lg font-bold text-slate-900">{getModel(managingItem)}</h3>
                 <p className="text-xs text-slate-500">Patente {getPatent(managingItem)}</p>
+                {!managingVehicleKey.startsWith("manual-") ? (
+                  <button
+                    type="button"
+                    onClick={() => void syncManagingVehicleWithGlo3dAutored()}
+                    disabled={managingVehicleSyncing}
+                    className="ui-focus mt-2 inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
+                  >
+                    {managingVehicleSyncing ? "Sincronizando…" : "Sincronizar Glo3D + Autored"}
+                  </button>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -11625,6 +11951,13 @@ export function CatalogHomeClient({
                 Cerrar
               </button>
             </div>
+
+            {vehicleNeedsSourceSync(managingItem, managingVehicleKey, config) ? (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Esta unidad tiene datos incompletos (marca, modelo, miniatura o ficha técnica). Usa
+                &quot;Sincronizar Glo3D + Autored&quot; para completarla antes de publicar en el home.
+              </div>
+            ) : null}
 
             <div className="space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">

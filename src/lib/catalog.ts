@@ -1,7 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  fetchGlo3dHttp,
+  getGlo3dCircuitRetryAfterMs,
+  Glo3dRateLimitError,
+  isGlo3dCircuitOpen,
+  openGlo3dCircuit,
+  sleepMs,
+} from "@/lib/glo3d-api";
 import type { CatalogFeed, CatalogItem, CatalogSource } from "@/types/catalog";
+
+export { Glo3dRateLimitError, getGlo3dCircuitRetryAfterMs, isGlo3dCircuitOpen };
 
 const DEFAULT_TABLE = process.env.CATALOG_SUPABASE_TABLE ?? "inventario";
 const DEFAULT_SELECT = process.env.CATALOG_SUPABASE_SELECT ?? "*";
@@ -15,8 +25,10 @@ const GLO3D_INVENTORY_POST_URL =
   "https://us-central1-glo3d-c338b.cloudfunctions.net/outbound/api/v1/inventory";
 const GLO3D_MAX_PAGES = Number(process.env.GLO3D_MAX_PAGES ?? "3");
 const GLO3D_REFRESH_MAX_PAGES = Number(process.env.GLO3D_REFRESH_MAX_PAGES ?? "3");
-const GLO3D_PAGE_CACHE_TTL_MS = 120_000;
-const GLO3D_PATENT_CACHE_TTL_MS = 300_000;
+const GLO3D_PAGE_CACHE_TTL_MS = Number(process.env.GLO3D_PAGE_CACHE_TTL_MS ?? "300000");
+const GLO3D_PATENT_CACHE_HIT_TTL_MS = Number(process.env.GLO3D_PATENT_CACHE_HIT_TTL_MS ?? "900000");
+const GLO3D_PATENT_CACHE_MISS_TTL_MS = Number(process.env.GLO3D_PATENT_CACHE_MISS_TTL_MS ?? "120000");
+const AUTORED_CACHE_TTL_MS = Number(process.env.AUTORED_CACHE_TTL_MS ?? "300000");
 
 type Glo3dPagePayload = {
   data: Array<Record<string, unknown>>;
@@ -27,6 +39,7 @@ type Glo3dPagePayload = {
 
 const glo3dPageCache = new Map<string, { expires: number; payload: Glo3dPagePayload }>();
 const glo3dPatentCache = new Map<string, { expires: number; entry: Glo3dInventoryEntry | null }>();
+const autoredPatentCache = new Map<string, { expires: number; record: Record<string, unknown> | null }>();
 
 function getGlo3dCredentials(): { username: string; password: string } | null {
   const username =
@@ -41,18 +54,6 @@ function getGlo3dCredentials(): { username: string; password: string } | null {
   return { username, password };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export class Glo3dRateLimitError extends Error {
-  constructor() {
-    super(
-      "La API de Glo3D está saturada. Espera 10–15 segundos sin hacer clic en nada y vuelve a buscar la patente.",
-    );
-    this.name = "Glo3dRateLimitError";
-  }
-}
 const GLO3D_IFRAME_NOVA_BASE = "https://glo3d.net/iframeNova";
 const GLO3D_IFRAME_PARAMS =
   "gallery=true&featurevideos=true&condition=false&interior=false&footerGallery=false&zoom=false&navigationarrows=false&spinicon=basic&font=Roboto&topbarblinking=false&fullscreen=false&load=false&autorotate=false&themetextcolor=black";
@@ -1134,6 +1135,9 @@ async function fetchGlo3dInventoryPage(page: number, search?: string): Promise<G
   if (!credentials) {
     return { data: [], remaining: 0, ok: false };
   }
+  if (isGlo3dCircuitOpen()) {
+    return { data: [], remaining: 0, ok: false, rateLimited: true };
+  }
 
   const cacheKey = `${page}:${(search ?? "").trim().toUpperCase()}`;
   const cached = glo3dPageCache.get(cacheKey);
@@ -1155,22 +1159,21 @@ async function fetchGlo3dInventoryPage(page: number, search?: string): Promise<G
             : { page, pageSize: 200 },
         );
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await fetch(GLO3D_INVENTORY_POST_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: authHeader,
+  try {
+    const response = await fetchGlo3dHttp(
+      GLO3D_INVENTORY_POST_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: authHeader,
+        },
+        body,
+        cache: "no-store",
       },
-      body,
-      cache: "no-store",
-    });
-
-    if (response.status === 429) {
-      await sleep(1200 * (attempt + 1));
-      continue;
-    }
+      cacheKey,
+    );
 
     if (!response.ok) {
       return { data: [], remaining: 0, ok: false, rateLimited: response.status === 429 };
@@ -1187,9 +1190,12 @@ async function fetchGlo3dInventoryPage(page: number, search?: string): Promise<G
     };
     glo3dPageCache.set(cacheKey, { expires: Date.now() + GLO3D_PAGE_CACHE_TTL_MS, payload: result });
     return result;
+  } catch (error) {
+    if (error instanceof Glo3dRateLimitError) {
+      return { data: [], remaining: 0, ok: false, rateLimited: true };
+    }
+    return { data: [], remaining: 0, ok: false };
   }
-
-  return { data: [], remaining: 0, ok: false, rateLimited: true };
 }
 
 function resolveGlo3dEntryFromPageItems(
@@ -1223,39 +1229,71 @@ function resolveGlo3dEntryByStockNumber(
   return null;
 }
 
+function resolveGlo3dEntryFromPayload(
+  items: Array<Record<string, unknown>>,
+  target: string,
+): Glo3dInventoryEntry | null {
+  const byStock = resolveGlo3dEntryByStockNumber(items, target);
+  if (byStock) return byStock;
+  const resolved = resolveGlo3dEntryFromPageItems(items, target);
+  if (resolved) return resolved;
+  return findFuzzyGlo3dEntryFromItems(items, target);
+}
+
 async function fetchGlo3dByPatentScan(
   patent: string,
 ): Promise<{ entry: Glo3dInventoryEntry | null; rateLimited: boolean }> {
   const target = normalizeStock(patent);
   if (!target) return { entry: null, rateLimited: false };
+  if (isGlo3dCircuitOpen()) return { entry: null, rateLimited: true };
 
-  let rateLimited = false;
-
-  for (const query of [target, target.toLowerCase()]) {
-    const payload = await fetchGlo3dInventoryPage(0, query);
-    if (payload.rateLimited) rateLimited = true;
-    if (!payload.ok) continue;
-
-    const byStock = resolveGlo3dEntryByStockNumber(payload.data, target);
-    if (byStock) return { entry: byStock, rateLimited: false };
-
-    const resolved = resolveGlo3dEntryFromPageItems(payload.data, target);
-    if (resolved) return { entry: resolved, rateLimited: false };
-
-    const fuzzy = findFuzzyGlo3dEntryFromItems(payload.data, target);
-    if (fuzzy) return { entry: fuzzy, rateLimited: false };
+  const searchPayload = await fetchGlo3dInventoryPage(0, target);
+  if (searchPayload.rateLimited) {
+    openGlo3dCircuit();
+    return { entry: null, rateLimited: true };
+  }
+  if (searchPayload.ok) {
+    const found = resolveGlo3dEntryFromPayload(searchPayload.data, target);
+    if (found) return { entry: found, rateLimited: false };
+    if (searchPayload.data.length > 0) {
+      return { entry: null, rateLimited: false };
+    }
   }
 
-  const fallbackPage = await fetchGlo3dInventoryPage(0);
-  if (fallbackPage.rateLimited) rateLimited = true;
-  if (fallbackPage.ok) {
-    const byStock = resolveGlo3dEntryByStockNumber(fallbackPage.data, target);
-    if (byStock) return { entry: byStock, rateLimited: false };
-    const resolved = resolveGlo3dEntryFromPageItems(fallbackPage.data, target);
-    if (resolved) return { entry: resolved, rateLimited: false };
+  if (!searchPayload.ok) {
+    const fallbackPage = await fetchGlo3dInventoryPage(0);
+    if (fallbackPage.rateLimited) {
+      openGlo3dCircuit();
+      return { entry: null, rateLimited: true };
+    }
+    if (fallbackPage.ok) {
+      const found = resolveGlo3dEntryFromPayload(fallbackPage.data, target);
+      if (found) return { entry: found, rateLimited: false };
+    }
   }
 
-  return { entry: null, rateLimited };
+  return { entry: null, rateLimited: false };
+}
+
+export function buildGlo3dEntryFromInventarioRow(
+  row: Record<string, unknown>,
+): Glo3dInventoryEntry | null {
+  const rawCandidate = row.glo3d_campos ?? row.glo3d;
+  if (rawCandidate && typeof rawCandidate === "object" && !Array.isArray(rawCandidate)) {
+    const entry = buildGlo3dEntryFromRaw(rawCandidate as Record<string, unknown>);
+    if (entry) return entry;
+  }
+  const view3dUrl = pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]);
+  if (!view3dUrl) return null;
+  const raw =
+    rawCandidate && typeof rawCandidate === "object" && !Array.isArray(rawCandidate)
+      ? (rawCandidate as Record<string, unknown>)
+      : { glo3d_url: view3dUrl };
+  return {
+    view3dUrl,
+    technicalFields: normalizeGlo3dTechnicalFields(raw),
+    raw,
+  };
 }
 
 export async function fetchGlo3dRecordByPatent(
@@ -1271,7 +1309,9 @@ export async function fetchGlo3dRecordByPatent(
 
   const lookup = await fetchGlo3dByPatentScan(stock);
   glo3dPatentCache.set(stock, {
-    expires: Date.now() + GLO3D_PATENT_CACHE_TTL_MS,
+    expires:
+      Date.now() +
+      (lookup.entry ? GLO3D_PATENT_CACHE_HIT_TTL_MS : GLO3D_PATENT_CACHE_MISS_TTL_MS),
     entry: lookup.entry,
   });
 
@@ -1283,6 +1323,8 @@ export async function fetchGlo3dRecordByPatent(
 }
 
 export async function appendGlo3dOnlyCatalogItems(items: CatalogItem[]): Promise<CatalogItem[]> {
+  if (isGlo3dCircuitOpen()) return items;
+
   const known = new Set(
     items
       .map(getItemStock)
@@ -1293,8 +1335,10 @@ export async function appendGlo3dOnlyCatalogItems(items: CatalogItem[]): Promise
 
   let page = 0;
   while (page < GLO3D_REFRESH_MAX_PAGES) {
+    if (page > 0) await sleepMs(700);
     const payload = await fetchGlo3dInventoryPage(page);
     if (!payload.ok) break;
+    if (payload.rateLimited) break;
 
     for (const raw of payload.data) {
       const patente =
@@ -1576,9 +1620,15 @@ export async function fetchAutoredRecordByPatent(
   patent: string,
 ): Promise<Record<string, unknown> | null> {
   if (!AUTORED_API_URL) return null;
+  const normalized = normalizeStock(patent);
+  const cached = autoredPatentCache.get(normalized);
+  if (cached && cached.expires > Date.now()) {
+    return cached.record;
+  }
+
   const token = process.env.CATALOG_SOURCE_API_TOKEN;
   const url = new URL(AUTORED_API_URL);
-  url.searchParams.set("patente", patent);
+  url.searchParams.set("patente", normalized);
 
   const response = await fetch(url.toString(), {
     method: "GET",
@@ -1592,11 +1642,17 @@ export async function fetchAutoredRecordByPatent(
 
   const payload = (await response.json()) as unknown;
   const rows = extractRowsFromPayload(payload);
-  if (rows.length > 0) return rows[0];
-  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    return payload as Record<string, unknown>;
-  }
-  return null;
+  const record =
+    rows.length > 0
+      ? rows[0]
+      : payload && typeof payload === "object" && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : null;
+  autoredPatentCache.set(normalized, {
+    expires: Date.now() + AUTORED_CACHE_TTL_MS,
+    record,
+  });
+  return record;
 }
 
 async function enrichWithAutoredFallback(

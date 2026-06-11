@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import {
+  buildGlo3dEntryFromInventarioRow,
   catalogRowToItem,
   fetchAutoredRecordByPatent,
   fetchGlo3dRecordByPatent,
@@ -8,6 +9,7 @@ import {
   resolveCanonicalPatentFromGlo3dEntry,
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
+import { sleepMs } from "@/lib/glo3d-api";
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
 
@@ -27,6 +29,14 @@ export type ImportPatentResult = {
   requestedPatente?: string;
   correctedPatente?: boolean;
   hasGlo3dViewer: boolean;
+  skippedGlo3dFetch?: boolean;
+  skippedAutoredFetch?: boolean;
+};
+
+export type ImportPatentsBatchResult = {
+  results: ImportPatentResult[];
+  errors: Array<{ patente: string; error: string }>;
+  rateLimited: boolean;
 };
 
 const INVENTARIO_TABLE = process.env.CATALOG_SUPABASE_TABLE ?? "inventario";
@@ -457,6 +467,19 @@ function resolveImportSource(
   return "autored";
 }
 
+function inventarioRowHasCompleteGlo3d(row: Record<string, unknown>): boolean {
+  const hasViewer = Boolean(pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]));
+  const hasRaw = row.glo3d_campos != null || row.glo3d != null;
+  return hasViewer && hasRaw;
+}
+
+function inventarioRowHasCompleteAutored(row: Record<string, unknown>): boolean {
+  const marca = pickString(row, ["marca", "brand"]);
+  const modelo = pickString(row, ["modelo", "model"]);
+  const hasAutoredBlob = row.autored_campos != null || row.autored != null;
+  return Boolean(marca && modelo) || hasAutoredBlob;
+}
+
 async function persistInventarioRow(
   patente: string,
   payload: Record<string, unknown>,
@@ -504,23 +527,46 @@ export async function importVehicleByPatent(
     throw new Error("Patente inválida. Usa un formato como TJSX73.");
   }
 
+  const existingRowEarly = await fetchInventarioRowByPatent(requestedPatente);
+  let skippedGlo3dFetch = false;
+  let skippedAutoredFetch = false;
+
   let glo3d: Glo3dInventoryEntry | null = null;
-  try {
-    glo3d = await fetchGlo3dRecordByPatent(requestedPatente);
-  } catch (error) {
-    if (error instanceof Glo3dRateLimitError) throw error;
-    throw error;
+  if (!options?.forceRefresh && existingRowEarly && inventarioRowHasCompleteGlo3d(existingRowEarly)) {
+    glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
+    skippedGlo3dFetch = Boolean(glo3d);
   }
+  if (!glo3d) {
+    try {
+      glo3d = await fetchGlo3dRecordByPatent(requestedPatente);
+    } catch (error) {
+      if (error instanceof Glo3dRateLimitError) throw error;
+      throw error;
+    }
+  }
+
   const canonicalPatente = glo3d
     ? resolveCanonicalPatentFromGlo3dEntry(glo3d, requestedPatente)
     : requestedPatente;
   const patente = canonicalPatente;
   const correctedPatente = patente !== requestedPatente;
 
-  const autored = await fetchAutoredRecordByPatent(patente);
   const existingRow =
     (await fetchInventarioRowByPatent(patente)) ??
+    existingRowEarly ??
     (correctedPatente ? await fetchInventarioRowByPatent(requestedPatente) : null);
+
+  let autored: Record<string, unknown> | null = null;
+  if (!options?.forceRefresh && existingRow && inventarioRowHasCompleteAutored(existingRow)) {
+    const stored = existingRow.autored_campos ?? existingRow.autored;
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      autored = stored as Record<string, unknown>;
+      skippedAutoredFetch = true;
+    }
+  }
+  if (!autored) {
+    autored = await fetchAutoredRecordByPatent(patente);
+  }
 
   const payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
   const shouldPersist = Boolean(glo3d || autored || options?.forceRefresh);
@@ -547,6 +593,8 @@ export async function importVehicleByPatent(
       requestedPatente,
       correctedPatente,
       hasGlo3dViewer: Boolean(glo3d?.view3dUrl ?? mergedRow.glo3d_url ?? mergedRow.url_3d),
+      skippedGlo3dFetch,
+      skippedAutoredFetch,
     };
   }
 
@@ -585,5 +633,38 @@ export async function importVehicleByPatent(
     requestedPatente,
     correctedPatente,
     hasGlo3dViewer: Boolean(glo3d.view3dUrl),
+    skippedGlo3dFetch,
+    skippedAutoredFetch,
   };
+}
+
+const BATCH_IMPORT_DELAY_MS = Number(process.env.GLO3D_BATCH_DELAY_MS ?? "900");
+
+export async function importVehiclesByPatentsBatch(
+  rawPatents: string[],
+  options?: ImportPatentOptions,
+): Promise<ImportPatentsBatchResult> {
+  const unique = Array.from(
+    new Set(rawPatents.map((value) => normalizePatent(value)).filter((value) => /^[A-Z0-9]{5,10}$/.test(value))),
+  );
+  const results: ImportPatentResult[] = [];
+  const errors: Array<{ patente: string; error: string }> = [];
+  let rateLimited = false;
+
+  for (let index = 0; index < unique.length; index += 1) {
+    const patente = unique[index];
+    if (index > 0) await sleepMs(BATCH_IMPORT_DELAY_MS);
+    try {
+      results.push(await importVehicleByPatent(patente, options));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo importar la patente.";
+      errors.push({ patente, error: message });
+      if (error instanceof Glo3dRateLimitError) {
+        rateLimited = true;
+        break;
+      }
+    }
+  }
+
+  return { results, errors, rateLimited };
 }
