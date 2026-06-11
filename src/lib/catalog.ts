@@ -1327,11 +1327,32 @@ export function buildGlo3dEntryFromInventarioRow(
   };
 }
 
+export function invalidateGlo3dPatentCache(patent?: string): void {
+  if (!patent?.trim()) {
+    glo3dPatentCache.clear();
+    return;
+  }
+  glo3dPatentCache.delete(normalizeStock(patent));
+}
+
+export function invalidateAutoredPatentCache(patent?: string): void {
+  if (!patent?.trim()) {
+    autoredPatentCache.clear();
+    return;
+  }
+  autoredPatentCache.delete(normalizeStock(patent));
+}
+
 export async function fetchGlo3dRecordByPatent(
   patent: string,
+  options?: { forceRefresh?: boolean },
 ): Promise<Glo3dInventoryEntry | null> {
   const stock = normalizeStock(patent);
   if (!stock) return null;
+
+  if (options?.forceRefresh) {
+    invalidateGlo3dPatentCache(stock);
+  }
 
   const cached = glo3dPatentCache.get(stock);
   if (cached && cached.expires > Date.now()) {
@@ -1708,6 +1729,44 @@ export async function fetchAutoredRecordByPatent(
       if (candidate && autoredRecordHasIdentity(candidate, normalized)) {
         record = candidate;
         break;
+      }
+    }
+
+    if (!record) {
+      const authHeaders: Record<string, string> = token
+        ? {
+            "x-api-key": token,
+            Authorization: `Bearer ${token}`,
+          }
+        : {};
+      for (const body of [
+        { patente: normalized },
+        { ppu: normalized },
+        { PPU: normalized },
+        { plate: normalized },
+      ]) {
+        const response = await fetch(AUTORED_API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
+          body: JSON.stringify(body),
+          cache: options?.forceRefresh ? "no-store" : undefined,
+        });
+        if (!response.ok) continue;
+        const payload = (await response.json()) as unknown;
+        const rows = extractRowsFromPayload(payload);
+        const candidate =
+          rows.length > 0
+            ? rows[0]
+            : payload && typeof payload === "object" && !Array.isArray(payload)
+              ? (payload as Record<string, unknown>)
+              : null;
+        if (candidate && autoredRecordHasIdentity(candidate, normalized)) {
+          record = candidate;
+          break;
+        }
       }
     }
   }

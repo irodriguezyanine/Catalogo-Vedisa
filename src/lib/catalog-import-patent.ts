@@ -6,6 +6,8 @@ import {
   fetchGlo3dRecordByPatent,
   fetchInventarioRowByPatent,
   fetchTasacionesRecordByPatent,
+  invalidateAutoredPatentCache,
+  invalidateGlo3dPatentCache,
   getGlo3dCircuitRetryAfterMs,
   Glo3dRateLimitError,
   resolveCanonicalPatentFromGlo3dEntry,
@@ -256,18 +258,43 @@ function extractGlo3dImages(glo3d: Glo3dInventoryEntry): string[] {
   const push = (value?: string) => {
     if (value?.startsWith("http")) urls.push(value);
   };
+  const pushMany = (value: unknown) => {
+    for (const url of normalizeImageList(value)) push(url);
+  };
 
-  push(pickString(glo3d.raw, ["thumb", "thumbnail_url", "image", "image_url", "foto", "thumbnail"]));
-  push(
-    pickString(glo3d.technicalFields, ["thumb", "thumbnail_url", "image", "image_url", "foto", "thumbnail"]),
-  );
+  const merged = { ...glo3d.raw, ...glo3d.technicalFields };
+  for (const key of [
+    "thumb",
+    "thumbnail",
+    "thumbnail_url",
+    "image",
+    "image_url",
+    "foto",
+    "foto_portada",
+    "imagen_principal",
+    "main_image",
+    "main_frame",
+    "cover",
+  ]) {
+    push(pickString(merged, [key]));
+  }
 
-  const gallery = glo3d.raw.gallery;
+  pushMany(merged.imagenes);
+  pushMany(merged.images);
+  pushMany(merged.photos);
+  pushMany(merged.fotos);
+  pushMany(merged.galeria);
+  pushMany(merged.gallery);
+
+  const gallery = merged.gallery ?? glo3d.raw.gallery;
   if (gallery && typeof gallery === "object" && !Array.isArray(gallery)) {
     for (const section of Object.values(gallery as Record<string, unknown>)) {
       if (!section || typeof section !== "object" || Array.isArray(section)) continue;
-      const imageUrl = (section as Record<string, unknown>).image_url;
-      for (const url of normalizeImageList(imageUrl)) push(url);
+      const record = section as Record<string, unknown>;
+      pushMany(record.image_url);
+      pushMany(record.url);
+      pushMany(record.thumb);
+      pushMany(record.thumbnail);
     }
   }
 
@@ -687,6 +714,9 @@ function inventarioRowHasCompleteAutored(row: Record<string, unknown>): boolean 
   const patente = pickString(row, ["patente", "PPU", "ppu", "stock_number"]) ?? "";
   const marca = pickString(row, ["marca", "brand"]);
   const modelo = pickString(row, ["modelo", "model"]);
+  if (isPlaceholderVehicleLabel(marca) || isPlaceholderVehicleLabel(modelo)) {
+    return false;
+  }
   if (marca && modelo && isDerivedPlaceholderIdentity(marca, modelo, patente)) {
     return false;
   }
@@ -756,6 +786,11 @@ export async function importVehicleByPatent(
     throw new Error("Patente inválida. Usa un formato como TJSX73.");
   }
 
+  if (options?.forceRefresh) {
+    invalidateGlo3dPatentCache(requestedPatente);
+    invalidateAutoredPatentCache(requestedPatente);
+  }
+
   const existingRowEarly = await fetchInventarioRowByPatent(requestedPatente);
   let skippedGlo3dFetch = false;
   let skippedAutoredFetch = false;
@@ -772,7 +807,9 @@ export async function importVehicleByPatent(
   if (shouldFetchGlo3dFromApi) {
     skippedGlo3dFetch = false;
     try {
-      const fetched = await fetchGlo3dRecordByPatent(requestedPatente);
+      const fetched = await fetchGlo3dRecordByPatent(requestedPatente, {
+        forceRefresh: options?.forceRefresh,
+      });
       glo3d = fetched ?? glo3d;
     } catch (error) {
       if (error instanceof Glo3dRateLimitError) {

@@ -328,6 +328,16 @@ function isStaleEditorDraftValue(value: string | undefined, patente?: string): b
   return false;
 }
 
+function resolvePatenteDraftField(
+  overrideValue: string | undefined,
+  itemValue: string,
+  fallbackPatente?: string,
+): string {
+  if (overrideValue?.trim()) return overrideValue.trim();
+  if (itemValue?.trim()) return itemValue.trim();
+  return fallbackPatente?.trim() ?? "";
+}
+
 function resolveEditorDraftField(
   overrideValue: string | undefined,
   itemValue: string,
@@ -339,6 +349,41 @@ function resolveEditorDraftField(
   const cleaned = itemValue?.trim() ?? "";
   if (cleaned && !isStaleEditorDraftValue(cleaned, patente)) return cleaned;
   return "";
+}
+
+function mergeSyncedVehicleDetails(
+  item: CatalogItem,
+  synced?: EditorVehicleDetails,
+): EditorVehicleDetails {
+  const draft = buildDetailsDraft(item, synced);
+  const patente = getPatent(item);
+  if (!synced) return { ...draft, patente: resolvePatenteDraftField(draft.patente, patente, patente) };
+  const pick = (value?: string) => (value?.trim() ? value.trim() : undefined);
+  return {
+    ...draft,
+    patente: resolvePatenteDraftField(synced.patente, draft.patente ?? "", patente),
+    title: pick(synced.title) ?? draft.title,
+    brand: pick(synced.brand) ?? draft.brand,
+    model: pick(synced.model) ?? draft.model,
+    year: pick(synced.year) ?? draft.year,
+    version: pick(synced.version) ?? draft.version,
+    vin: pick(synced.vin) ?? draft.vin,
+    nChasis: pick(synced.nChasis) ?? draft.nChasis,
+    nMotor: pick(synced.nMotor) ?? draft.nMotor,
+    nSerie: pick(synced.nSerie) ?? draft.nSerie,
+    nSiniestro: pick(synced.nSiniestro) ?? draft.nSiniestro,
+    kilometraje: pick(synced.kilometraje) ?? draft.kilometraje,
+    color: pick(synced.color) ?? draft.color,
+    combustible: pick(synced.combustible) ?? draft.combustible,
+    transmision: pick(synced.transmision) ?? draft.transmision,
+    traccion: pick(synced.traccion) ?? draft.traccion,
+    thumbnail: pick(synced.thumbnail) ?? draft.thumbnail ?? item.thumbnail ?? "",
+    view3dUrl: pick(synced.view3dUrl) ?? draft.view3dUrl ?? item.view3dUrl ?? "",
+    imagesCsv:
+      pick(synced.imagesCsv) ??
+      draft.imagesCsv ??
+      item.images.filter((url) => url.startsWith("http")).join(", "),
+  };
 }
 
 function resolveIdentityDraftField(
@@ -374,11 +419,11 @@ function EditorLabeledField({
 }
 
 const DETAIL_EDITOR_TABS: Array<[DetailEditorTabId, string]> = [
-  ["descripcion", "Descripción"],
   ["general", "Información del vehículo"],
   ["tecnica", "Detalles técnicos"],
   ["publicacion", "Publicación"],
   ["fotos", "Fotos"],
+  ["descripcion", "Descripción"],
 ];
 
 function resolveEstadoRetiroForVehicleKey(
@@ -1674,7 +1719,7 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
   const lookup = buildVehicleLookup(raw);
   const cav = (raw.cav_campos as Record<string, unknown> | undefined) ?? {};
   const baseImages = item.images.filter((url) => url.startsWith("http")).join(", ");
-  const patente = String(raw.patente ?? raw.PPU ?? "");
+  const patente = String(raw.patente ?? raw.PPU ?? raw.stock_number ?? "");
   const itemBrand = String(
     getLookupValue(lookup, ["marca", "brand", "make", "glo3d.make", "autored.marca", "autored_campos.marca"]) ??
       raw.marca ??
@@ -1697,7 +1742,7 @@ function buildDetailsDraft(item: CatalogItem, override?: EditorVehicleDetails): 
   return {
     title: resolveIdentityDraftField(override?.title, item.title, patente),
     subtitle: resolveEditorDraftField(override?.subtitle, item.subtitle ?? "", patente),
-    patente: resolveEditorDraftField(override?.patente, patente, patente),
+    patente: resolvePatenteDraftField(override?.patente, patente, getPatent(item)),
     patenteVerifier:
       override?.patenteVerifier ??
       String(
@@ -5690,6 +5735,7 @@ export function CatalogHomeClient({
   ): EditorVehicleDetails => {
     const manualPreserveKeys: Array<keyof EditorVehicleDetails> = [
       "extendedDescription",
+      "description",
       "lot",
       "auctionDate",
       "location",
@@ -5700,6 +5746,7 @@ export function CatalogHomeClient({
       "promoPrice",
       "promoEnabled",
       "lotDocumentsJson",
+      "subtitle",
     ];
     const merged: EditorVehicleDetails = { ...imported };
     for (const key of manualPreserveKeys) {
@@ -6420,9 +6467,12 @@ export function CatalogHomeClient({
     const key = getVehicleKey(item);
     setEditingVehicleKey(key);
     setEditingDetails(
-      buildDetailsDraft(item, getEditorOverrideForItem(item, config.vehicleDetails)),
+      mergeSyncedVehicleDetails(
+        item,
+        getEditorOverrideForItem(item, config.vehicleDetails),
+      ),
     );
-    setDetailEditorTab("descripcion");
+    setDetailEditorTab("general");
     setDetailRainworxUrl("");
   };
 
@@ -6554,7 +6604,6 @@ export function CatalogHomeClient({
 
   const syncVehicleWithGlo3dAutored = useCallback(
     async (vehicleKey: string) => {
-      const skipGlo3dFetch = glo3dClientCooldownUntilRef.current > Date.now();
       const currentItem = itemsByKey.get(vehicleKey);
       if (!currentItem) {
         showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
@@ -6584,7 +6633,7 @@ export function CatalogHomeClient({
         const response = await fetch("/api/admin/import-patent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true, skipGlo3dFetch }),
+          body: JSON.stringify({ patente, estadoRetiro, forceRefresh: true }),
           signal: AbortSignal.timeout(60_000),
         });
         const payload = (await response.json().catch(() => ({}))) as {
@@ -6622,7 +6671,7 @@ export function CatalogHomeClient({
         ) {
           const syncedItem = applyDetailsOverride(payload.item, payload.vehicleDetails);
           setEditingVehicleKey(resolvedKey);
-          setEditingDetails(buildDetailsDraft(syncedItem, payload.vehicleDetails));
+          setEditingDetails(mergeSyncedVehicleDetails(syncedItem, payload.vehicleDetails));
         }
 
         const autoredNote = payload.autoredSynced
@@ -12509,6 +12558,7 @@ export function CatalogHomeClient({
                   className="ui-focus min-h-[220px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-relaxed text-slate-800"
                   contentEditable
                   suppressContentEditableWarning
+                  suppressHydrationWarning
                   onInput={(event) => syncManualObservations(event.currentTarget.innerHTML)}
                   aria-label="Editor de descripción ampliada con formato HTML"
                 />
@@ -12737,31 +12787,110 @@ export function CatalogHomeClient({
               </div>
             ) : detailEditorTab === "fotos" ? (
               <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="rounded-lg border border-cyan-100 bg-cyan-50/50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-cyan-800">
+                    Visor 3D (Glo3D)
+                  </p>
+                  <EditorLabeledField label="URL del visor 3D" className="mt-2">
+                    <input
+                      className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="https://..."
+                      value={editingDetails.view3dUrl ?? editingItem?.view3dUrl ?? ""}
+                      onChange={(event) =>
+                        setEditingDetails((prev) => ({ ...(prev ?? {}), view3dUrl: event.target.value }))
+                      }
+                    />
+                  </EditorLabeledField>
+                  {(editingDetails.view3dUrl ?? editingItem?.view3dUrl)?.startsWith("http") ? (
+                    <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-900/5">
+                      <iframe
+                        title="Vista previa visor 3D"
+                        src={editingDetails.view3dUrl ?? editingItem?.view3dUrl}
+                        className="h-56 w-full"
+                        loading="lazy"
+                        allow="fullscreen"
+                      />
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Sin visor 3D cargado. Usa &quot;Sync Glo3D + Autored&quot; para traerlo desde Glo3D.
+                    </p>
+                  )}
+                </div>
+
                 <EditorLabeledField label="Miniatura (URL)">
                   <input
                     className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                    value={editingDetails.thumbnail ?? ""}
+                    value={editingDetails.thumbnail ?? editingItem?.thumbnail ?? ""}
                     onChange={(event) =>
                       setEditingDetails((prev) => ({ ...(prev ?? {}), thumbnail: event.target.value }))
                     }
                   />
                 </EditorLabeledField>
-                {editingDetails.thumbnail?.startsWith("http") ? (
+                {(editingDetails.thumbnail ?? editingItem?.thumbnail)?.startsWith("http") ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={editingDetails.thumbnail} alt="Miniatura" className="h-32 w-auto rounded-lg border border-slate-200 object-cover" />
+                  <img
+                    src={editingDetails.thumbnail ?? editingItem?.thumbnail}
+                    alt="Miniatura"
+                    className="h-36 w-auto rounded-lg border border-slate-200 object-cover"
+                  />
                 ) : null}
+
                 <EditorLabeledField label="Galería (URLs separadas por coma)">
                   <textarea
                     className="min-h-28 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                    value={editingDetails.imagesCsv ?? ""}
+                    value={
+                      editingDetails.imagesCsv ??
+                      editingItem?.images.filter((url) => url.startsWith("http")).join(", ") ??
+                      ""
+                    }
                     onChange={(event) =>
                       setEditingDetails((prev) => ({ ...(prev ?? {}), imagesCsv: event.target.value }))
                     }
                   />
                 </EditorLabeledField>
-                <p className="text-xs text-slate-500">
-                  Las fotos de Glo3D/Autored se sincronizan automáticamente. Aquí puedes ajustar o agregar URLs manualmente.
-                </p>
+
+                {parseImagesCsv(
+                  editingDetails.imagesCsv ??
+                    editingItem?.images.filter((url) => url.startsWith("http")).join(", "),
+                ).length > 0 ? (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {parseImagesCsv(
+                      editingDetails.imagesCsv ??
+                        editingItem?.images.filter((url) => url.startsWith("http")).join(", "),
+                    ).map((url) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={url}
+                        src={url}
+                        alt="Foto del vehículo"
+                        className="h-24 w-full rounded-lg border border-slate-200 object-cover"
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Sin fotos en galería. Sincroniza con Glo3D o pega URLs manualmente.
+                  </p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!editingItem) return;
+                    const images = editingItem.images.filter((url) => url.startsWith("http"));
+                    setEditingDetails((prev) => ({
+                      ...(prev ?? {}),
+                      thumbnail: prev?.thumbnail || editingItem.thumbnail || images[0] || "",
+                      view3dUrl: prev?.view3dUrl || editingItem.view3dUrl || "",
+                      imagesCsv: prev?.imagesCsv || images.join(", "),
+                    }));
+                    showSystemNotice("success", "Medios cargados", "Se tomaron miniatura, visor y galería del inventario actual.");
+                  }}
+                  className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800"
+                >
+                  Cargar medios desde inventario
+                </button>
               </div>
             ) : null}
 
