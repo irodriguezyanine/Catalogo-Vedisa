@@ -14,6 +14,36 @@ const AUTORED_MAX_LOOKUPS = Number(process.env.CATALOG_AUTORED_MAX_LOOKUPS ?? "1
 const GLO3D_INVENTORY_POST_URL =
   "https://us-central1-glo3d-c338b.cloudfunctions.net/outbound/api/v1/inventory";
 const GLO3D_MAX_PAGES = Number(process.env.GLO3D_MAX_PAGES ?? "8");
+const GLO3D_REFRESH_MAX_PAGES = Number(process.env.GLO3D_REFRESH_MAX_PAGES ?? "12");
+const GLO3D_PAGE_CACHE_TTL_MS = 120_000;
+const GLO3D_PATENT_CACHE_TTL_MS = 300_000;
+
+type Glo3dPagePayload = {
+  data: Array<Record<string, unknown>>;
+  remaining: number;
+  ok: boolean;
+  rateLimited?: boolean;
+};
+
+const glo3dPageCache = new Map<string, { expires: number; payload: Glo3dPagePayload }>();
+const glo3dPatentCache = new Map<string, { expires: number; entry: Glo3dInventoryEntry | null }>();
+
+function getGlo3dCredentials(): { username: string; password: string } | null {
+  const username =
+    process.env.GLO3D_API_USERNAME ??
+    process.env.VITE_GLO3D_API_USERNAME ??
+    process.env.NEXT_PUBLIC_GLO3D_API_USERNAME;
+  const password =
+    process.env.GLO3D_API_PASSWORD ??
+    process.env.VITE_GLO3D_API_PASSWORD ??
+    process.env.NEXT_PUBLIC_GLO3D_API_PASSWORD;
+  if (!username || !password) return null;
+  return { username, password };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 const GLO3D_IFRAME_NOVA_BASE = "https://glo3d.net/iframeNova";
 const GLO3D_IFRAME_PARAMS =
   "gallery=true&featurevideos=true&condition=false&interior=false&footerGallery=false&zoom=false&navigationarrows=false&spinicon=basic&font=Roboto&topbarblinking=false&fullscreen=false&load=false&autorotate=false&themetextcolor=black";
@@ -888,7 +918,57 @@ function extractPatentFromGlo3dItem(item: Record<string, unknown>): string | und
 function glo3dItemMatchesPatent(item: Record<string, unknown>, target: string): boolean {
   const candidates = new Set<string>();
   collectPatentCandidatesFromUnknown(item, candidates);
-  return candidates.has(target);
+  if (candidates.has(target)) return true;
+  const stock = normalizeStock(
+    getStringFromKeys(item, ["stock_number", "stock", "PPU", "ppu", "patente", "plate"]) ?? "",
+  );
+  return stock === target;
+}
+
+function glo3dRawContainsNeedle(item: Record<string, unknown>, target: string): boolean {
+  return JSON.stringify(item).toUpperCase().includes(target);
+}
+
+function stampGlo3dEntryPatent(entry: Glo3dInventoryEntry, patente: string): Glo3dInventoryEntry {
+  const raw = { ...(entry.raw as Record<string, unknown>), patente, ppu: patente, stock_number: patente };
+  return {
+    ...entry,
+    technicalFields: {
+      ...entry.technicalFields,
+      patente,
+      ppu: patente,
+      stock_number: patente,
+    },
+    raw,
+  };
+}
+
+function glo3dEntryToCatalogRow(patente: string, entry: Glo3dInventoryEntry): Record<string, unknown> {
+  const fields = entry.technicalFields;
+  const raw = entry.raw as Record<string, unknown>;
+  const thumb =
+    pickString(raw, ["thumb", "thumbnail_url", "image", "image_url", "foto", "thumbnail"]) ??
+    pickString(fields, ["thumb", "thumbnail_url", "image", "image_url", "foto"]);
+  const imagenes = thumb && thumb.startsWith("http") ? [thumb] : [];
+  return {
+    patente,
+    stock_number: patente,
+    PPU: patente,
+    marca: pickString(fields, ["marca", "brand", "make"]) ?? "Sin Marca",
+    modelo: pickString(fields, ["modelo", "model", "model2"]) ?? "Sin Modelo",
+    ano: pickString(fields, ["ano", "anio", "year"]),
+    version: pickString(fields, ["version", "trim", "ver"]),
+    kilometraje: pickString(fields, ["kilometraje", "km", "odometro", "odometer"]),
+    descripcion: pickString(fields, ["descripcion", "description"]),
+    imagenes: imagenes.length > 0 ? imagenes : null,
+    glo3d_url: entry.view3dUrl ?? null,
+    url_3d: entry.view3dUrl ?? null,
+    visor_3d_url: entry.view3dUrl ?? null,
+    glo3d: raw,
+    origen: "glo3d",
+    estado_retiro: "en_tasacion",
+    categoria: (pickString(fields, ["categoria", "tipo_vehiculo", "tipo_de_vehiculo"]) ?? "vehiculo_liviano").toLowerCase(),
+  };
 }
 
 function buildGlo3dEntryFromRaw(item: Record<string, unknown>): Glo3dInventoryEntry | null {
@@ -934,21 +1014,19 @@ function buildGlo3dEntryFromRaw(item: Record<string, unknown>): Glo3dInventoryEn
   };
 }
 
-async function fetchGlo3dInventoryPage(
-  page: number,
-  search?: string,
-): Promise<{
-  data: Array<Record<string, unknown>>;
-  remaining: number;
-  ok: boolean;
-}> {
-  const username = process.env.GLO3D_API_USERNAME ?? process.env.VITE_GLO3D_API_USERNAME;
-  const password = process.env.GLO3D_API_PASSWORD ?? process.env.VITE_GLO3D_API_PASSWORD;
-  if (!username || !password) {
+async function fetchGlo3dInventoryPage(page: number, search?: string): Promise<Glo3dPagePayload> {
+  const credentials = getGlo3dCredentials();
+  if (!credentials) {
     return { data: [], remaining: 0, ok: false };
   }
 
-  const authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+  const cacheKey = `${page}:${(search ?? "").trim().toUpperCase()}`;
+  const cached = glo3dPageCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    return cached.payload;
+  }
+
+  const authHeader = `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`;
   const body =
     page === 0
       ? JSON.stringify(
@@ -962,53 +1040,86 @@ async function fetchGlo3dInventoryPage(
             : { page, pageSize: 200 },
         );
 
-  const response = await fetch(GLO3D_INVENTORY_POST_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: authHeader,
-    },
-    body,
-    cache: "no-store",
-  });
-  if (!response.ok) return { data: [], remaining: 0, ok: false };
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await fetch(GLO3D_INVENTORY_POST_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: authHeader,
+      },
+      body,
+      cache: "no-store",
+    });
 
-  const payload = (await response.json()) as {
-    data?: Array<Record<string, unknown>>;
-    remaining?: number;
-  };
-  return {
-    data: payload.data ?? [],
-    remaining: payload.remaining ?? 0,
-    ok: true,
-  };
+    if (response.status === 429) {
+      await sleep(900 * (attempt + 1));
+      continue;
+    }
+
+    if (!response.ok) {
+      return { data: [], remaining: 0, ok: false, rateLimited: response.status === 429 };
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<Record<string, unknown>>;
+      remaining?: number;
+    };
+    const result: Glo3dPagePayload = {
+      data: payload.data ?? [],
+      remaining: payload.remaining ?? 0,
+      ok: true,
+    };
+    glo3dPageCache.set(cacheKey, { expires: Date.now() + GLO3D_PAGE_CACHE_TTL_MS, payload: result });
+    return result;
+  }
+
+  return { data: [], remaining: 0, ok: false, rateLimited: true };
+}
+
+function resolveGlo3dEntryFromPageItems(
+  items: Array<Record<string, unknown>>,
+  target: string,
+): Glo3dInventoryEntry | null {
+  for (const item of items) {
+    if (!glo3dItemMatchesPatent(item, target) && !glo3dRawContainsNeedle(item, target)) continue;
+    const entry = buildGlo3dEntryFromRaw(item);
+    if (entry) return stampGlo3dEntryPatent(entry, target);
+  }
+  if (items.length === 1) {
+    const entry = buildGlo3dEntryFromRaw(items[0]);
+    if (entry) return stampGlo3dEntryPatent(entry, target);
+  }
+  return null;
 }
 
 async function fetchGlo3dByPatentScan(patent: string): Promise<Glo3dInventoryEntry | null> {
   const target = normalizeStock(patent);
   if (!target) return null;
 
-  const tryPages = async (search?: string, maxPages = 40) => {
+  for (const query of [target, target.toLowerCase()]) {
     let page = 0;
-    while (page < maxPages) {
-      const payload = await fetchGlo3dInventoryPage(page, search);
+    while (page < 4) {
+      const payload = await fetchGlo3dInventoryPage(page, query);
       if (!payload.ok) break;
-      for (const item of payload.data) {
-        if (!glo3dItemMatchesPatent(item, target)) continue;
-        const entry = buildGlo3dEntryFromRaw(item);
-        if (entry) return entry;
-      }
+      const resolved = resolveGlo3dEntryFromPageItems(payload.data, target);
+      if (resolved) return resolved;
       if (payload.remaining <= 0 || payload.data.length === 0) break;
       page += 1;
     }
-    return null;
-  };
+  }
 
-  const fromSearch = await tryPages(target, 6);
-  if (fromSearch) return fromSearch;
+  let page = 0;
+  while (page < 8) {
+    const payload = await fetchGlo3dInventoryPage(page);
+    if (!payload.ok) break;
+    const resolved = resolveGlo3dEntryFromPageItems(payload.data, target);
+    if (resolved) return resolved;
+    if (payload.remaining <= 0 || payload.data.length === 0) break;
+    page += 1;
+  }
 
-  return tryPages(undefined, 40);
+  return null;
 }
 
 export async function fetchGlo3dRecordByPatent(
@@ -1016,15 +1127,58 @@ export async function fetchGlo3dRecordByPatent(
 ): Promise<Glo3dInventoryEntry | null> {
   const stock = normalizeStock(patent);
   if (!stock) return null;
-  const resolved = await fetchGlo3dByStocks([stock]);
-  if (resolved.has(stock)) return resolved.get(stock) ?? null;
-  return fetchGlo3dByPatentScan(stock);
+
+  const cached = glo3dPatentCache.get(stock);
+  if (cached && cached.expires > Date.now()) {
+    return cached.entry;
+  }
+
+  const fromScan = await fetchGlo3dByPatentScan(stock);
+  glo3dPatentCache.set(stock, { expires: Date.now() + GLO3D_PATENT_CACHE_TTL_MS, entry: fromScan });
+  return fromScan;
+}
+
+export async function appendGlo3dOnlyCatalogItems(items: CatalogItem[]): Promise<CatalogItem[]> {
+  const known = new Set(
+    items
+      .map(getItemStock)
+      .filter((value): value is string => !!value)
+      .map((value) => normalizeStock(value)),
+  );
+  const extra: CatalogItem[] = [];
+
+  let page = 0;
+  while (page < GLO3D_REFRESH_MAX_PAGES) {
+    const payload = await fetchGlo3dInventoryPage(page);
+    if (!payload.ok) break;
+
+    for (const raw of payload.data) {
+      const patente =
+        extractPatentFromGlo3dItem(raw) ??
+        normalizeStock(getStringFromKeys(raw, ["stock_number", "stock", "PPU", "ppu"]) ?? "");
+      if (!patente || !/^[A-Z]{4}\d{2}$/.test(patente) || known.has(patente)) continue;
+
+      const entry = buildGlo3dEntryFromRaw(raw);
+      if (!entry) continue;
+      const row = glo3dEntryToCatalogRow(patente, stampGlo3dEntryPatent(entry, patente));
+      const item = catalogRowToItem(row);
+      if (!item) continue;
+      extra.push(item);
+      known.add(patente);
+    }
+
+    if (payload.remaining <= 0 || payload.data.length === 0) break;
+    page += 1;
+  }
+
+  if (extra.length === 0) return items;
+  return mergeCatalogItems(items, extra);
 }
 
 async function fetchGlo3dByStocks(stocks: string[]): Promise<Map<string, Glo3dInventoryEntry>> {
-  const username = process.env.GLO3D_API_USERNAME ?? process.env.VITE_GLO3D_API_USERNAME;
-  const password = process.env.GLO3D_API_PASSWORD ?? process.env.VITE_GLO3D_API_PASSWORD;
-  if (!username || !password || stocks.length === 0) return new Map();
+  const credentials = getGlo3dCredentials();
+  if (!credentials || stocks.length === 0) return new Map();
+  const { username, password } = credentials;
 
   const pending = new Set(stocks.map(normalizeStock).filter(Boolean));
   const resolved = new Map<string, Glo3dInventoryEntry>();

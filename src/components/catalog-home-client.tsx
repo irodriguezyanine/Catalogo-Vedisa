@@ -523,6 +523,14 @@ function extractPatentTokens(value: string): string[] {
   return Array.from(new Set(normalized));
 }
 
+function resolveAutoImportPatent(rawTerm: string): string | null {
+  const tokens = extractPatentTokens(rawTerm);
+  if (tokens.length === 1) return tokens[0];
+  const compact = normalizePatentToken(rawTerm.trim());
+  if (/^[A-Z]{4}\d{2}$/.test(compact)) return compact;
+  return null;
+}
+
 function getCatalogItemDedupeKey(item: CatalogItem): string {
   const patent = normalizePatentToken(getPatent(item));
   if (patent && patent !== "—") return patent;
@@ -5406,9 +5414,8 @@ export function CatalogHomeClient({
 
   useEffect(() => {
     if (!batchAssignTarget || batchAssignImporting) return;
-    const tokens = extractPatentTokens(batchAssignSearchTerm);
-    if (tokens.length !== 1) return;
-    const patent = tokens[0];
+    const patent = resolveAutoImportPatent(batchAssignSearchTerm);
+    if (!patent) return;
     if (lastAutoImportPatentRef.current === patent) return;
     const hasLocal = items.some((item) => {
       const itemPatent = normalizePatentToken(getPatent(item));
@@ -5419,7 +5426,7 @@ export function CatalogHomeClient({
     const timeout = window.setTimeout(() => {
       lastAutoImportPatentRef.current = patent;
       void importPatentsForBatchAssign();
-    }, 500);
+    }, 800);
     return () => window.clearTimeout(timeout);
   }, [batchAssignSearchTerm, batchAssignTarget, batchAssignImporting, items]);
 
@@ -11140,6 +11147,13 @@ export function CatalogHomeClient({
             {!batchAssignSearchTerm.trim() ? (
               <p className="mb-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-600">
                 Escribe una patente para buscar. Si no está cargada, se importará automáticamente desde Glo3D.
+              </p>
+            ) : null}
+
+            {batchAssignSearchTerm.trim() && !resolveAutoImportPatent(batchAssignSearchTerm) ? (
+              <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Escribe la patente completa de 6 caracteres (4 letras + 2 números), por ejemplo{" "}
+                <strong>TJSX32</strong>.
               </p>
             ) : null}
 

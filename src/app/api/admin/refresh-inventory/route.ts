@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
-import { getCatalogFeed } from "@/lib/catalog";
+import { appendGlo3dOnlyCatalogItems, getCatalogFeed } from "@/lib/catalog";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +17,7 @@ export async function POST() {
 
   try {
     const feed = await getCatalogFeed();
+    const items = await appendGlo3dOnlyCatalogItems(feed.items);
     const reconcile = await reconcileSharedPlatforms(session.email);
     revalidatePath("/");
     revalidatePath("/api/catalogo");
@@ -24,8 +25,8 @@ export async function POST() {
     return Response.json({
       ok: true,
       source: feed.source,
-      itemCount: feed.items.length,
-      items: feed.items,
+      itemCount: items.length,
+      items,
       sync: reconcile.sync,
       revalidatedAt: new Date().toISOString(),
     });

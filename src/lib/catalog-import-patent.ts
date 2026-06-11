@@ -286,7 +286,9 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
 
   if (!glo3d) {
     const hasGlo3dCredentials = Boolean(
-      process.env.GLO3D_API_USERNAME ?? process.env.VITE_GLO3D_API_USERNAME,
+      process.env.GLO3D_API_USERNAME ??
+        process.env.VITE_GLO3D_API_USERNAME ??
+        process.env.NEXT_PUBLIC_GLO3D_API_USERNAME,
     );
     if (!hasGlo3dCredentials) {
       throw new Error(
@@ -294,7 +296,7 @@ export async function importVehicleByPatent(rawPatent: string): Promise<ImportPa
       );
     }
     throw new Error(
-      `No se encontró ${patente} en Glo3D. Verifica que el visor esté publicado y pulsa "Actualizar inventario y sync".`,
+      `No se encontró ${patente} en Glo3D (o la API está saturada). Escribe la patente completa (ej. TJSX32), espera 5 segundos y pulsa "Actualizar inventario y sync".`,
     );
   }
 
