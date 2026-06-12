@@ -114,9 +114,12 @@ const VEDISA_PORTALS: ReadonlyArray<{ label: string; url: string }> = [
 ];
 
 const VEDISA_SOCIAL: ReadonlyArray<{ label: string; url: string }> = [
-  { label: "Instagram", url: "https://www.instagram.com/vedisaremates" },
-  { label: "Facebook", url: "https://www.facebook.com/vedisaremates" },
-  { label: "TikTok", url: "https://www.tiktok.com/@vedisaremates" },
+  { label: "Instagram", url: "https://www.instagram.com/vehiculosvedisaremates/" },
+  {
+    label: "Facebook",
+    url: "https://www.facebook.com/p/Vedisa-Remates-Vehiculos-100011992631217/?locale=es_LA",
+  },
+  { label: "TikTok", url: "https://www.tiktok.com/@vedisa.remates" },
 ];
 
 const PDF_SUPPRESSED_TAGLINE_FRAGMENTS = [
@@ -354,6 +357,14 @@ function shortenPdfText(text: string, maxLen: number): string {
   return `${slice}...`;
 }
 
+function isPatentLikeDescriptor(text: string): boolean {
+  const clean = sanitizeTextForPdf(text).toUpperCase();
+  if (!clean) return false;
+  if (/^[A-Z]{4}\d{2}$/.test(clean.replace(/[\s-]/g, ""))) return true;
+  if (/^[A-Z]{4}\d{2}\s*-\s*\d{4}$/.test(clean)) return true;
+  return false;
+}
+
 function resolvePdfModelCell(
   model: string,
   vehiclePrimary: string,
@@ -368,18 +379,26 @@ function resolvePdfModelCell(
 
   if (descriptor) {
     const descriptorNorm = normalizeText(descriptor);
-    if (descriptorNorm === primaryNorm || primaryNorm.includes(descriptorNorm)) {
+    if (
+      descriptorNorm === primaryNorm ||
+      primaryNorm.includes(descriptorNorm) ||
+      isPatentLikeDescriptor(descriptor)
+    ) {
       descriptor = "";
     }
   }
 
   if (!descriptor && vehicleSecondary) {
     const secondaryNorm = normalizeText(vehicleSecondary);
-    if (secondaryNorm !== primaryNorm) {
+    if (secondaryNorm !== primaryNorm && !isPatentLikeDescriptor(vehicleSecondary)) {
       descriptor = shortenPdfText(vehicleSecondary, 28);
     }
   } else if (descriptor) {
     descriptor = shortenPdfText(descriptor, 28);
+  }
+
+  if (descriptor && isPatentLikeDescriptor(descriptor)) {
+    descriptor = "";
   }
 
   return { year, lines: descriptor ? [descriptor] : [] };
@@ -406,12 +425,13 @@ function drawPdfModelCell(
   x: number,
   y: number,
   width: number,
+  rowHeight: number,
   brand: typeof VEDISA_BRAND,
 ) {
-  const innerX = x + 6;
-  const innerWidth = Math.max(12, width - 12);
+  const innerWidth = Math.max(12, width - 14);
   const centerX = x + width / 2;
-  let cursorY = y + 12;
+  const blockHeight = measurePdfModelCell(doc, cell, innerWidth);
+  let cursorY = y + Math.max(10, (rowHeight - blockHeight) / 2 + 8);
 
   if (cell.year) {
     const badgeW = 34;
@@ -432,7 +452,7 @@ function drawPdfModelCell(
     doc.setFontSize(7);
     doc.setTextColor(...brand.slateMuted);
     const lines = doc.splitTextToSize(cell.lines[0] ?? "", innerWidth);
-    doc.text(lines, innerX, cursorY);
+    doc.text(lines, centerX, cursorY, { align: "center" });
   } else if (!cell.year) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
@@ -546,28 +566,49 @@ function drawPdfFooterTextLink(
   drawPdfInvisibleLink(doc, linkX, y - 9, textWidth, 12, url);
 }
 
-function drawPdfSocialChip(
+function drawPdfClosePageBackground(
   doc: JsPdfDocument,
-  label: string,
+  pageWidth: number,
+  pageHeight: number,
+  brand: typeof VEDISA_BRAND,
+) {
+  doc.setFillColor(...brand.navyDeep);
+  doc.rect(0, 0, pageWidth, pageHeight, "F");
+}
+
+function drawPdfSocialRow(
+  doc: JsPdfDocument,
   centerX: number,
   y: number,
   brand: typeof VEDISA_BRAND,
-  url: string,
 ) {
+  const separator = " · ";
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  const textWidth = doc.getTextWidth(label);
-  const chipW = textWidth + 16;
-  const chipH = 18;
-  const chipX = centerX - chipW / 2;
-  const chipY = y - 12;
-  doc.setFillColor(...brand.navyMid);
-  doc.setDrawColor(...brand.cyan);
-  doc.setLineWidth(0.6);
-  doc.roundedRect(chipX, chipY, chipW, chipH, 9, 9, "FD");
-  doc.setTextColor(...brand.white);
-  doc.text(label, centerX, y, { align: "center" });
-  drawPdfInvisibleLink(doc, chipX, chipY, chipW, chipH, url);
+  doc.setFontSize(8);
+  const labelWidths = VEDISA_SOCIAL.map((social) => doc.getTextWidth(social.label));
+  doc.setFont("helvetica", "normal");
+  const separatorWidth = doc.getTextWidth(separator);
+  const totalWidth =
+    labelWidths.reduce((sum, width) => sum + width, 0) +
+    separatorWidth * Math.max(0, VEDISA_SOCIAL.length - 1);
+
+  let cursorX = centerX - totalWidth / 2;
+  VEDISA_SOCIAL.forEach((social, index) => {
+    if (index > 0) {
+      doc.setTextColor(...brand.slateLight);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(separator, cursorX, y);
+      cursorX += separatorWidth;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(...brand.cyanBright);
+    const labelWidth = labelWidths[index] ?? doc.getTextWidth(social.label);
+    doc.text(social.label, cursorX, y);
+    drawPdfInvisibleLink(doc, cursorX, y - 9, labelWidth, 12, social.url);
+    cursorX += labelWidth;
+  });
 }
 
 function drawPdfCorporateCloseFooter(
@@ -577,66 +618,42 @@ function drawPdfCorporateCloseFooter(
   pageHeight: number,
   marginX: number,
   usableWidth: number,
-  pageRight: number,
   brand: typeof VEDISA_BRAND,
   totalPages: number,
 ) {
-  const footerHeight = pageHeight - startY;
-  doc.setFillColor(...brand.navyDeep);
-  doc.rect(0, startY, pageWidth, footerHeight, "F");
-  doc.setDrawColor(...brand.cyanBright);
-  doc.setLineWidth(2);
-  doc.line(marginX, startY + 6, pageRight, startY + 6);
+  let y = startY + 32;
 
-  let y = startY + 28;
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setTextColor(...brand.white);
-  doc.text("ECOSISTEMA VEDISA", pageWidth / 2, y, { align: "center" });
+  doc.text("Nuestros portales", pageWidth / 2, y, { align: "center" });
   y += 20;
 
-  const colW = usableWidth / 2 - 10;
-  const leftX = marginX + 8;
-  const rightX = marginX + usableWidth / 2 + 12;
-  let leftY = y;
-  let rightY = y;
-  for (let i = 0; i < VEDISA_PORTALS.length; i += 1) {
-    const portal = VEDISA_PORTALS[i];
-    if (!portal) continue;
-    if (i % 2 === 0) {
-      drawPdfFooterTextLink(doc, portal.label, leftX, leftY, colW, brand, portal.url);
-      leftY += 17;
-    } else {
-      drawPdfFooterTextLink(doc, portal.label, rightX, rightY, colW, brand, portal.url);
-      rightY += 17;
-    }
+  for (const portal of VEDISA_PORTALS) {
+    drawPdfFooterTextLink(
+      doc,
+      portal.label,
+      marginX,
+      y,
+      usableWidth,
+      brand,
+      portal.url,
+      "center",
+    );
+    y += 15;
   }
-  y = Math.max(leftY, rightY) + 14;
 
-  doc.setDrawColor(...brand.navyMid);
-  doc.setLineWidth(0.6);
-  doc.line(marginX + 20, y, pageRight - 20, y);
-  y += 18;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(...brand.goldMuted);
+  y += 10;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...brand.slateLight);
   doc.text("Siguenos en:", pageWidth / 2, y, { align: "center" });
-  y += 20;
-
-  const chipGap = 96;
-  const socialStartX = pageWidth / 2 - ((VEDISA_SOCIAL.length - 1) * chipGap) / 2;
-  VEDISA_SOCIAL.forEach((social, index) => {
-    drawPdfSocialChip(doc, social.label, socialStartX + index * chipGap, y, brand, social.url);
-  });
-  y += 30;
-
-  doc.setDrawColor(...brand.navyMid);
-  doc.line(marginX + 20, y, pageRight - 20, y);
   y += 18;
+  drawPdfSocialRow(doc, pageWidth / 2, y, brand);
+  y += 28;
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setTextColor(...brand.white);
   doc.text(VEDISA_CONTACT.whatsapp, pageWidth / 2, y, { align: "center" });
   y += 14;
@@ -644,23 +661,13 @@ function drawPdfCorporateCloseFooter(
   doc.setFontSize(7.5);
   doc.setTextColor(...brand.slateLight);
   doc.text("WhatsApp - Contact Center", pageWidth / 2, y, { align: "center" });
-  y += 16;
-  doc.text(VEDISA_CONTACT.offices, pageWidth / 2, y, { align: "center" });
-  y += 12;
-  doc.text(VEDISA_CONTACT.exhibition, pageWidth / 2, y, { align: "center" });
-  y += 12;
+  y += 14;
   doc.text(VEDISA_CONTACT.hours, pageWidth / 2, y, { align: "center" });
-  y += 18;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
-  doc.setTextColor(...brand.goldMuted);
-  doc.text(VEDISA_CONTACT.onlineTitle, pageWidth / 2, y, { align: "center" });
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7);
   doc.setTextColor(...brand.slateLight);
-  doc.text(`Pagina ${totalPages} de ${totalPages}`, pageWidth / 2, pageHeight - 14, { align: "center" });
+  doc.text(`Pagina ${totalPages} de ${totalPages}`, pageWidth / 2, pageHeight - 16, { align: "center" });
 }
 
 function drawPdfInfoLine(
@@ -735,7 +742,7 @@ function measurePdfSectionHeader(
   }
 
   return {
-    totalHeight: Math.max(34, height + 6),
+    totalHeight: Math.max(40, height + 14),
     secondaryLines,
     taglineLines,
   };
@@ -751,35 +758,28 @@ function drawPdfSectionHeader(
   pageRight: number,
   brand: typeof VEDISA_BRAND,
 ): number {
-  const bandHeight = layout.totalHeight + 8;
+  const bandHeight = layout.totalHeight;
+  const padX = 16;
   drawPdfSoftCard(doc, x, y, width, bandHeight, brand.goldSoft, brand.borderSoft);
-  drawPdfAccentDot(doc, x + 14, y + 14, brand.gold);
 
-  const titleX = x + PDF_LAYOUT.accentWidth + 18;
-  const textWidth = width - PDF_LAYOUT.accentWidth - 110;
+  const titleX = x + padX;
 
-  doc.setDrawColor(...brand.cyan);
-  doc.setLineWidth(PDF_LAYOUT.accentWidth);
-  doc.line(x + 8, y + 10, x + 8, y + bandHeight - 10);
+  let contentHeight = 16;
+  if (layout.secondaryLines.length > 0) {
+    contentHeight += layout.secondaryLines.length * 12 + 6;
+  }
+  if (layout.taglineLines.length > 0) {
+    contentHeight += layout.taglineLines.length * 10 + 4;
+  }
+
+  const blockTop = y + (bandHeight - contentHeight) / 2;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14.5);
   doc.setTextColor(...brand.navy);
-  doc.text(parsed.primary, titleX, y + 18);
+  doc.text(parsed.primary, titleX, blockTop + 12);
 
-  const countLabel = `${parsed.count} vehiculo${parsed.count === 1 ? "" : "s"}`;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  const badgeW = doc.getTextWidth(countLabel) + 14;
-  const badgeX = pageRight - badgeW;
-  doc.setFillColor(...brand.cyanPale);
-  doc.setDrawColor(...brand.cyan);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(badgeX, y + 8, badgeW, 16, 8, 8, "FD");
-  doc.setTextColor(...brand.cyanDeep);
-  doc.text(countLabel, badgeX + badgeW / 2, y + 18, { align: "center" });
-
-  let cursor = y + 32;
+  let cursor = blockTop + 26;
   if (layout.secondaryLines.length > 0) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
@@ -794,6 +794,20 @@ function drawPdfSectionHeader(
     doc.setTextColor(...brand.slateMuted);
     doc.text(layout.taglineLines, titleX, cursor);
   }
+
+  const countLabel = `${parsed.count} vehiculo${parsed.count === 1 ? "" : "s"}`;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  const badgeW = doc.getTextWidth(countLabel) + 16;
+  const badgeH = 18;
+  const badgeX = pageRight - badgeW - padX;
+  const badgeY = y + (bandHeight - badgeH) / 2;
+  doc.setFillColor(...brand.cyanPale);
+  doc.setDrawColor(...brand.cyan);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 9, 9, "FD");
+  doc.setTextColor(...brand.cyanDeep);
+  doc.text(countLabel, badgeX + badgeW / 2, badgeY + 12, { align: "center" });
 
   return bandHeight;
 }
@@ -1613,6 +1627,7 @@ export async function generateCatalogPdfDocument(
         getColumnX(modelColIndex),
         y,
         tableColumns[modelColIndex].width,
+        rowHeight,
         BRAND,
       );
 
@@ -1678,9 +1693,9 @@ export async function generateCatalogPdfDocument(
 
   // --- Cierre premium ---
   doc.addPage();
-  const closeHeroHeight = Math.round(pageHeight * PDF_LAYOUT.closeHeroRatio);
+  const closeHeroHeight = Math.round(pageHeight * 0.52);
   const closeFooterStartY = closeHeroHeight;
-  drawPdfHeroGradient(doc, pageWidth, closeHeroHeight, BRAND);
+  drawPdfClosePageBackground(doc, pageWidth, pageHeight, BRAND);
 
   let closeCursorY = PDF_LAYOUT.closeLogoTop;
   if (logoDataUrl) {
@@ -1697,13 +1712,7 @@ export async function generateCatalogPdfDocument(
   doc.text("Puedes ver el detalle", pageWidth / 2, closeCursorY, { align: "center" });
   closeCursorY += 30;
   doc.text("en nuestro catalogo", pageWidth / 2, closeCursorY, { align: "center" });
-  closeCursorY += 24;
-
-  doc.setDrawColor(...BRAND.goldMuted);
-  doc.setLineWidth(1.5);
-  const headlineW = 200;
-  doc.line(pageWidth / 2 - headlineW / 2, closeCursorY, pageWidth / 2 + headlineW / 2, closeCursorY);
-  closeCursorY += PDF_LAYOUT.closeIconToLink + 12;
+  closeCursorY += 32;
 
   drawPdfIcon(doc, "globe", pageWidth / 2, closeCursorY, 16, BRAND.cyanBright);
   closeCursorY += PDF_LAYOUT.closeIconToLink + 4;
@@ -1731,7 +1740,6 @@ export async function generateCatalogPdfDocument(
     pageHeight,
     marginX,
     usableWidth,
-    pageRight,
     BRAND,
     totalPages,
   );
