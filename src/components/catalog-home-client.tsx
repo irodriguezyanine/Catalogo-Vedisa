@@ -36,6 +36,7 @@ import {
 } from "@/lib/catalog-pdf";
 import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
 import { isCatalogPublishedVehicle } from "@/lib/catalog-publication-rules";
+import { clearPublicationBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
 import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
 import { cloudinaryRawPdfUrlForInlineDisplay, cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
 import {
@@ -5405,8 +5406,12 @@ export function CatalogHomeClient({
             vdSet.delete(key);
           }
         }
+        const publicationUnblocked = enabled
+          ? clearPublicationBlocksForVehicleKeys(prev, selected)
+          : null;
         return {
           ...prev,
+          ...(publicationUnblocked ?? {}),
           vehicleUpcomingAuctionIds: nextAssignments,
           sectionVehicleIds: {
             ...prev.sectionVehicleIds,
@@ -5438,8 +5443,10 @@ export function CatalogHomeClient({
         proxSet.add(key);
         vdSet.delete(key);
       }
+      const publicationUnblocked = clearPublicationBlocksForVehicleKeys(prev, selected);
       return {
         ...prev,
+        ...publicationUnblocked,
         vehicleUpcomingAuctionIds: nextAssignments,
         sectionVehicleIds: {
           ...prev.sectionVehicleIds,
@@ -6496,6 +6503,7 @@ export function CatalogHomeClient({
         const hiddenVehicleIds = (prev.hiddenVehicleIds ?? []).filter(
           (id) => !keysToAssign.includes(id),
         );
+        const publicationUnblocked = clearPublicationBlocksForVehicleKeys(prev, keysToAssign);
 
         if (batchAssignTarget.type === "auction") {
           const nextAuctionMap = { ...prev.vehicleUpcomingAuctionIds };
@@ -6504,7 +6512,7 @@ export function CatalogHomeClient({
           }
           return {
             ...prev,
-            hiddenVehicleIds,
+            ...publicationUnblocked,
             vehicleDetails: nextDetails,
             vehicleUpcomingAuctionIds: nextAuctionMap,
           };
@@ -6514,7 +6522,7 @@ export function CatalogHomeClient({
         for (const vehicleKey of keysToAssign) current.add(vehicleKey);
         return {
           ...prev,
-          hiddenVehicleIds,
+          ...publicationUnblocked,
           vehicleDetails: nextDetails,
           sectionVehicleIds: {
             ...prev.sectionVehicleIds,

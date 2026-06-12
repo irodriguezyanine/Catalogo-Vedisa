@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { clearPublicationBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
 import type { EditorConfig, UpcomingAuction } from "@/types/editor";
 
 export type SharedRemateRow = {
@@ -354,6 +355,7 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
   hiddenCategoryIds.delete("section:ventas-directas");
 
   const sourcesByAuction = new Map<string, Set<string>>();
+  const reassignedVehicleKeys = new Set<string>();
   if (activeRows.length > 0) {
     const remateIds = activeRows.map((row) => row.id).filter(Boolean);
     const [sharedItems, inventoryAliases] = await Promise.all([
@@ -383,11 +385,15 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
       hiddenCategoryIds.delete(`auction:${auctionId}`);
       const targetSection = eventType === "venta_directa" ? ventaDirectaSection : rematesSection;
       assignVehicleToAuction(nextVehicleUpcomingAuctionIds, targetSection, vehicleKeys, auctionId);
+      for (const vehicleKey of vehicleKeys) reassignedVehicleKeys.add(vehicleKey);
     }
   }
 
+  const unblockedPublication = clearPublicationBlocksForVehicleKeys(config, reassignedVehicleKeys);
+
   return {
     ...config,
+    ...unblockedPublication,
     upcomingAuctions: upcomingAuctions
       .sort((a, b) => {
         const tA = Date.parse(a.date || "");
