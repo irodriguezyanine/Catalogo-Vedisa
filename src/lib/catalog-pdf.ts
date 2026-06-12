@@ -38,6 +38,15 @@ type JsPdfDocument = {
   rect(x: number, y: number, w: number, h: number, style?: string): void;
   line(x1: number, y1: number, x2: number, y2: number): void;
   roundedRect(x: number, y: number, w: number, h: number, rx: number, ry: number, style?: string): void;
+  circle(x: number, y: number, r: number, style?: string): void;
+  lines(
+    lines: number[][],
+    x: number,
+    y: number,
+    scale: number | [number, number],
+    style?: string,
+    closed?: boolean,
+  ): void;
   addImage(
     imageData: string,
     format: string,
@@ -83,6 +92,128 @@ const VEDISA_CONTACT = {
   onlineBody:
     "Puede revisar las unidades pre-compra presencialmente en nuestra bodega sin necesidad de garantia.",
 } as const;
+
+const PDF_PRICE_FOOTER = "+ gastos de impuestos y transferencias";
+
+type PdfIconKind = "office" | "location" | "clock" | "phone" | "globe";
+
+function isPdfPriceMissing(label: string): boolean {
+  const normalized = sanitizeTextForPdf(label).toLowerCase();
+  return !normalized || normalized === "sin precio" || normalized === "-";
+}
+
+function drawPdfIcon(
+  doc: JsPdfDocument,
+  kind: PdfIconKind,
+  cx: number,
+  cy: number,
+  size: number,
+  color: readonly [number, number, number],
+) {
+  doc.setDrawColor(...color);
+  doc.setFillColor(...color);
+  doc.setLineWidth(1.1);
+  const half = size / 2;
+
+  if (kind === "location") {
+    doc.circle(cx, cy - half * 0.35, half * 0.34, "F");
+    doc.lines(
+      [
+        [0, half * 0.95],
+        [-half * 0.42, -half * 0.55],
+        [half * 0.42, -half * 0.55],
+      ],
+      cx,
+      cy + half * 0.2,
+      [1, 1],
+      "F",
+      true,
+    );
+    return;
+  }
+
+  if (kind === "office") {
+    const w = size * 0.72;
+    const h = size * 0.82;
+    const left = cx - w / 2;
+    const top = cy - h / 2 + 2;
+    doc.rect(left, top + h * 0.28, w, h * 0.72, "FD");
+    doc.rect(left + w * 0.12, top, w * 0.22, h * 0.3, "FD");
+    doc.rect(left + w * 0.4, top, w * 0.22, h * 0.3, "FD");
+    doc.rect(left + w * 0.68, top, w * 0.2, h * 0.3, "FD");
+    return;
+  }
+
+  if (kind === "clock") {
+    doc.circle(cx, cy, half * 0.82, "S");
+    doc.setLineWidth(1.4);
+    doc.line(cx, cy, cx, cy - half * 0.42);
+    doc.line(cx, cy, cx + half * 0.34, cy + half * 0.08);
+    return;
+  }
+
+  if (kind === "phone") {
+    const w = size * 0.5;
+    const h = size * 0.82;
+    doc.roundedRect(cx - w / 2, cy - h / 2, w, h, 2.5, 2.5, "S");
+    doc.circle(cx, cy + h * 0.28, 1.8, "F");
+    return;
+  }
+
+  doc.circle(cx, cy, half * 0.82, "S");
+  doc.line(cx - half * 0.7, cy, cx + half * 0.7, cy);
+  doc.line(cx - half * 0.45, cy - half * 0.55, cx + half * 0.45, cy - half * 0.55);
+  doc.line(cx - half * 0.45, cy + half * 0.55, cx + half * 0.45, cy + half * 0.55);
+}
+
+function drawPdfLink(
+  doc: JsPdfDocument,
+  label: string,
+  centerX: number,
+  y: number,
+  fontSize: number,
+  color: readonly [number, number, number],
+) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(fontSize);
+  doc.setTextColor(...color);
+  doc.text(label, centerX, y, { align: "center" });
+  const textWidth = doc.getTextWidth(label);
+  doc.setDrawColor(...color);
+  doc.setLineWidth(0.6);
+  doc.line(centerX - textWidth / 2, y + 3, centerX + textWidth / 2, y + 3);
+}
+
+function drawPdfRule(
+  doc: JsPdfDocument,
+  x: number,
+  y: number,
+  width: number,
+  color: readonly [number, number, number] = VEDISA_BRAND.borderSoft,
+) {
+  doc.setDrawColor(...color);
+  doc.setLineWidth(0.6);
+  doc.line(x, y, x + width, y);
+}
+
+function drawPdfInfoLine(
+  doc: JsPdfDocument,
+  icon: PdfIconKind,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  iconColor: readonly [number, number, number],
+  textColor: readonly [number, number, number] = VEDISA_BRAND.slateText,
+): number {
+  drawPdfIcon(doc, icon, x + 12, y + 10, 16, iconColor);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(...textColor);
+  const lines = doc.splitTextToSize(sanitizeTextForPdf(text), maxWidth - 30);
+  doc.text(lines, x + 28, y + 12);
+  return Math.max(22, lines.length * 12 + 10);
+}
 
 /** jsPDF (Helvetica) no renderiza bien Unicode ni maxWidth estrecho en la misma línea. */
 function sanitizeTextForPdf(value: string): string {
@@ -536,75 +667,28 @@ export async function generateCatalogPdfDocument(
   const totalRows = sections.reduce((acc, section) => acc + section.rows.length, 0);
   const BRAND = VEDISA_BRAND;
 
-  const drawCtaButton = (
-    centerX: number,
-    topY: number,
-    label: string,
-    width: number,
-    fill: readonly [number, number, number],
-    textColor: readonly [number, number, number] = BRAND.white,
-  ) => {
-    const height = 28;
-    const x = centerX - width / 2;
-    doc.setFillColor(...fill);
-    doc.setDrawColor(...fill);
-    doc.roundedRect(x, topY, width, height, 8, 8, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(...textColor);
-    doc.text(label, centerX, topY + 18, { align: "center" });
-    return topY + height;
-  };
-
-  const drawMarketingBadge = (
-    x: number,
-    y: number,
-    label: string,
-    fill: readonly [number, number, number],
-    textColor: readonly [number, number, number] = BRAND.white,
-  ) => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    const badgeW = doc.getTextWidth(label) + 16;
-    doc.setFillColor(...fill);
-    doc.roundedRect(x, y, badgeW, 16, 4, 4, "F");
-    doc.setTextColor(...textColor);
-    doc.text(label, x + badgeW / 2, y + 11, { align: "center" });
-    return badgeW;
-  };
-
-  // --- Portada comercial ---
+  // --- Portada fluida (estilo web) ---
+  const heroHeight = Math.round(pageHeight * 0.5);
   doc.setFillColor(...BRAND.navyDeep);
-  doc.rect(0, 0, pageWidth, pageHeight, "F");
-  doc.setFillColor(...BRAND.cyan);
-  doc.rect(0, 0, pageWidth, 10, "F");
-  doc.setFillColor(...BRAND.indigo);
-  doc.rect(0, pageHeight - 10, pageWidth, 10, "F");
-
-  doc.setFillColor(14, 165, 233);
-  doc.rect(pageWidth - 140, 0, 140, 130, "F");
-
-  doc.setFillColor(10, 32, 72);
-  doc.roundedRect(marginX + 6, 36, usableWidth - 12, pageHeight - 72, 20, 20, "F");
+  doc.rect(0, 0, pageWidth, heroHeight, "F");
+  doc.setFillColor(...BRAND.cyanBright);
+  doc.rect(0, heroHeight - 2, pageWidth, 2, "F");
   doc.setFillColor(...BRAND.white);
-  doc.roundedRect(marginX, 30, usableWidth, pageHeight - 84, 20, 20, "F");
+  doc.rect(0, heroHeight, pageWidth, pageHeight - heroHeight, "F");
 
   if (logoDataUrl) {
-    const { width: logoWidth, height: logoHeight } = fitDimensionsByAspect(logoAspectRatio, 280, 72);
-    doc.addImage(logoDataUrl, "PNG", (pageWidth - logoWidth) / 2, 58, logoWidth, logoHeight);
+    const { width: logoWidth, height: logoHeight } = fitDimensionsByAspect(logoAspectRatio, 260, 68);
+    doc.addImage(logoDataUrl, "PNG", (pageWidth - logoWidth) / 2, 52, logoWidth, logoHeight);
   }
 
-  let coverBadgeX = marginX + 24;
-  coverBadgeX += drawMarketingBadge(coverBadgeX, 138, "REMATES ONLINE", BRAND.indigo) + 8;
-  drawMarketingBadge(coverBadgeX, 138, "VENTA DIRECTA", BRAND.cyan);
-
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(38);
-  doc.setTextColor(...BRAND.navy);
-  doc.text("CATALOGO VEDISA", pageWidth / 2, 188, { align: "center" });
-  doc.setFontSize(15);
-  doc.setTextColor(...BRAND.cyan);
-  doc.text("Tu proxima oportunidad en remates y venta directa", pageWidth / 2, 214, { align: "center" });
+  doc.setFontSize(36);
+  doc.setTextColor(...BRAND.white);
+  doc.text("Catalogo Vedisa", pageWidth / 2, 148, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(14);
+  doc.setTextColor(191, 219, 254);
+  doc.text("Remates y venta directa", pageWidth / 2, 174, { align: "center" });
 
   const coverDate = sanitizeTextForPdf(
     now.toLocaleDateString("es-CL", { day: "2-digit", month: "long", year: "numeric" }),
@@ -612,139 +696,107 @@ export async function generateCatalogPdfDocument(
   const coverTime = sanitizeTextForPdf(
     now.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }),
   );
-  doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.setTextColor(...BRAND.slateMuted);
-  doc.text(`Actualizado ${coverDate} - ${coverTime}`, pageWidth / 2, 236, { align: "center" });
+  doc.setTextColor(148, 163, 184);
+  doc.text(`Actualizado ${coverDate} - ${coverTime}`, pageWidth / 2, 196, { align: "center" });
 
-  const heroStatY = 258;
-  const heroStatW = 200;
-  const heroStatX = (pageWidth - heroStatW) / 2;
-  doc.setFillColor(...BRAND.goldSoft);
-  doc.setDrawColor(...BRAND.gold);
-  doc.setLineWidth(1.2);
-  doc.roundedRect(heroStatX, heroStatY, heroStatW, 96, 14, 14, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(52);
+  doc.setTextColor(...BRAND.white);
+  doc.text(String(totalRows), pageWidth / 2, 248, { align: "center" });
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(...BRAND.slateMuted);
-  doc.text("PUBLICACIONES INCLUIDAS", pageWidth / 2, heroStatY + 24, { align: "center" });
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(42);
-  doc.setTextColor(...BRAND.indigo);
-  doc.text(String(totalRows), pageWidth / 2, heroStatY + 62, { align: "center" });
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(...BRAND.gold);
+  doc.setFontSize(11);
+  doc.setTextColor(191, 219, 254);
   doc.text(
-    `${sections.length} CATEGORIA${sections.length === 1 ? "" : "S"} COMERCIALES`,
+    `publicaciones  |  ${sections.length} categoria${sections.length === 1 ? "" : "s"} comerciales`,
     pageWidth / 2,
-    heroStatY + 84,
+    270,
     { align: "center" },
   );
 
-  const pillY = heroStatY + 112;
-  const pillGap = 10;
-  const pillW = (usableWidth - 48 - pillGap * 2) / 3;
-  const pillLabels = ["Oferta actualizada", "Visita presencial", "Compra segura"];
-  for (let i = 0; i < pillLabels.length; i += 1) {
-    const px = marginX + 24 + i * (pillW + pillGap);
-    doc.setFillColor(...BRAND.cyanPale);
-    doc.setDrawColor(...BRAND.cyan);
-    doc.setLineWidth(0.6);
-    doc.roundedRect(px, pillY, pillW, 28, 6, 6, "FD");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(...BRAND.navy);
-    doc.text(pillLabels[i] ?? "", px + pillW / 2, pillY + 17, { align: "center" });
-  }
-
-  const infoBlockW = usableWidth - 48;
-  const infoBlockX = marginX + 24;
-  const infoStartY = pillY + 48;
-  const coverInfoRows = [
-    { label: "Oficinas", value: VEDISA_CONTACT.offices },
-    { label: "Exhibicion", value: VEDISA_CONTACT.exhibition },
-    { label: "Horario", value: VEDISA_CONTACT.hours },
-  ] as const;
-
-  doc.setFillColor(...BRAND.cyanSoft);
-  doc.setDrawColor(...BRAND.borderSoft);
-  doc.roundedRect(infoBlockX, infoStartY, infoBlockW, 132, 10, 10, "FD");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(...BRAND.navy);
-  doc.text("VISITANOS Y CONOCE NUESTRAS UNIDADES", pageWidth / 2, infoStartY + 18, { align: "center" });
-
-  let infoRowY = infoStartY + 34;
-  for (const row of coverInfoRows) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(...BRAND.indigo);
-    doc.text(`${row.label}:`, infoBlockX + 14, infoRowY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(...BRAND.slateText);
-    const lines = doc.splitTextToSize(sanitizeTextForPdf(row.value), infoBlockW - 90);
-    doc.text(lines, infoBlockX + 82, infoRowY);
-    infoRowY += Math.max(12, lines.length * 11) + 4;
-  }
-
-  const onlineY = infoStartY + 142;
+  const coverInfoX = marginX + 8;
+  const coverInfoW = usableWidth - 16;
+  let coverInfoY = heroHeight + 36;
+  drawPdfRule(doc, coverInfoX, coverInfoY - 14, coverInfoW);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(...BRAND.navy);
-  doc.text(VEDISA_CONTACT.onlineTitle, pageWidth / 2, onlineY, { align: "center" });
+  doc.text("Visitanos y conoce nuestras unidades", pageWidth / 2, coverInfoY, { align: "center" });
+  coverInfoY += 22;
+
+  const coverInfoItems: Array<{ icon: PdfIconKind; value: string }> = [
+    { icon: "office", value: VEDISA_CONTACT.offices },
+    { icon: "location", value: VEDISA_CONTACT.exhibition },
+    { icon: "clock", value: VEDISA_CONTACT.hours },
+  ];
+  for (const item of coverInfoItems) {
+    coverInfoY += drawPdfInfoLine(doc, item.icon, item.value, coverInfoX, coverInfoY, coverInfoW, BRAND.cyan);
+    coverInfoY += 4;
+  }
+
+  coverInfoY += 10;
+  drawPdfRule(doc, coverInfoX, coverInfoY, coverInfoW);
+  coverInfoY += 22;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(...BRAND.navy);
+  doc.text(VEDISA_CONTACT.onlineTitle, pageWidth / 2, coverInfoY, { align: "center" });
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
+  doc.setFontSize(9);
   doc.setTextColor(...BRAND.slateMuted);
   doc.text(
-    doc.splitTextToSize(sanitizeTextForPdf(VEDISA_CONTACT.onlineBody), infoBlockW - 20),
+    doc.splitTextToSize(sanitizeTextForPdf(VEDISA_CONTACT.onlineBody), coverInfoW - 40),
     pageWidth / 2,
-    onlineY + 14,
+    coverInfoY + 16,
     { align: "center" },
   );
 
-  drawCtaButton(pageWidth / 2, pageHeight - 72, VEDISA_CONTACT.catalogUrl, 280, BRAND.indigo);
+  drawPdfIcon(doc, "globe", pageWidth / 2, pageHeight - 58, 14, BRAND.cyan);
+  drawPdfLink(doc, VEDISA_CONTACT.catalogUrl, pageWidth / 2, pageHeight - 42, 12, BRAND.cyanBright);
 
   // --- Detalle comercial ---
   doc.addPage();
   let y = 42;
 
   const drawPageHeader = () => {
-    doc.setFillColor(...BRAND.navyDeep);
-    doc.rect(0, 0, pageWidth, 68, "F");
-    doc.setFillColor(...BRAND.cyan);
-    doc.rect(0, 62, pageWidth, 6, "F");
+    doc.setFillColor(...BRAND.white);
+    doc.rect(0, 0, pageWidth, 54, "F");
+    drawPdfRule(doc, 0, 54, pageWidth, BRAND.border);
     if (logoDataUrl) {
       const { width: headerLogoWidth, height: headerLogoHeight } = fitDimensionsByAspect(
         logoAspectRatio,
-        92,
-        24,
+        88,
+        22,
       );
-      doc.addImage(logoDataUrl, "PNG", marginX, 18, headerLogoWidth, headerLogoHeight);
+      doc.addImage(logoDataUrl, "PNG", marginX, 14, headerLogoWidth, headerLogoHeight);
     }
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(...BRAND.white);
-    doc.text("OFERTA COMERCIAL VIGENTE", marginX + (logoDataUrl ? 104 : 0), 30);
+    doc.setFontSize(11);
+    doc.setTextColor(...BRAND.navy);
+    doc.text("Oferta comercial vigente", marginX + (logoDataUrl ? 100 : 0), 26);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
-    doc.setTextColor(191, 219, 254);
-    doc.text(`${totalRows} vehiculos | ${todayLabel}`, marginX + (logoDataUrl ? 104 : 0), 46);
-    drawMarketingBadge(pageWidth - marginX - 108, 22, "CATALOGO OFICIAL", BRAND.gold, BRAND.navy);
-    y = 86;
+    doc.setTextColor(...BRAND.slateMuted);
+    doc.text(`${totalRows} vehiculos`, marginX + (logoDataUrl ? 100 : 0), 40);
+    doc.text(todayLabel, pageWidth - marginX, 32, { align: "right" });
+    y = 68;
   };
 
   const cellPaddingX = 8;
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  let maxPriceTextWidth = doc.getTextWidth("Precio");
+  doc.setFontSize(11);
+  let maxPriceTextWidth = doc.getTextWidth("$99.999.999");
   for (const section of sections) {
     for (const row of section.rows) {
-      maxPriceTextWidth = Math.max(maxPriceTextWidth, doc.getTextWidth(row.priceLabel));
+      if (!isPdfPriceMissing(row.priceLabel)) {
+        maxPriceTextWidth = Math.max(maxPriceTextWidth, doc.getTextWidth(row.priceLabel));
+      }
     }
   }
-  const priceColWidth = Math.ceil(maxPriceTextWidth) + cellPaddingX * 2 + 4;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6);
+  const footerWidth = doc.getTextWidth(PDF_PRICE_FOOTER);
+  const priceColWidth = Math.max(108, Math.ceil(Math.max(maxPriceTextWidth, footerWidth)) + cellPaddingX * 2 + 8);
   const thumbColWidth = 76;
   const patentColWidth = 62;
   const modelColWidth = 78;
@@ -758,7 +810,7 @@ export async function generateCatalogPdfDocument(
     { key: "patent" as const, label: "Patente", width: patentColWidth, align: "center" as const },
     { key: "model" as const, label: "Modelo", width: modelColWidth, align: "left" as const },
     { key: "thumbnail" as const, label: "Foto", width: thumbColWidth, align: "center" as const },
-    { key: "priceLabel" as const, label: "Precio", width: priceColWidth, align: "right" as const },
+    { key: "priceLabel" as const, label: "Precio", width: priceColWidth, align: "center" as const },
   ];
   const vehicleColIndex = 0;
   const patentColIndex = 1;
@@ -789,25 +841,22 @@ export async function generateCatalogPdfDocument(
     marginX + tableColumns.slice(0, columnIndex).reduce((acc, column) => acc + column.width, 0);
 
   const drawTableHeader = () => {
-    doc.setFillColor(...BRAND.navyDeep);
-    doc.roundedRect(marginX, y, usableWidth, 24, 5, 5, "F");
-    doc.setFillColor(...BRAND.gold);
-    doc.rect(marginX, y, 4, 24, "F");
+    doc.setFillColor(248, 250, 252);
+    doc.rect(marginX, y, usableWidth, 22, "F");
+    drawPdfRule(doc, marginX, y + 22, usableWidth);
     let x = marginX;
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(...BRAND.white);
+    doc.setFontSize(8);
+    doc.setTextColor(...BRAND.slateMuted);
     for (const column of tableColumns) {
-      if (column.align === "right") {
-        doc.text(column.label, x + column.width - cellPaddingX, y + 15, { align: "right" });
-      } else if (column.align === "center") {
-        doc.text(column.label, x + column.width / 2, y + 15, { align: "center" });
+      if (column.align === "center") {
+        doc.text(column.label, x + column.width / 2, y + 14, { align: "center" });
       } else {
-        doc.text(column.label, x + cellPaddingX, y + 15);
+        doc.text(column.label, x + cellPaddingX, y + 14);
       }
       x += column.width;
     }
-    y += 30;
+    y += 28;
   };
 
   const ensureSpace = (requiredHeight: number, drawHeaderIfNewPage = false) => {
@@ -820,55 +869,43 @@ export async function generateCatalogPdfDocument(
   drawPageHeader();
   for (const section of sections) {
     const header = parsePdfSectionHeader(section);
-    const countLabel = `${header.count} veh.`;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    const countWidth = Math.max(58, doc.getTextWidth(countLabel) + 18);
-
-    const headerBlockHeight = header.secondary ? 54 : 42;
+    const countLabel = `${header.count} vehiculos`;
+    const headerBlockHeight = header.secondary ? 48 : 34;
     const taglineLines = header.tagline
-      ? doc.splitTextToSize(header.tagline, usableWidth - countWidth - 36)
+      ? doc.splitTextToSize(header.tagline, usableWidth - 120)
       : [];
-    const taglineBlockHeight = taglineLines.length > 0 ? taglineLines.length * 11 + 8 : 0;
+    const taglineBlockHeight = taglineLines.length > 0 ? taglineLines.length * 11 + 6 : 0;
     const totalHeaderHeight = headerBlockHeight + taglineBlockHeight;
 
-    ensureSpace(totalHeaderHeight + 30);
-    doc.setFillColor(...BRAND.navy);
-    doc.roundedRect(marginX, y, usableWidth, totalHeaderHeight, 10, 10, "F");
-    doc.setFillColor(...BRAND.gold);
-    doc.roundedRect(marginX, y, 6, totalHeaderHeight, 2, 2, "F");
+    ensureSpace(totalHeaderHeight + 24);
+    doc.setFillColor(...BRAND.cyan);
+    doc.rect(marginX, y + 4, 3, totalHeaderHeight - 8, "F");
 
-    const countX = marginX + usableWidth - countWidth - 12;
-    doc.setFillColor(...BRAND.gold);
-    doc.roundedRect(countX, y + 10, countWidth, 22, 6, 6, "F");
+    const titleX = marginX + 14;
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
+    doc.setFontSize(15);
     doc.setTextColor(...BRAND.navy);
-    doc.text(countLabel, countX + countWidth / 2, y + 25, { align: "center" });
-
-    const titleX = marginX + 18;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(...BRAND.white);
-    doc.text(header.primary.toUpperCase(), titleX, y + 24);
+    doc.text(header.primary, titleX, y + 22);
 
     if (header.secondary) {
-      doc.setFont("helvetica", "bold");
+      doc.setFont("helvetica", "normal");
       doc.setFontSize(11);
-      doc.setTextColor(191, 219, 254);
-      doc.text(header.secondary, titleX, y + 42);
+      doc.setTextColor(...BRAND.indigo);
+      doc.text(header.secondary, titleX, y + 40);
     }
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...BRAND.slateMuted);
+    doc.text(countLabel, pageWidth - marginX, y + 22, { align: "right" });
 
     if (taglineLines.length > 0) {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(203, 213, 225);
-      doc.text(taglineLines, titleX, y + headerBlockHeight - 2);
+      doc.text(taglineLines, titleX, y + headerBlockHeight - 4);
     }
 
-    y += totalHeaderHeight + 10;
-
-    const tableTopY = y;
+    y += totalHeaderHeight + 6;
+    drawPdfRule(doc, marginX, y, usableWidth);
+    y += 10;
     drawTableHeader();
 
     for (const [rowIndex, row] of section.rows.entries()) {
@@ -897,29 +934,27 @@ export async function generateCatalogPdfDocument(
       doc.setFontSize(9);
       const patentLines = doc.splitTextToSize(patent, patentInnerWidth);
       const modelLines = doc.splitTextToSize(model, modelInnerWidth);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9.5);
-      const priceLines = doc.splitTextToSize(priceLabel, priceInnerWidth);
+      const hasPrice = !isPdfPriceMissing(priceLabel);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6);
+      const priceFooterLines = hasPrice
+        ? doc.splitTextToSize(PDF_PRICE_FOOTER, priceInnerWidth)
+        : [];
+      const priceBlockHeight = hasPrice ? 16 + priceFooterLines.length * 8 + 6 : 14;
 
       const vehicleLineCount = Math.max(1, vehiclePrimaryLines.length + vehicleSecondaryLines.length);
       const textBlockLines = Math.max(
         vehicleLineCount,
         patentLines.length,
         modelLines.length,
-        priceLines.length,
+        Math.ceil(priceBlockHeight / lineHeight),
       );
       const rowHeight = Math.max(thumbMaxHeight + linePaddingY * 2, textBlockLines * lineHeight + linePaddingY * 2);
 
-      ensureSpace(rowHeight + 4, true);
-      const rowFill = rowIndex % 2 === 0 ? BRAND.white : BRAND.cyanSoft;
-      doc.setFillColor(rowFill[0], rowFill[1], rowFill[2]);
-      doc.roundedRect(marginX, y, usableWidth, rowHeight, 4, 4, "F");
-      doc.setDrawColor(...BRAND.borderSoft);
-      doc.setLineWidth(0.5);
-      doc.roundedRect(marginX, y, usableWidth, rowHeight, 4, 4, "S");
-
-      for (let columnIndex = 1; columnIndex < tableColumns.length; columnIndex += 1) {
-        doc.line(getColumnX(columnIndex), y, getColumnX(columnIndex), y + rowHeight);
+      ensureSpace(rowHeight + 6, true);
+      if (rowIndex % 2 === 1) {
+        doc.setFillColor(250, 252, 255);
+        doc.rect(marginX, y, usableWidth, rowHeight, "F");
       }
 
       const vehicleX = getColumnX(vehicleColIndex) + cellPaddingX;
@@ -938,47 +973,34 @@ export async function generateCatalogPdfDocument(
 
       const patentColX = getColumnX(patentColIndex);
       const patentColW = tableColumns[patentColIndex].width;
-      const patentBadgeW = Math.min(patentColW - 8, Math.max(48, doc.getTextWidth(patent) + 12));
-      const patentBadgeX = patentColX + (patentColW - patentBadgeW) / 2;
-      doc.setFillColor(...BRAND.cyanPale);
-      doc.setDrawColor(...BRAND.cyan);
-      doc.roundedRect(patentBadgeX, y + linePaddingY, patentBadgeW, 18, 4, 4, "FD");
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
+      doc.setFontSize(9);
       doc.setTextColor(...BRAND.navy);
-      doc.text(
-        patentLines,
-        patentColX + patentColW / 2,
-        y + linePaddingY + 12,
-        { align: "center" },
-      );
+      doc.text(patentLines, patentColX + patentColW / 2, y + linePaddingY + 10, { align: "center" });
+
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(...BRAND.slateText);
       doc.text(modelLines, getColumnX(modelColIndex) + cellPaddingX, y + linePaddingY + 8);
+
       const priceColX = getColumnX(priceColIndex);
       const priceColW = tableColumns[priceColIndex].width;
-      const priceBadgeH = Math.max(18, priceLines.length * lineHeight + 4);
-      doc.setFillColor(...BRAND.goldSoft);
-      doc.setDrawColor(...BRAND.gold);
-      doc.roundedRect(
-        priceColX + 4,
-        y + linePaddingY,
-        priceColW - 8,
-        priceBadgeH,
-        4,
-        4,
-        "FD",
-      );
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9.5);
-      doc.setTextColor(...BRAND.navy);
-      doc.text(
-        priceLines,
-        priceColX + priceColW - cellPaddingX,
-        y + linePaddingY + 10,
-        { align: "right" },
-      );
+      const priceCenterX = priceColX + priceColW / 2;
+      if (hasPrice) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11.5);
+        doc.setTextColor(...BRAND.navy);
+        doc.text(priceLabel, priceCenterX, y + linePaddingY + 12, { align: "center" });
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6);
+        doc.setTextColor(...BRAND.slateMuted);
+        doc.text(priceFooterLines, priceCenterX, y + linePaddingY + 24, { align: "center" });
+      } else {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(...BRAND.slateMuted);
+        doc.text("Sin precio", priceCenterX, y + linePaddingY + 12, { align: "center" });
+      }
 
       const thumbColX = getColumnX(thumbnailColIndex);
       const thumbColWidthValue = tableColumns[thumbnailColIndex].width;
@@ -991,18 +1013,12 @@ export async function generateCatalogPdfDocument(
         );
         const imgX = thumbColX + (thumbColWidthValue - thumbWidth) / 2;
         const imgY = y + (rowHeight - thumbHeight) / 2;
-        doc.setDrawColor(...BRAND.borderSoft);
-        doc.setFillColor(...BRAND.white);
-        doc.roundedRect(imgX - 2, imgY - 2, thumbWidth + 4, thumbHeight + 4, 3, 3, "FD");
         doc.addImage(imageAsset.dataUrl, imageAsset.format, imgX, imgY, thumbWidth, thumbHeight);
       } else {
         const placeholderWidth = 44;
         const placeholderHeight = 28;
         const placeholderX = thumbColX + (thumbColWidthValue - placeholderWidth) / 2;
         const placeholderY = y + (rowHeight - placeholderHeight) / 2;
-        doc.setFillColor(...BRAND.cyanSoft);
-        doc.setDrawColor(...BRAND.borderSoft);
-        doc.roundedRect(placeholderX, placeholderY, placeholderWidth, placeholderHeight, 3, 3, "FD");
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7);
         doc.setTextColor(...BRAND.slateMuted);
@@ -1011,117 +1027,93 @@ export async function generateCatalogPdfDocument(
         });
       }
 
+      drawPdfRule(doc, marginX, y + rowHeight, usableWidth);
       y += rowHeight;
     }
 
-    const tableHeight = y - tableTopY;
-    doc.setDrawColor(...BRAND.border);
-    doc.setLineWidth(0.8);
-    doc.roundedRect(marginX, tableTopY - 4, usableWidth, tableHeight + 4, 6, 6, "S");
-
-    y += 20;
+    y += 16;
   }
 
-  // --- Pagina de cierre comercial ---
+  // --- Pagina de cierre fluida ---
   doc.addPage();
+  const closeHeroHeight = Math.round(pageHeight * 0.48);
   doc.setFillColor(...BRAND.navyDeep);
-  doc.rect(0, 0, pageWidth, pageHeight, "F");
-  doc.setFillColor(...BRAND.cyan);
-  doc.rect(0, 0, pageWidth, 10, "F");
-  doc.setFillColor(...BRAND.indigo);
-  doc.rect(0, pageHeight - 10, pageWidth, 10, "F");
-
+  doc.rect(0, 0, pageWidth, closeHeroHeight, "F");
+  doc.setFillColor(...BRAND.cyanBright);
+  doc.rect(0, closeHeroHeight - 2, pageWidth, 2, "F");
   doc.setFillColor(...BRAND.white);
-  doc.roundedRect(marginX, 36, usableWidth, pageHeight - 72, 18, 18, "F");
+  doc.rect(0, closeHeroHeight, pageWidth, pageHeight - closeHeroHeight, "F");
 
   if (logoDataUrl) {
-    const { width: closeLogoW, height: closeLogoH } = fitDimensionsByAspect(logoAspectRatio, 220, 56);
-    doc.addImage(logoDataUrl, "PNG", (pageWidth - closeLogoW) / 2, 52, closeLogoW, closeLogoH);
+    const { width: closeLogoW, height: closeLogoH } = fitDimensionsByAspect(logoAspectRatio, 200, 52);
+    doc.addImage(logoDataUrl, "PNG", (pageWidth - closeLogoW) / 2, 44, closeLogoW, closeLogoH);
   }
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(22);
-  doc.setTextColor(...BRAND.navy);
-  doc.text("PUEDES VER EL DETALLE", pageWidth / 2, 128, { align: "center" });
-  doc.text("EN NUESTRO CATALOGO", pageWidth / 2, 154, { align: "center" });
-
-  drawCtaButton(pageWidth / 2, 172, VEDISA_CONTACT.catalogUrl, 320, BRAND.indigo);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.setTextColor(...BRAND.slateText);
-  doc.text("O VENIR A NUESTRAS INSTALACIONES", pageWidth / 2, 228, { align: "center" });
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.setTextColor(...BRAND.cyan);
-  doc.text(VEDISA_CONTACT.exhibition, pageWidth / 2, 252, { align: "center" });
-
-  const corpBlockY = 278;
-  const corpBlockW = usableWidth - 40;
-  const corpBlockX = marginX + 20;
-  doc.setFillColor(...BRAND.cyanSoft);
-  doc.setDrawColor(...BRAND.border);
-  doc.setLineWidth(0.8);
-  doc.roundedRect(corpBlockX, corpBlockY, corpBlockW, 148, 12, 12, "FD");
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(...BRAND.navy);
-  doc.text("INFORMACION CORPORATIVA", pageWidth / 2, corpBlockY + 22, { align: "center" });
-
-  const corpRows = [
-    { label: "Oficinas", value: VEDISA_CONTACT.offices },
-    { label: "Exhibicion", value: VEDISA_CONTACT.exhibition },
-    { label: "Horario", value: VEDISA_CONTACT.hours },
-  ] as const;
-  let corpRowY = corpBlockY + 42;
-  for (const row of corpRows) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(...BRAND.indigo);
-    doc.text(`${row.label}:`, corpBlockX + 18, corpRowY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(...BRAND.slateText);
-    const lines = doc.splitTextToSize(sanitizeTextForPdf(row.value), corpBlockW - 100);
-    doc.text(lines, corpBlockX + 88, corpRowY);
-    corpRowY += Math.max(14, lines.length * 12) + 6;
-  }
-
-  const contactY = corpBlockY + 118;
-  doc.setFillColor(...BRAND.green);
-  doc.roundedRect(corpBlockX + 16, contactY, corpBlockW - 32, 52, 10, 10, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
+  doc.setFontSize(24);
   doc.setTextColor(...BRAND.white);
-  doc.text("CONTACT CENTER", pageWidth / 2, contactY + 18, { align: "center" });
-  doc.setFontSize(14);
-  doc.text(VEDISA_CONTACT.whatsapp, pageWidth / 2, contactY + 36, { align: "center" });
+  doc.text("Puedes ver el detalle", pageWidth / 2, 118, { align: "center" });
+  doc.text("en nuestro catalogo", pageWidth / 2, 148, { align: "center" });
+
+  drawPdfIcon(doc, "globe", pageWidth / 2, 178, 16, BRAND.cyanBright);
+  drawPdfLink(doc, VEDISA_CONTACT.catalogUrl, pageWidth / 2, 202, 14, BRAND.cyanBright);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(12);
+  doc.setTextColor(191, 219, 254);
+  doc.text("o venir a nuestras instalaciones", pageWidth / 2, 236, { align: "center" });
+
+  drawPdfIcon(doc, "location", pageWidth / 2, 262, 16, BRAND.cyanBright);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(...BRAND.white);
+  doc.text(VEDISA_CONTACT.exhibition, pageWidth / 2, 292, { align: "center" });
+
+  const closeInfoX = marginX + 8;
+  const closeInfoW = usableWidth - 16;
+  let closeInfoY = closeHeroHeight + 32;
+  drawPdfRule(doc, closeInfoX, closeInfoY - 12, closeInfoW);
+
+  const closeInfoItems: Array<{ icon: PdfIconKind; value: string }> = [
+    { icon: "office", value: VEDISA_CONTACT.offices },
+    { icon: "location", value: VEDISA_CONTACT.exhibition },
+    { icon: "clock", value: VEDISA_CONTACT.hours },
+  ];
+  for (const item of closeInfoItems) {
+    closeInfoY += drawPdfInfoLine(doc, item.icon, item.value, closeInfoX, closeInfoY, closeInfoW, BRAND.indigo);
+    closeInfoY += 6;
+  }
+
+  closeInfoY += 14;
+  drawPdfRule(doc, closeInfoX, closeInfoY, closeInfoW);
+  closeInfoY += 28;
+
+  drawPdfIcon(doc, "phone", closeInfoX + 14, closeInfoY + 10, 18, BRAND.green);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(...BRAND.navy);
+  doc.text(VEDISA_CONTACT.whatsapp, closeInfoX + 34, closeInfoY + 8);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text("(WhatsApp)", pageWidth / 2, contactY + 48, { align: "center" });
+  doc.setTextColor(...BRAND.slateMuted);
+  doc.text("WhatsApp - Contact Center", closeInfoX + 34, closeInfoY + 22);
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
+  doc.setFontSize(10);
   doc.setTextColor(...BRAND.indigo);
-  doc.text(VEDISA_CONTACT.onlineTitle, pageWidth / 2, pageHeight - 56, { align: "center" });
+  doc.text(VEDISA_CONTACT.onlineTitle, pageWidth / 2, pageHeight - 48, { align: "center" });
 
   const totalPages = doc.getNumberOfPages();
   for (let page = 1; page <= totalPages; page += 1) {
     doc.setPage(page);
     if (page === 1 || page === totalPages) continue;
-    doc.setFillColor(...BRAND.cyanPale);
-    doc.rect(0, pageHeight - 28, pageWidth, 28, "F");
+    drawPdfRule(doc, marginX, pageHeight - 32, usableWidth);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(...BRAND.slateMuted);
-    doc.text(`Catalogo Vedisa | Pagina ${page} de ${totalPages}`, pageWidth / 2, pageHeight - 12, {
+    doc.text(`Catalogo Vedisa  |  Pagina ${page} de ${totalPages}`, pageWidth / 2, pageHeight - 16, {
       align: "center",
     });
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(...BRAND.indigo);
-    doc.text(VEDISA_CONTACT.catalogUrl, pageWidth - marginX, pageHeight - 12, { align: "right" });
   }
 
   return { doc, exportFileName, totalRows };
