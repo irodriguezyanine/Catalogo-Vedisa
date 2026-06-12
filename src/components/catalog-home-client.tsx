@@ -4060,6 +4060,7 @@ export function CatalogHomeClient({
         priceLabel:
           formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ?? "Sin precio",
         thumbnailUrls: collectVehicleImageCandidates(item),
+        vehicleKey: getVehicleKey(item),
       };
     };
 
@@ -4143,10 +4144,12 @@ export function CatalogHomeClient({
     setIsDownloadingCalendarPdf(true);
     try {
       const logoDataUrl = await loadLogoForPdfAsDataUrl();
+      const catalogBaseUrl =
+        typeof window !== "undefined" ? window.location.origin : "https://catalogo.vedisaremates.cl";
       const { doc, exportFileName, totalRows } = await generateCatalogPdfDocument(
         calendarPdfSections,
         logoDataUrl,
-        { showPatents },
+        { showPatents, catalogBaseUrl },
       );
       saveCatalogPdfDocument(doc, exportFileName);
       trackEvent("calendar_pdf_download", {
