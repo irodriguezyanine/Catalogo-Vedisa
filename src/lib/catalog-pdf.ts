@@ -140,7 +140,7 @@ const PDF_LAYOUT = {
   rowPadY: 12,
   rowLineH: 10.5,
   ruleWeight: 0.25,
-  heroRatio: 0.4,
+  heroRatio: 0.43,
   iconColumn: 30,
   iconTextGap: 12,
   iconSize: 15,
@@ -148,9 +148,19 @@ const PDF_LAYOUT = {
   tableHeaderHeight: 26,
   thumbRadius: 5,
   cardRadius: 10,
-  coverLogoTop: 54,
-  coverLogoToTitle: 52,
-  coverTitleToStats: 28,
+  coverLogoMinTop: 48,
+  coverLogoToTitle: 36,
+  coverTitleToSubtitle: 12,
+  coverSubtitleToDate: 14,
+  coverDateToStats: 22,
+  coverStatsCardH: 76,
+  coverStatsCardW: 228,
+  coverHeroBottomPad: 28,
+  coverBodyTopGap: 24,
+  coverCardPadX: 20,
+  coverCardPadY: 20,
+  coverCardGap: 16,
+  coverLinkBottomPad: 36,
   closeLogoTop: 48,
   closeLogoToHeadline: 102,
   closeHeroRatio: 0.48,
@@ -171,6 +181,17 @@ type PdfSectionHeaderLayout = {
 function isPdfPriceMissing(label: string): boolean {
   const normalized = sanitizeTextForPdf(label).toLowerCase();
   return !normalized || normalized === "sin precio" || normalized === "-";
+}
+
+export function filterCatalogPdfSectionsWithPrice(
+  sections: CatalogPdfSection[],
+): CatalogPdfSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      rows: section.rows.filter((row) => !isPdfPriceMissing(row.priceLabel)),
+    }))
+    .filter((section) => section.rows.length > 0);
 }
 
 function drawPdfIcon(
@@ -315,28 +336,132 @@ function drawPdfAccentDot(
   doc.circle(x, y, 2.2, "F");
 }
 
-function drawPdfHeroGradient(
+function drawPdfCoverHeroBackground(
   doc: JsPdfDocument,
   pageWidth: number,
-  height: number,
+  heroHeight: number,
+  pageHeight: number,
   brand: typeof VEDISA_BRAND,
 ) {
   doc.setFillColor(...brand.navyDeep);
-  doc.rect(0, 0, pageWidth, height, "F");
-  doc.setFillColor(...brand.navyMid);
-  doc.rect(0, height * 0.55, pageWidth, height * 0.45, "F");
-  doc.setFillColor(...brand.cyanDeep);
-  doc.setDrawColor(...brand.cyanBright);
-  doc.setLineWidth(2.5);
-  doc.line(0, height, pageWidth, height);
-  doc.setFillColor(...brand.goldMuted);
-  doc.circle(pageWidth * 0.12, height * 0.22, 42, "F");
-  doc.setFillColor(...brand.navyDeep);
-  doc.circle(pageWidth * 0.12, height * 0.22, 42, "F");
-  doc.setFillColor(...brand.cyanBright);
-  doc.circle(pageWidth - 36, height * 0.38, 18, "F");
-  doc.setFillColor(...brand.navyDeep);
-  doc.circle(pageWidth - 36, height * 0.38, 18, "F");
+  doc.rect(0, 0, pageWidth, heroHeight, "F");
+  doc.setFillColor(...brand.white);
+  doc.rect(0, heroHeight, pageWidth, pageHeight - heroHeight, "F");
+}
+
+type PdfCoverHeroLayout = {
+  logoY: number;
+  titleY: number;
+  subtitleY: number;
+  dateY: number;
+  statsCardY: number;
+};
+
+function layoutPdfCoverHero(
+  heroHeight: number,
+  logoHeight: number,
+  hasLogo: boolean,
+): PdfCoverHeroLayout {
+  const statsCardY = heroHeight - PDF_LAYOUT.coverStatsCardH - PDF_LAYOUT.coverHeroBottomPad;
+  const dateY = statsCardY - PDF_LAYOUT.coverDateToStats;
+  const subtitleY = dateY - PDF_LAYOUT.coverSubtitleToDate;
+  const titleY = subtitleY - PDF_LAYOUT.coverTitleToSubtitle - 20;
+  const logoY = titleY - PDF_LAYOUT.coverLogoToTitle - (hasLogo ? logoHeight : 0);
+  const minLogoY = PDF_LAYOUT.coverLogoMinTop;
+
+  if (logoY >= minLogoY) {
+    return { logoY, titleY, subtitleY, dateY, statsCardY };
+  }
+
+  const deficit = minLogoY - logoY;
+  const compressible =
+    PDF_LAYOUT.coverLogoToTitle +
+    PDF_LAYOUT.coverTitleToSubtitle +
+    PDF_LAYOUT.coverSubtitleToDate +
+    PDF_LAYOUT.coverDateToStats;
+  const ratio = Math.max(0.55, 1 - deficit / compressible);
+
+  const logoToTitle = Math.round(PDF_LAYOUT.coverLogoToTitle * ratio);
+  const titleToSubtitle = Math.round(PDF_LAYOUT.coverTitleToSubtitle * ratio);
+  const subtitleToDate = Math.round(PDF_LAYOUT.coverSubtitleToDate * ratio);
+  const dateToStats = Math.round(PDF_LAYOUT.coverDateToStats * ratio);
+
+  const adjustedStatsCardY = heroHeight - PDF_LAYOUT.coverStatsCardH - PDF_LAYOUT.coverHeroBottomPad;
+  const adjustedDateY = adjustedStatsCardY - dateToStats;
+  const adjustedSubtitleY = adjustedDateY - subtitleToDate;
+  const adjustedTitleY = adjustedSubtitleY - titleToSubtitle - 20;
+  const adjustedLogoY = adjustedTitleY - logoToTitle - (hasLogo ? logoHeight : 0);
+
+  return {
+    logoY: Math.max(minLogoY, adjustedLogoY),
+    titleY: adjustedTitleY,
+    subtitleY: adjustedSubtitleY,
+    dateY: adjustedDateY,
+    statsCardY: adjustedStatsCardY,
+  };
+}
+
+function measurePdfInfoLinesBlock(
+  doc: JsPdfDocument,
+  items: ReadonlyArray<{ icon: PdfIconKind; value: string }>,
+  innerWidth: number,
+): number {
+  let total = 0;
+  for (const item of items) {
+    const lines = doc.splitTextToSize(sanitizeTextForPdf(item.value), innerWidth - PDF_LAYOUT.iconColumn - PDF_LAYOUT.iconTextGap - 4);
+    total += Math.max(24, lines.length * 12 + 8) + 8;
+  }
+  return total;
+}
+
+function drawPdfCoverCard(
+  doc: JsPdfDocument,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fill: readonly [number, number, number],
+  border: readonly [number, number, number],
+  contentHeight: number,
+  drawContent: (contentX: number, contentTop: number, innerWidth: number) => void,
+) {
+  drawPdfSoftCard(doc, x, y, width, height, fill, border);
+  const padX = PDF_LAYOUT.coverCardPadX;
+  const innerWidth = width - padX * 2;
+  const contentTop = y + Math.max(PDF_LAYOUT.coverCardPadY, (height - contentHeight) / 2);
+  drawContent(x + padX, contentTop, innerWidth);
+}
+
+function drawPdfCoverStatsCard(
+  doc: JsPdfDocument,
+  centerX: number,
+  cardY: number,
+  totalRows: number,
+  sectionCount: number,
+  brand: typeof VEDISA_BRAND,
+) {
+  const cardW = PDF_LAYOUT.coverStatsCardW;
+  const cardH = PDF_LAYOUT.coverStatsCardH;
+  const cardX = centerX - cardW / 2;
+  drawPdfSoftCard(doc, cardX, cardY, cardW, cardH, brand.navyMid, brand.cyan);
+
+  const contentTop = cardY + 14;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(40);
+  doc.setTextColor(...brand.white);
+  doc.text(String(totalRows), centerX, contentTop + 26, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(191, 219, 254);
+  doc.text("publicaciones disponibles", centerX, contentTop + 44, { align: "center" });
+  doc.setFontSize(8);
+  doc.setTextColor(...brand.slateLight);
+  doc.text(
+    `${sectionCount} categoria${sectionCount === 1 ? "" : "s"} comerciales`,
+    centerX,
+    contentTop + 58,
+    { align: "center" },
+  );
 }
 
 function extractPdfYear(...sources: string[]): string {
@@ -1266,33 +1391,43 @@ export async function generateCatalogPdfDocument(
       minute: "2-digit",
     }),
   );
-  const totalRows = sections.reduce((acc, section) => acc + section.rows.length, 0);
+  const pricedSections = filterCatalogPdfSectionsWithPrice(sections);
+  const totalRows = pricedSections.reduce((acc, section) => acc + section.rows.length, 0);
   const BRAND = VEDISA_BRAND;
 
-  // --- Portada premium ---
+  // --- Portada ---
   const heroHeight = Math.round(pageHeight * PDF_LAYOUT.heroRatio);
-  drawPdfHeroGradient(doc, pageWidth, heroHeight, BRAND);
+  drawPdfCoverHeroBackground(doc, pageWidth, heroHeight, pageHeight, BRAND);
 
-  let coverCursorY = PDF_LAYOUT.coverLogoTop;
-  if (logoDataUrl) {
-    const { width: logoWidth, height: logoHeight } = fitDimensionsByAspect(logoAspectRatio, 220, 54);
-    doc.addImage(logoDataUrl, "PNG", (pageWidth - logoWidth) / 2, coverCursorY, logoWidth, logoHeight);
-    coverCursorY += logoHeight + PDF_LAYOUT.coverLogoToTitle;
-  } else {
-    coverCursorY += PDF_LAYOUT.coverLogoToTitle;
+  const coverInfoItems: ReadonlyArray<{ icon: PdfIconKind; value: string }> = [
+    { icon: "office", value: VEDISA_CONTACT.offices },
+    { icon: "location", value: VEDISA_CONTACT.exhibition },
+    { icon: "clock", value: VEDISA_CONTACT.hours },
+  ];
+
+  const logoSize = logoDataUrl ? fitDimensionsByAspect(logoAspectRatio, 210, 50) : null;
+  const coverLayout = layoutPdfCoverHero(heroHeight, logoSize?.height ?? 0, Boolean(logoDataUrl));
+
+  if (logoDataUrl && logoSize) {
+    doc.addImage(
+      logoDataUrl,
+      "PNG",
+      (pageWidth - logoSize.width) / 2,
+      coverLayout.logoY,
+      logoSize.width,
+      logoSize.height,
+    );
   }
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(30);
+  doc.setFontSize(28);
   doc.setTextColor(...BRAND.white);
-  doc.text("Catalogo Vedisa", pageWidth / 2, coverCursorY, { align: "center" });
-  coverCursorY += 24;
+  doc.text("Catalogo Vedisa", pageWidth / 2, coverLayout.titleY, { align: "center" });
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(12.5);
+  doc.setFontSize(12);
   doc.setTextColor(191, 219, 254);
-  doc.text("Remates y venta directa", pageWidth / 2, coverCursorY, { align: "center" });
-  coverCursorY += 18;
+  doc.text("Remates y venta directa", pageWidth / 2, coverLayout.subtitleY, { align: "center" });
 
   const coverDate = sanitizeTextForPdf(
     now.toLocaleDateString("es-CL", { day: "2-digit", month: "long", year: "numeric" }),
@@ -1302,73 +1437,95 @@ export async function generateCatalogPdfDocument(
   );
   doc.setFontSize(8.5);
   doc.setTextColor(...BRAND.slateLight);
-  doc.text(`Actualizado ${coverDate} - ${coverTime}`, pageWidth / 2, coverCursorY, { align: "center" });
-  coverCursorY += PDF_LAYOUT.coverTitleToStats;
-
-  const statsCardW = 220;
-  const statsCardH = 72;
-  const statsCardX = (pageWidth - statsCardW) / 2;
-  drawPdfSoftCard(doc, statsCardX, coverCursorY, statsCardW, statsCardH, BRAND.navyMid, BRAND.cyan);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(44);
-  doc.setTextColor(...BRAND.white);
-  doc.text(String(totalRows), pageWidth / 2, coverCursorY + 34, { align: "center" });
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.setTextColor(191, 219, 254);
-  doc.text("publicaciones disponibles", pageWidth / 2, coverCursorY + 52, { align: "center" });
-  doc.setFontSize(8);
   doc.text(
-    `${sections.length} categoria${sections.length === 1 ? "" : "s"} comerciales`,
+    `Actualizado ${coverDate} - ${coverTime}`,
     pageWidth / 2,
-    coverCursorY + 64,
+    coverLayout.dateY,
     { align: "center" },
   );
 
-  let coverInfoY = heroHeight + 28;
-  const contactCardH = 148;
-  drawPdfSoftCard(doc, marginX, coverInfoY, usableWidth, contactCardH, BRAND.cyanSoft, BRAND.border);
-  coverInfoY += 16;
+  drawPdfCoverStatsCard(
+    doc,
+    pageWidth / 2,
+    coverLayout.statsCardY,
+    totalRows,
+    pricedSections.length,
+    BRAND,
+  );
+
+  const coverCardInnerWidth = usableWidth - PDF_LAYOUT.coverCardPadX * 2;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.5);
-  doc.setTextColor(...BRAND.navy);
-  doc.text("Visitanos y conoce nuestras unidades", marginX + 16, coverInfoY);
-  coverInfoY += 20;
+  const contactTitleH = 14;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  const contactItemsH = measurePdfInfoLinesBlock(doc, coverInfoItems, coverCardInnerWidth);
+  const contactContentH = contactTitleH + 14 + contactItemsH;
+  const contactCardH = contactContentH + PDF_LAYOUT.coverCardPadY * 2;
 
-  const coverInfoItems: Array<{ icon: PdfIconKind; value: string }> = [
-    { icon: "office", value: VEDISA_CONTACT.offices },
-    { icon: "location", value: VEDISA_CONTACT.exhibition },
-    { icon: "clock", value: VEDISA_CONTACT.hours },
-  ];
-  for (const item of coverInfoItems) {
-    coverInfoY += drawPdfInfoLine(
-      doc,
-      item.icon,
-      item.value,
-      marginX + 12,
-      coverInfoY,
-      usableWidth - 24,
-      BRAND.cyan,
-    );
-  }
-
-  coverInfoY = heroHeight + contactCardH + 40;
-  const onlineCardH = 62;
-  drawPdfSoftCard(doc, marginX, coverInfoY, usableWidth, onlineCardH, BRAND.goldSoft, BRAND.goldMuted);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10.5);
-  doc.setTextColor(...BRAND.navy);
-  doc.text(VEDISA_CONTACT.onlineTitle, marginX + 16, coverInfoY + 18);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
-  doc.setTextColor(...BRAND.slateMuted);
-  const onlineLines = doc.splitTextToSize(
+  const onlineBodyLines = doc.splitTextToSize(
     sanitizeTextForPdf(VEDISA_CONTACT.onlineBody),
-    usableWidth - 32,
+    coverCardInnerWidth,
   );
-  doc.text(onlineLines, marginX + 16, coverInfoY + 32);
+  const onlineTitleH = 14;
+  const onlineContentH = onlineTitleH + 10 + onlineBodyLines.length * 11;
+  const onlineCardH = onlineContentH + PDF_LAYOUT.coverCardPadY * 2;
 
-  const coverLinkY = pageHeight - 58;
+  const linkBlockH = PDF_LAYOUT.closeIconToLink + 28;
+  const cardsTop = heroHeight + PDF_LAYOUT.coverBodyTopGap;
+  const cardsBottom = pageHeight - PDF_LAYOUT.coverLinkBottomPad - linkBlockH;
+  const cardsStackH = contactCardH + PDF_LAYOUT.coverCardGap + onlineCardH;
+  const cardsOffset = Math.max(0, (cardsBottom - cardsTop - cardsStackH) / 2);
+  const contactCardY = cardsTop + cardsOffset;
+  const onlineCardY = contactCardY + contactCardH + PDF_LAYOUT.coverCardGap;
+
+  drawPdfCoverCard(
+    doc,
+    marginX,
+    contactCardY,
+    usableWidth,
+    contactCardH,
+    BRAND.cyanSoft,
+    BRAND.border,
+    contactContentH,
+    (contentX, contentTop, innerWidth) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(...BRAND.navy);
+      doc.text("Visitanos y conoce nuestras unidades", contentX, contentTop + 10);
+      let itemY = contentTop + contactTitleH + 14;
+      for (const item of coverInfoItems) {
+        itemY += drawPdfInfoLine(doc, item.icon, item.value, contentX, itemY, innerWidth, BRAND.cyan);
+      }
+    },
+  );
+
+  drawPdfCoverCard(
+    doc,
+    marginX,
+    onlineCardY,
+    usableWidth,
+    onlineCardH,
+    BRAND.goldSoft,
+    BRAND.goldMuted,
+    onlineContentH,
+    (contentX, contentTop, innerWidth) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(...BRAND.navy);
+      doc.text(VEDISA_CONTACT.onlineTitle, contentX, contentTop + 10);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(...BRAND.slateMuted);
+      doc.text(onlineBodyLines, contentX, contentTop + onlineTitleH + 14);
+    },
+  );
+
+  const linkAreaTop = onlineCardY + onlineCardH;
+  const linkAreaBottom = pageHeight - PDF_LAYOUT.coverLinkBottomPad;
+  const coverLinkY = linkAreaTop + (linkAreaBottom - linkAreaTop) / 2 + 8;
   drawPdfIcon(doc, "globe", pageWidth / 2, coverLinkY - PDF_LAYOUT.closeIconToLink, 16, BRAND.cyan);
   drawPdfLinkPill(
     doc,
@@ -1409,11 +1566,9 @@ export async function generateCatalogPdfDocument(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   let maxPriceTextWidth = doc.getTextWidth("$99.999.999");
-  for (const section of sections) {
+  for (const section of pricedSections) {
     for (const row of section.rows) {
-      if (!isPdfPriceMissing(row.priceLabel)) {
-        maxPriceTextWidth = Math.max(maxPriceTextWidth, doc.getTextWidth(row.priceLabel));
-      }
+      maxPriceTextWidth = Math.max(maxPriceTextWidth, doc.getTextWidth(row.priceLabel));
     }
   }
   doc.setFont("helvetica", "normal");
@@ -1447,7 +1602,7 @@ export async function generateCatalogPdfDocument(
 
   const thumbnailCache = new Map<string, PdfImageAsset>();
   const uniqueThumbnailUrls = [
-    ...new Set(sections.flatMap((section) => section.rows.flatMap((row) => row.thumbnailUrls))),
+    ...new Set(pricedSections.flatMap((section) => section.rows.flatMap((row) => row.thumbnailUrls))),
   ];
   await mapWithConcurrency(uniqueThumbnailUrls, PDF_IMAGE_LOAD_CONCURRENCY, async (url) => {
     const asset = await loadImageForPdfAsDataUrl(url);
@@ -1475,12 +1630,13 @@ export async function generateCatalogPdfDocument(
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
     doc.setTextColor(...BRAND.white);
+    const headerTextY = y + headerH / 2 + 2.5;
     for (const column of tableColumns) {
       const label = column.label.toUpperCase();
       if (column.align === "center") {
-        doc.text(label, x + column.width / 2, y + 16, { align: "center" });
+        doc.text(label, x + column.width / 2, headerTextY, { align: "center" });
       } else {
-        doc.text(label, x + cellPaddingX, y + 16);
+        doc.text(label, x + cellPaddingX, headerTextY);
       }
       x += column.width;
     }
@@ -1495,7 +1651,7 @@ export async function generateCatalogPdfDocument(
   };
 
   drawPageHeader();
-  for (const section of sections) {
+  for (const section of pricedSections) {
     const header = parsePdfSectionHeader(section);
     const headerLayout = measurePdfSectionHeader(
       doc,
@@ -1523,6 +1679,8 @@ export async function generateCatalogPdfDocument(
     rowStripeIndex = 0;
 
     for (const row of section.rows) {
+      if (isPdfPriceMissing(row.priceLabel)) continue;
+
       const linePaddingY = PDF_LAYOUT.rowPadY;
       const lineHeight = PDF_LAYOUT.rowLineH;
       const vehiclePrimary = sanitizeTextForPdf(row.vehiclePrimary);
@@ -1555,14 +1713,14 @@ export async function generateCatalogPdfDocument(
           ? doc.splitTextToSize(patent, patentInnerWidth)
           : [];
       const modelBlockHeight = measurePdfModelCell(doc, modelCell, modelInnerWidth);
-      const hasPrice = !isPdfPriceMissing(priceLabel);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(5.5);
-      const priceFooterLines = hasPrice
-        ? doc.splitTextToSize(PDF_PRICE_FOOTER, priceInnerWidth)
-        : [];
-      const priceBlockHeight = hasPrice ? 36 : 18;
+      const priceFooterLines = doc.splitTextToSize(PDF_PRICE_FOOTER, priceInnerWidth);
+      const priceBlockHeight = 36;
 
+      const vehicleTextHeight =
+        vehiclePrimaryLines.length * lineHeight +
+        (vehicleSecondaryLines.length > 0 ? vehicleSecondaryLines.length * lineHeight : 0);
       const vehicleLineCount = Math.max(1, vehiclePrimaryLines.length + vehicleSecondaryLines.length);
       const textBlockLines = Math.max(
         vehicleLineCount,
@@ -1577,6 +1735,7 @@ export async function generateCatalogPdfDocument(
 
       ensureSpace(rowHeight + 6, true);
       const rowMidY = y + rowHeight / 2;
+      const vehicleTextStartY = rowMidY - vehicleTextHeight / 2 + lineHeight * 0.35;
       const rowFill: readonly [number, number, number] =
         rowStripeIndex % 2 === 0 ? BRAND.rowWhite : BRAND.rowAlt;
       rowStripeIndex += 1;
@@ -1585,7 +1744,7 @@ export async function generateCatalogPdfDocument(
       doc.rect(marginX, y, usableWidth, rowHeight, "F");
 
       const vehicleX = getColumnX(vehicleColIndex) + cellPaddingX;
-      let textY = y + linePaddingY + 10;
+      let textY = vehicleTextStartY;
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9.5);
       doc.setTextColor(...BRAND.navy);
@@ -1634,22 +1793,15 @@ export async function generateCatalogPdfDocument(
       const priceColX = getColumnX(priceColIndex);
       const priceColW = tableColumns[priceColIndex].width;
       const priceCenterX = priceColX + priceColW / 2;
-      if (hasPrice) {
-        drawPdfPricePill(
-          doc,
-          priceLabel,
-          priceFooterLines,
-          priceCenterX,
-          rowMidY,
-          priceColW,
-          BRAND,
-        );
-      } else {
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
-        doc.setTextColor(...BRAND.slateMuted);
-        doc.text("Sin precio", priceCenterX, rowMidY + 3, { align: "center" });
-      }
+      drawPdfPricePill(
+        doc,
+        priceLabel,
+        priceFooterLines,
+        priceCenterX,
+        rowMidY,
+        priceColW,
+        BRAND,
+      );
 
       const thumbColX = getColumnX(thumbnailColIndex);
       const thumbColWidthValue = tableColumns[thumbnailColIndex].width;

@@ -28,6 +28,7 @@ import {
 } from "@/lib/catalog-hero-copy";
 import {
   collectVehicleImageCandidates,
+  filterCatalogPdfSectionsWithPrice,
   generateCatalogPdfDocument,
   getPdfVehicleDisplay,
   loadLogoForPdfAsDataUrl,
@@ -2955,6 +2956,8 @@ export function CatalogHomeClient({
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
   const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
   const [topSectionFilter, setTopSectionFilter] = useState<"all" | SectionId>("all");
+  const [showHomeFiltersMenu, setShowHomeFiltersMenu] = useState(false);
+  const homeFiltersMenuRef = useRef<HTMLDivElement>(null);
   const [quickFilters, setQuickFilters] = useState<QuickFilterId[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -3475,6 +3478,37 @@ export function CatalogHomeClient({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(HOME_QUICK_FILTERS_STORAGE_KEY, JSON.stringify(quickFilters));
   }, [quickFilters]);
+
+  useEffect(() => {
+    if (!showHomeFiltersMenu || typeof window === "undefined") return;
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showHomeFiltersMenu]);
+
+  useEffect(() => {
+    if (!showHomeFiltersMenu) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowHomeFiltersMenu(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showHomeFiltersMenu]);
+
+  useEffect(() => {
+    if (!showHomeFiltersMenu || typeof window === "undefined") return;
+    const onPointerDown = (event: globalThis.MouseEvent) => {
+      if (window.innerWidth < 768) return;
+      const target = event.target as Node;
+      if (homeFiltersMenuRef.current?.contains(target)) return;
+      setShowHomeFiltersMenu(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [showHomeFiltersMenu]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -4115,7 +4149,7 @@ export function CatalogHomeClient({
         rows: otrosRematesItems.map(buildRow),
       });
     }
-    return sections;
+    return filterCatalogPdfSectionsWithPrice(sections);
   }, [
     hasUpcomingRemateCategories,
     visibleUpcomingRemateGroups,
@@ -4136,8 +4170,8 @@ export function CatalogHomeClient({
     if (calendarPdfSections.length === 0) {
       showSystemNotice(
         "info",
-        "Sin publicaciones visibles",
-        "No hay publicaciones visibles para incluir en el PDF con los filtros actuales.",
+        "Sin publicaciones con precio",
+        "No hay publicaciones con precio visible para incluir en el PDF con los filtros actuales.",
       );
       return;
     }
@@ -7399,6 +7433,110 @@ export function CatalogHomeClient({
   const hasActiveSearchOrQuickFilters =
     hasActiveSearch || quickFilters.length > 0 || topSectionFilter !== "all";
 
+  const closeHomeFiltersMenu = useCallback(() => setShowHomeFiltersMenu(false), []);
+
+  const renderHomeFiltersContent = (options: { closeOnSortSelect: boolean; mobile: boolean }) => {
+    const sortButtonClass = (active: boolean) =>
+      `ui-focus flex w-full items-center justify-between rounded-md text-left font-medium ${
+        options.mobile ? "px-3 py-2.5 text-sm" : "px-2 py-1.5 text-xs"
+      } ${
+        active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
+      }`;
+    const filterPillClass = (active: boolean) =>
+      `ui-focus rounded-full border font-semibold transition ${
+        options.mobile ? "px-3 py-2 text-sm" : "px-2.5 py-1 text-xs"
+      } ${
+        active
+          ? "border-slate-700 bg-slate-800 text-white"
+          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+      }`;
+
+    return (
+      <>
+        {config.homeLayout.showSortSelector ? (
+          <div>
+            <p
+              className={`font-semibold uppercase tracking-wide text-slate-500 ${
+                options.mobile
+                  ? "mb-2 text-xs"
+                  : "mb-1 px-1 text-[10px]"
+              }`}
+            >
+              Ordenar
+            </p>
+            <div className={options.mobile ? "space-y-1" : "space-y-0.5"}>
+              {([
+                ["recomendado", "Recomendado"],
+                ["relevancia", "Relevancia"],
+                ["fecha-remate", "Fecha remate"],
+                ["precio-asc", "Precio menor"],
+                ["precio-desc", "Precio mayor"],
+                ["titulo", "Título A-Z"],
+              ] as Array<[SortOption, string]>).map(([value, label]) => (
+                <button
+                  key={`sort-${value}`}
+                  type="button"
+                  onClick={() => {
+                    setHomeSort(value);
+                    trackEvent("home_sort_change", { sort: value });
+                    if (options.closeOnSortSelect) closeHomeFiltersMenu();
+                  }}
+                  className={sortButtonClass(homeSort === value)}
+                >
+                  <span>{label}</span>
+                  {homeSort === value ? <span>✓</span> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {config.homeLayout.showSortSelector && config.homeLayout.showQuickFilters ? (
+          <div className={options.mobile ? "my-4 border-t border-slate-200" : "my-2 border-t border-slate-100"} />
+        ) : null}
+        {config.homeLayout.showQuickFilters ? (
+          <div>
+            <div
+              className={`flex items-center justify-between ${
+                options.mobile ? "mb-3" : "mb-1.5 px-1"
+              }`}
+            >
+              <p
+                className={`font-semibold uppercase tracking-wide text-slate-500 ${
+                  options.mobile ? "text-xs" : "text-[10px]"
+                }`}
+              >
+                Tipo de vehículo
+              </p>
+              {quickFilters.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setQuickFilters([])}
+                  className={`ui-focus rounded font-semibold text-slate-600 hover:bg-slate-50 ${
+                    options.mobile ? "px-2 py-1 text-xs" : "px-1.5 py-0.5 text-[10px]"
+                  }`}
+                >
+                  Limpiar
+                </button>
+              ) : null}
+            </div>
+            <div className={`flex flex-wrap ${options.mobile ? "gap-2" : "gap-1.5"}`}>
+              {QUICK_FILTER_IDS.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => toggleQuickFilter(id)}
+                  className={filterPillClass(quickFilters.includes(id))}
+                >
+                  {QUICK_FILTER_LABELS[id]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
+  };
+
   const editingItem = editingVehicleKey ? itemsByKey.get(editingVehicleKey) ?? null : null;
   const managingItem = managingVehicleKey ? itemsByKey.get(managingVehicleKey) ?? null : null;
   const managingVehiclePromoMeta = useMemo(() => {
@@ -10390,6 +10528,7 @@ export function CatalogHomeClient({
         </section>
       ) : null}
       {config.homeLayout.showSearchBar ? (
+      <>
       <section className="relative z-50 mx-auto w-full max-w-7xl px-3 pt-3 pb-2 sm:px-6 lg:px-8">
         <div className="glass-soft overflow-visible rounded-2xl border border-slate-300/80 bg-white/95 p-3 shadow-md md:p-4">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
@@ -10459,10 +10598,13 @@ export function CatalogHomeClient({
                 {isDownloadingCalendarPdf ? "Generando PDF..." : "PDF Catalogo"}
               </button>
               {config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters ? (
-                <details className="relative">
-                  <summary
-                    className="ui-focus relative flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                <div className="relative" ref={homeFiltersMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowHomeFiltersMenu((prev) => !prev)}
+                    className="ui-focus relative flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                     aria-label="Abrir filtros y orden"
+                    aria-expanded={showHomeFiltersMenu}
                     title="Filtros y orden"
                   >
                     <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
@@ -10473,83 +10615,13 @@ export function CatalogHomeClient({
                         {quickFilters.length}
                       </span>
                     ) : null}
-                  </summary>
-                  <div className="absolute right-0 z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
-                    {config.homeLayout.showSortSelector ? (
-                      <div>
-                        <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                          Ordenar
-                        </p>
-                        <div className="space-y-0.5">
-                          {([
-                            ["recomendado", "Recomendado"],
-                            ["relevancia", "Relevancia"],
-                            ["fecha-remate", "Fecha remate"],
-                            ["precio-asc", "Precio menor"],
-                            ["precio-desc", "Precio mayor"],
-                            ["titulo", "Título A-Z"],
-                          ] as Array<[SortOption, string]>).map(([value, label]) => (
-                            <button
-                              key={`sort-${value}`}
-                              type="button"
-                              onClick={(event) => {
-                                setHomeSort(value);
-                                trackEvent("home_sort_change", { sort: value });
-                                const details = event.currentTarget.closest("details");
-                                if (details) details.removeAttribute("open");
-                              }}
-                              className={`ui-focus flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-medium ${
-                                homeSort === value
-                                  ? "bg-slate-900 text-white"
-                                  : "text-slate-700 hover:bg-slate-50"
-                              }`}
-                            >
-                              <span>{label}</span>
-                              {homeSort === value ? <span>✓</span> : null}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {config.homeLayout.showSortSelector && config.homeLayout.showQuickFilters ? (
-                      <div className="my-2 border-t border-slate-100" />
-                    ) : null}
-                    {config.homeLayout.showQuickFilters ? (
-                      <div>
-                        <div className="mb-1.5 flex items-center justify-between px-1">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                            Tipo de vehículo
-                          </p>
-                          {quickFilters.length > 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => setQuickFilters([])}
-                              className="ui-focus rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
-                            >
-                              Limpiar
-                            </button>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {QUICK_FILTER_IDS.map((id) => (
-                            <button
-                              key={id}
-                              type="button"
-                              onClick={() => toggleQuickFilter(id)}
-                              className={`ui-focus rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
-                                quickFilters.includes(id)
-                                  ? "border-slate-700 bg-slate-800 text-white"
-                                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                              }`}
-                            >
-                              {QUICK_FILTER_LABELS[id]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </details>
+                  </button>
+                  {showHomeFiltersMenu ? (
+                    <div className="absolute right-0 z-50 mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white p-2 shadow-lg md:block">
+                      {renderHomeFiltersContent({ closeOnSortSelect: true, mobile: false })}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
               <span className="sr-only" aria-live="polite">
                 {homeVisibleItems.length} resultados encontrados en catálogo.
@@ -10558,6 +10630,49 @@ export function CatalogHomeClient({
           </div>
         </div>
       </section>
+      {showHomeFiltersMenu &&
+      (config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters) ? (
+        <div
+          className="fixed inset-0 z-[220] flex flex-col bg-white md:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Filtros y orden del catálogo"
+        >
+          <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+            <button
+              type="button"
+              onClick={closeHomeFiltersMenu}
+              className="ui-focus inline-flex min-w-[4.5rem] items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path
+                  d="M12.5 4.5L7 10l5.5 5.5"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Atrás
+            </button>
+            <h2 className="flex-1 text-center text-sm font-bold text-slate-900">Filtros y orden</h2>
+            <span className="min-w-[4.5rem]" aria-hidden="true" />
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+            {renderHomeFiltersContent({ closeOnSortSelect: false, mobile: true })}
+          </div>
+          <footer className="shrink-0 border-t border-slate-200 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <button
+              type="button"
+              onClick={closeHomeFiltersMenu}
+              className="ui-focus w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white"
+            >
+              Ver {homeVisibleItems.length} resultado{homeVisibleItems.length === 1 ? "" : "s"}
+            </button>
+          </footer>
+        </div>
+      ) : null}
+      </>
       ) : null}
       <div
         className={`transition-all duration-500 ease-out ${
