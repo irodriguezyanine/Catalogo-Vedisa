@@ -14,7 +14,11 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CatalogCard, type VehicleCommercialEventBadge } from "@/components/catalog-card";
+import {
+  CatalogCard,
+  inferVehicleSiniestradoStatus,
+  type VehicleCommercialEventBadge,
+} from "@/components/catalog-card";
 import { CatalogVehicleHighlightStrip } from "@/components/catalog-vehicle-highlight-strip";
 import { ShareIcon } from "@/components/share-icon";
 import { VehicleDetailMobile } from "@/components/vehicle-detail-mobile";
@@ -63,6 +67,34 @@ import {
 
 const EDITOR_STORAGE_KEY = "vedisa_editor_config_local";
 const HOME_QUICK_FILTERS_STORAGE_KEY = "vedisa_home_quick_filters";
+const HOME_SINIESTRO_FILTER_STORAGE_KEY = "vedisa_home_siniestro_filter";
+
+type HomeSiniestradoFilter = "all" | "no_siniestrado" | "siniestrado";
+
+const HOME_BODY_FILTER_IDS = [
+  "camioneta",
+  "camion",
+  "suv",
+  "sedan",
+  "furgon",
+] as const satisfies ReadonlyArray<QuickFilterId>;
+
+const HOME_BODY_FILTER_LABELS: Record<(typeof HOME_BODY_FILTER_IDS)[number], string> = {
+  camioneta: "Camionetas",
+  camion: "Camiones",
+  suv: "SUV",
+  sedan: "Sedán",
+  furgon: "Furgón",
+};
+
+const HOME_SINIESTRO_FILTER_OPTIONS: ReadonlyArray<{
+  id: HomeSiniestradoFilter;
+  label: string;
+}> = [
+  { id: "all", label: "Todos" },
+  { id: "no_siniestrado", label: "No siniestrados" },
+  { id: "siniestrado", label: "Siniestrados" },
+];
 const HOME_CARD_DENSITY_STORAGE_KEY = "vedisa_home_card_density";
 const EDITOR_PAGE_SIZE = 20;
 type AdminTabId = "vehiculos" | "categorias" | "layout" | "analytics" | "ofertas";
@@ -1250,7 +1282,12 @@ function matchesVehicleBodyTypeFilter(
   vehicleDetails: Record<string, EditorVehicleDetails>,
 ): boolean {
   const sample = getVehicleBodyTypeSample(item, vehicleDetails);
+  if (filterId === "camion" && /\bcamioneta\b/.test(sample)) return false;
   return VEHICLE_BODY_TYPE_MATCHERS[filterId].some((pattern) => pattern.test(sample));
+}
+
+function isAllowedHomeBodyFilter(id: string): id is (typeof HOME_BODY_FILTER_IDS)[number] {
+  return (HOME_BODY_FILTER_IDS as readonly string[]).includes(id);
 }
 
 function inferVehicleCategoryForAdmin(item: CatalogItem): EditorVehicleCategoryFilter {
@@ -3064,11 +3101,17 @@ export function CatalogHomeClient({
       const raw = window.localStorage.getItem(HOME_QUICK_FILTERS_STORAGE_KEY);
       const parsed = raw ? (JSON.parse(raw) as QuickFilterId[]) : [];
       return Array.isArray(parsed)
-        ? parsed.filter((id): id is QuickFilterId => QUICK_FILTER_IDS.includes(id))
+        ? parsed.filter((id): id is QuickFilterId => isAllowedHomeBodyFilter(id))
         : [];
     } catch {
       return [];
     }
+  });
+  const [homeSiniestradoFilter, setHomeSiniestradoFilter] = useState<HomeSiniestradoFilter>(() => {
+    if (typeof window === "undefined") return "all";
+    const raw = window.localStorage.getItem(HOME_SINIESTRO_FILTER_STORAGE_KEY);
+    if (raw === "siniestrado" || raw === "no_siniestrado" || raw === "all") return raw;
+    return "all";
   });
   const [cardDensity, setCardDensity] = useState<CardDensity>(() => {
     if (typeof window === "undefined") return "detailed";
@@ -3119,6 +3162,7 @@ export function CatalogHomeClient({
   const [batchAssignSelectedKeys, setBatchAssignSelectedKeys] = useState<string[]>([]);
   const [groupManageTarget, setGroupManageTarget] = useState<GroupManageTarget | null>(null);
   const [groupManageSearchTerm, setGroupManageSearchTerm] = useState("");
+  const [groupManageSelectedKeys, setGroupManageSelectedKeys] = useState<string[]>([]);
   const [importedInventoryItems, setImportedInventoryItems] = useState<CatalogItem[]>([]);
   const [batchAssignImporting, setBatchAssignImporting] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualPublicationDraft>(
@@ -3581,6 +3625,11 @@ export function CatalogHomeClient({
   }, [quickFilters]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(HOME_SINIESTRO_FILTER_STORAGE_KEY, homeSiniestradoFilter);
+  }, [homeSiniestradoFilter]);
+
+  useEffect(() => {
     if (!showHomeFiltersMenu || typeof window === "undefined") return;
     if (!window.matchMedia("(max-width: 767px)").matches) return;
     const previousOverflow = document.body.style.overflow;
@@ -3919,13 +3968,20 @@ export function CatalogHomeClient({
             }
             return (effectiveSectionVehicleIds[topSectionFilter] ?? []).includes(key);
           });
-    if (quickFilters.length === 0) return byTopSection;
-    return byTopSection.filter((item) =>
+    let result = byTopSection;
+    if (homeSiniestradoFilter !== "all") {
+      result = result.filter(
+        (item) => inferVehicleSiniestradoStatus(item) === homeSiniestradoFilter,
+      );
+    }
+    if (quickFilters.length === 0) return result;
+    return result.filter((item) =>
       quickFilters.some((filter) => matchesVehicleBodyTypeFilter(item, filter, config.vehicleDetails)),
     );
   }, [
     homeFilteredItems,
     topSectionFilter,
+    homeSiniestradoFilter,
     quickFilters,
     config.vehicleDetails,
     config.vehicleUpcomingAuctionIds,
@@ -4095,6 +4151,8 @@ export function CatalogHomeClient({
   const hasHomePreFilter =
     homeSearchTerm.trim().length > 0 ||
     quickFilters.length > 0 ||
+    homeSiniestradoFilter !== "all" ||
+    homeSort === "precio-asc" ||
     topSectionFilter !== "all";
   const filteredCatalogItems = hasHomePreFilter
     ? catalogoItems
@@ -4350,14 +4408,22 @@ export function CatalogHomeClient({
   }, [nextAuction, countdownNowMs]);
 
   const toggleQuickFilter = (filterId: QuickFilterId) => {
+    if (!isAllowedHomeBodyFilter(filterId)) return;
     trackEvent("quick_filter_toggle", { filterId });
     setQuickFilters((prev) => {
       const set = new Set(prev);
       if (set.has(filterId)) set.delete(filterId);
       else set.add(filterId);
-      return Array.from(set) as QuickFilterId[];
+      return Array.from(set).filter(isAllowedHomeBodyFilter);
     });
   };
+
+  const clearHomeFilters = useCallback(() => {
+    setHomeSiniestradoFilter("all");
+    setQuickFilters([]);
+    setHomeSort("recomendado");
+    trackEvent("home_filters_clear");
+  }, []);
 
   const selectedVehicleLookup = useMemo(
     () =>
@@ -5448,7 +5514,7 @@ export function CatalogHomeClient({
     return SECTION_LABELS[groupManageTarget.sectionId];
   }, [groupManageTarget, sortedUpcomingAuctions]);
 
-  const groupManageItems = useMemo(() => {
+  const groupManageBaseItems = useMemo(() => {
     if (!groupManageTarget) return [] as CatalogItem[];
     const assignedKeys = new Set(
       groupManageTarget.type === "auction"
@@ -5457,21 +5523,28 @@ export function CatalogHomeClient({
             .map(([vehicleKey]) => vehicleKey)
         : config.sectionVehicleIds[groupManageTarget.sectionId] ?? [],
     );
-    const baseItems = dedupeCatalogItemsByVehicleKey(
+    return dedupeCatalogItemsByVehicleKey(
       activeInventoryItems.filter((item) => isAssignedVehicleKey(assignedKeys, item)),
-    );
-    if (!groupManageSearchTerm.trim()) return baseItems;
-    const patentTokens = extractPatentTokens(groupManageSearchTerm);
-    return baseItems.filter((item) =>
-      matchesInventoryPatentSearch(item, groupManageSearchTerm, patentTokens),
     );
   }, [
     groupManageTarget,
-    groupManageSearchTerm,
     activeInventoryItems,
     config.vehicleUpcomingAuctionIds,
     config.sectionVehicleIds,
   ]);
+
+  const groupManageItems = useMemo(() => {
+    if (!groupManageSearchTerm.trim()) return groupManageBaseItems;
+    const patentTokens = extractPatentTokens(groupManageSearchTerm);
+    return groupManageBaseItems.filter((item) =>
+      matchesInventoryPatentSearch(item, groupManageSearchTerm, patentTokens),
+    );
+  }, [groupManageBaseItems, groupManageSearchTerm]);
+
+  useEffect(() => {
+    const visible = new Set(groupManageItems.map((item) => getVehicleKey(item)));
+    setGroupManageSelectedKeys((prev) => prev.filter((key) => visible.has(key)));
+  }, [groupManageItems]);
 
   const sectionVehicleCounts = useMemo(
     () =>
@@ -5858,6 +5931,79 @@ export function CatalogHomeClient({
       }
     },
     [buildConfigAfterMarkSold, isAdmin, itemsByKey],
+  );
+
+  const markVehiclesAsSoldBulk = useCallback(
+    (
+      vehicleKeys: string[],
+      context?: {
+        auctionId?: string;
+        auctionName?: string;
+        soldCategory?: string;
+      },
+    ) => {
+      const uniqueKeys = Array.from(new Set(vehicleKeys)).filter(Boolean);
+      if (uniqueKeys.length === 0) return 0;
+      let nextConfig: EditorConfig | null = null;
+      let markedCount = 0;
+      setConfig((prev) => {
+        let current = prev;
+        for (const vehicleKey of uniqueKeys) {
+          const item = itemsByKey.get(vehicleKey);
+          if (!item) continue;
+          current = buildConfigAfterMarkSold(current, vehicleKey, item, context);
+          markedCount += 1;
+        }
+        nextConfig = current;
+        return current;
+      });
+      if (isAdmin && nextConfig && markedCount > 0) {
+        lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+        void persistEditorConfigRef.current(nextConfig);
+      }
+      return markedCount;
+    },
+    [buildConfigAfterMarkSold, isAdmin, itemsByKey],
+  );
+
+  const groupManageSoldContext = useMemo(() => {
+    if (!groupManageTarget || groupManageTarget.type !== "auction") return undefined;
+    const auction = sortedUpcomingAuctions.find((entry) => entry.id === groupManageTarget.auctionId);
+    return {
+      auctionId: groupManageTarget.auctionId,
+      auctionName: auction?.name,
+    };
+  }, [groupManageTarget, sortedUpcomingAuctions]);
+
+  const toggleGroupManageVehicle = useCallback((vehicleKey: string) => {
+    setGroupManageSelectedKeys((prev) =>
+      prev.includes(vehicleKey)
+        ? prev.filter((key) => key !== vehicleKey)
+        : [...prev, vehicleKey],
+    );
+  }, []);
+
+  const selectGroupManageFiltered = useCallback(() => {
+    setGroupManageSelectedKeys((prev) =>
+      Array.from(new Set([...prev, ...groupManageItems.map((item) => getVehicleKey(item))])),
+    );
+  }, [groupManageItems]);
+
+  const selectGroupManagePatentsFromSearch = useCallback(
+    (rawTerm: string) => {
+      const tokens = extractPatentTokens(rawTerm).filter(isFullPatentToken);
+      if (tokens.length < 2) return;
+      const matchingKeys = groupManageBaseItems
+        .filter((item) => {
+          const patent = normalizePatentToken(getPatent(item));
+          const key = normalizePatentToken(getVehicleKey(item));
+          return tokens.some((token) => patent === token || key === token);
+        })
+        .map((item) => getVehicleKey(item));
+      if (matchingKeys.length === 0) return;
+      setGroupManageSelectedKeys((prev) => Array.from(new Set([...prev, ...matchingKeys])));
+    },
+    [groupManageBaseItems],
   );
 
   const revertVehicleSale = useCallback((vehicleKey: string) => {
@@ -6539,11 +6685,13 @@ export function CatalogHomeClient({
   const openGroupManageModal = (target: GroupManageTarget) => {
     setGroupManageTarget(target);
     setGroupManageSearchTerm("");
+    setGroupManageSelectedKeys([]);
   };
 
   const closeGroupManageModal = () => {
     setGroupManageTarget(null);
     setGroupManageSearchTerm("");
+    setGroupManageSelectedKeys([]);
   };
 
   const removeVehicleFromGroupTarget = (vehicleKey: string) => {
@@ -7553,110 +7701,183 @@ export function CatalogHomeClient({
   const shouldShowHowToSection =
     config.homeLayout.showHowToSection ||
     (config.homeLayout.heroSecondaryCtaHref ?? "").trim() === "#como-participar";
+  const activeHomeFilterCount =
+    (homeSiniestradoFilter !== "all" ? 1 : 0) +
+    (homeSort === "precio-asc" ? 1 : 0) +
+    quickFilters.length;
+
   const hasActiveSearchOrQuickFilters =
-    hasActiveSearch || quickFilters.length > 0 || topSectionFilter !== "all";
+    hasActiveSearch ||
+    activeHomeFilterCount > 0 ||
+    topSectionFilter !== "all";
 
   const closeHomeFiltersMenu = useCallback(() => setShowHomeFiltersMenu(false), []);
 
   const renderHomeFiltersContent = (options: { closeOnSortSelect: boolean; mobile: boolean }) => {
-    const sortButtonClass = (active: boolean) =>
-      `ui-focus flex w-full items-center justify-between rounded-md text-left font-medium ${
-        options.mobile ? "px-3 py-2.5 text-sm" : "px-2 py-1.5 text-xs"
-      } ${
-        active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
-      }`;
-    const filterPillClass = (active: boolean) =>
-      `ui-focus rounded-full border font-semibold transition ${
-        options.mobile ? "px-3 py-2 text-sm" : "px-2.5 py-1 text-xs"
+    const sectionLabelClass = options.mobile
+      ? "mb-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500"
+      : "mb-2 px-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500";
+    const sectionGap = options.mobile ? "space-y-5" : "space-y-4";
+    const bodyChipClass = (active: boolean) =>
+      `ui-focus min-h-11 rounded-xl border text-left font-semibold transition ${
+        options.mobile ? "px-3 py-2.5 text-sm" : "px-2.5 py-2 text-xs"
       } ${
         active
-          ? "border-slate-700 bg-slate-800 text-white"
-          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          ? "border-cyan-600 bg-cyan-600 text-white shadow-sm"
+          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
       }`;
+    const siniestroChipClass = (active: boolean) =>
+      `ui-focus rounded-lg px-2 py-2.5 text-center text-sm font-semibold transition ${
+        active ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+      }`;
+    const menorPrecioActive = homeSort === "precio-asc";
 
     return (
-      <>
-        {config.homeLayout.showSortSelector ? (
-          <div>
-            <p
-              className={`font-semibold uppercase tracking-wide text-slate-500 ${
-                options.mobile
-                  ? "mb-2 text-xs"
-                  : "mb-1 px-1 text-[10px]"
-              }`}
-            >
-              Ordenar
-            </p>
-            <div className={options.mobile ? "space-y-1" : "space-y-0.5"}>
-              {([
-                ["recomendado", "Recomendado"],
-                ["relevancia", "Relevancia"],
-                ["fecha-remate", "Fecha remate"],
-                ["precio-asc", "Precio menor"],
-                ["precio-desc", "Precio mayor"],
-                ["titulo", "Título A-Z"],
-              ] as Array<[SortOption, string]>).map(([value, label]) => (
-                <button
-                  key={`sort-${value}`}
-                  type="button"
-                  onClick={() => {
-                    setHomeSort(value);
-                    trackEvent("home_sort_change", { sort: value });
-                    if (options.closeOnSortSelect) closeHomeFiltersMenu();
-                  }}
-                  className={sortButtonClass(homeSort === value)}
-                >
-                  <span>{label}</span>
-                  {homeSort === value ? <span>✓</span> : null}
-                </button>
-              ))}
+      <div className={sectionGap}>
+        {activeHomeFilterCount > 0 ? (
+          <div
+            className={`flex items-center justify-between gap-3 rounded-xl border border-cyan-200 bg-cyan-50/80 ${
+              options.mobile ? "px-3.5 py-3" : "px-3 py-2.5"
+            }`}
+          >
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-cyan-900">
+                {activeHomeFilterCount} filtro{activeHomeFilterCount === 1 ? "" : "s"} activo
+                {activeHomeFilterCount === 1 ? "" : "s"}
+              </p>
+              <p className="mt-0.5 text-[11px] text-cyan-800">
+                Mostrando {homeVisibleItems.length} resultado
+                {homeVisibleItems.length === 1 ? "" : "s"}
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                clearHomeFilters();
+                if (options.closeOnSortSelect) closeHomeFiltersMenu();
+              }}
+              className="ui-focus shrink-0 rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
+            >
+              Limpiar
+            </button>
           </div>
         ) : null}
-        {config.homeLayout.showSortSelector && config.homeLayout.showQuickFilters ? (
-          <div className={options.mobile ? "my-4 border-t border-slate-200" : "my-2 border-t border-slate-100"} />
-        ) : null}
-        {config.homeLayout.showQuickFilters ? (
-          <div>
-            <div
-              className={`flex items-center justify-between ${
-                options.mobile ? "mb-3" : "mb-1.5 px-1"
+
+        <section>
+          <p className={sectionLabelClass}>1. Estado del vehículo</p>
+          <div
+            className={`grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 ${
+              options.mobile ? "" : "max-w-full"
+            }`}
+            role="group"
+            aria-label="Filtrar por estado de siniestro"
+          >
+            {HOME_SINIESTRO_FILTER_OPTIONS.map((option) => {
+              const active = homeSiniestradoFilter === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    setHomeSiniestradoFilter(option.id);
+                    trackEvent("home_siniestro_filter_change", { value: option.id });
+                  }}
+                  className={siniestroChipClass(active)}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {config.homeLayout.showSortSelector ? (
+          <section>
+            <p className={sectionLabelClass}>2. Orden</p>
+            <button
+              type="button"
+              aria-pressed={menorPrecioActive}
+              onClick={() => {
+                const nextSort: SortOption = menorPrecioActive ? "recomendado" : "precio-asc";
+                setHomeSort(nextSort);
+                trackEvent("home_sort_change", { sort: nextSort });
+                if (options.closeOnSortSelect && nextSort === "precio-asc") closeHomeFiltersMenu();
+              }}
+              className={`ui-focus flex w-full items-center justify-between rounded-xl border px-3.5 py-3 text-left font-semibold transition ${
+                menorPrecioActive
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-900 shadow-sm"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
               }`}
             >
-              <p
-                className={`font-semibold uppercase tracking-wide text-slate-500 ${
-                  options.mobile ? "text-xs" : "text-[10px]"
-                }`}
-              >
-                Tipo de vehículo
-              </p>
+              <span className="inline-flex items-center gap-2.5">
+                <span
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-full ${
+                    menorPrecioActive ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
+                  }`}
+                  aria-hidden="true"
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+                    <path
+                      d="M5 13h10M8 10h4M10 7h0"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="M10 4v9m0 0-2-2m2 2 2-2"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span>
+                  Menor precio
+                  <span className="mt-0.5 block text-[11px] font-normal text-slate-500">
+                    Ordena de menor a mayor
+                  </span>
+                </span>
+              </span>
+              {menorPrecioActive ? <span className="text-emerald-700">✓</span> : null}
+            </button>
+          </section>
+        ) : null}
+
+        {config.homeLayout.showQuickFilters ? (
+          <section>
+            <div className="mb-2.5 flex items-center justify-between gap-2">
+              <p className={sectionLabelClass}>3. Tipo de vehículo</p>
               {quickFilters.length > 0 ? (
                 <button
                   type="button"
                   onClick={() => setQuickFilters([])}
-                  className={`ui-focus rounded font-semibold text-slate-600 hover:bg-slate-50 ${
-                    options.mobile ? "px-2 py-1 text-xs" : "px-1.5 py-0.5 text-[10px]"
-                  }`}
+                  className="ui-focus rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
                 >
-                  Limpiar
+                  Quitar tipos
                 </button>
               ) : null}
             </div>
-            <div className={`flex flex-wrap ${options.mobile ? "gap-2" : "gap-1.5"}`}>
-              {QUICK_FILTER_IDS.map((id) => (
+            <div className={`grid ${options.mobile ? "grid-cols-2 gap-2.5" : "grid-cols-2 gap-2"}`}>
+              {HOME_BODY_FILTER_IDS.map((id) => (
                 <button
                   key={id}
                   type="button"
+                  aria-pressed={quickFilters.includes(id)}
                   onClick={() => toggleQuickFilter(id)}
-                  className={filterPillClass(quickFilters.includes(id))}
+                  className={bodyChipClass(quickFilters.includes(id))}
                 >
-                  {QUICK_FILTER_LABELS[id]}
+                  {HOME_BODY_FILTER_LABELS[id]}
                 </button>
               ))}
             </div>
-          </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              Puedes combinar varios tipos. El listado muestra unidades que coincidan con al menos uno.
+            </p>
+          </section>
         ) : null}
-      </>
+      </div>
     );
   };
 
@@ -10733,14 +10954,14 @@ export function CatalogHomeClient({
                     <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
                       <path d="M4 5h12M6 10h8M8 15h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                     </svg>
-                    {quickFilters.length > 0 ? (
+                    {activeHomeFilterCount > 0 ? (
                       <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-slate-800 px-1 text-[10px] font-bold text-white">
-                        {quickFilters.length}
+                        {activeHomeFilterCount}
                       </span>
                     ) : null}
                   </button>
                   {showHomeFiltersMenu ? (
-                    <div className="absolute right-0 z-50 mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white p-2 shadow-lg md:block">
+                    <div className="absolute right-0 z-50 mt-2 hidden w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl md:block">
                       {renderHomeFiltersContent({ closeOnSortSelect: true, mobile: false })}
                     </div>
                   ) : null}
@@ -10778,7 +10999,7 @@ export function CatalogHomeClient({
               </svg>
               Atrás
             </button>
-            <h2 className="flex-1 text-center text-sm font-bold text-slate-900">Filtros y orden</h2>
+            <h2 className="flex-1 text-center text-sm font-bold text-slate-900">Filtros del catálogo</h2>
             <span className="min-w-[4.5rem]" aria-hidden="true" />
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
@@ -12453,7 +12674,13 @@ export function CatalogHomeClient({
                 </p>
                 <h3 className="text-lg font-bold text-slate-900">{groupManageTargetLabel}</h3>
                 <p className="text-xs text-slate-500">
-                  {groupManageItems.length} unidad(es) en este grupo
+                  {groupManageItems.length} unidad(es) visibles
+                  {groupManageSearchTerm.trim()
+                    ? ` de ${groupManageBaseItems.length} en este grupo`
+                    : " en este grupo"}
+                  {groupManageSelectedKeys.length > 0
+                    ? ` · ${groupManageSelectedKeys.length} seleccionada(s)`
+                    : ""}
                 </p>
               </div>
               <button
@@ -12465,26 +12692,77 @@ export function CatalogHomeClient({
               </button>
             </div>
 
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <input
-                value={groupManageSearchTerm}
-                onChange={(event) => setGroupManageSearchTerm(event.target.value)}
-                placeholder="Buscar por patente o modelo..."
-                className="ui-focus min-w-[14rem] flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  if (!groupManageTarget) return;
-                  openBatchAssignModal(groupManageTarget);
-                }}
-                className="ui-focus inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
-              >
-                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] text-white">
-                  +
-                </span>
-                Agregar unidades
-              </button>
+            <div className="mb-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={groupManageSearchTerm}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setGroupManageSearchTerm(value);
+                    selectGroupManagePatentsFromSearch(value);
+                  }}
+                  placeholder="Buscar por patente o modelo. Varias patentes: JXZF63 GDJC57 THXX63"
+                  className="ui-focus min-w-[14rem] flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!groupManageTarget) return;
+                    openBatchAssignModal(groupManageTarget);
+                  }}
+                  className="ui-focus inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                >
+                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] text-white">
+                    +
+                  </span>
+                  Agregar unidades
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectGroupManageFiltered}
+                  disabled={groupManageItems.length === 0}
+                  className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Seleccionar filtrados
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGroupManageSelectedKeys([])}
+                  disabled={groupManageSelectedKeys.length === 0}
+                  className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Limpiar selección
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (groupManageSelectedKeys.length === 0) return;
+                    if (
+                      !window.confirm(
+                        `¿Marcar ${groupManageSelectedKeys.length} unidad(es) como vendidas? Pasarán a historial y dejarán de mostrarse en el catálogo.`,
+                      )
+                    ) {
+                      return;
+                    }
+                    const markedCount = markVehiclesAsSoldBulk(
+                      groupManageSelectedKeys,
+                      groupManageSoldContext,
+                    );
+                    setGroupManageSelectedKeys([]);
+                    showSystemNotice(
+                      "success",
+                      "Venta masiva registrada",
+                      `${markedCount} unidad(es) pasaron a historial y dejaron de estar visibles.`,
+                    );
+                  }}
+                  disabled={groupManageSelectedKeys.length === 0}
+                  className="ui-focus rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Marcar vendidas ({groupManageSelectedKeys.length})
+                </button>
+              </div>
             </div>
 
             <div className="max-h-[52vh] space-y-2 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
@@ -12497,11 +12775,25 @@ export function CatalogHomeClient({
                   const key = getVehicleKey(item);
                   const hidden = mergedHiddenVehicleIds.has(key);
                   const needsQuickSync = vehicleNeedsQuickSync(item, key, config);
+                  const selected = groupManageSelectedKeys.includes(key);
                   return (
                     <article
                       key={`group-manage-${key}`}
-                      className="grid grid-cols-1 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 sm:grid-cols-[1.4fr_auto_1fr_auto]"
+                      className={`grid grid-cols-1 items-center gap-2 rounded-lg border px-2.5 py-1.5 sm:grid-cols-[auto_1.4fr_auto_1fr_auto] ${
+                        selected
+                          ? "border-cyan-300 bg-cyan-50/40"
+                          : "border-slate-200 bg-white"
+                      }`}
                     >
+                      <label className="flex items-center justify-center sm:justify-start">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleGroupManageVehicle(key)}
+                          className="h-4 w-4 rounded border-slate-300 text-cyan-600"
+                          aria-label={`Seleccionar ${getPatent(item)}`}
+                        />
+                      </label>
                       <div className="min-w-0">
                         <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                           {getPatent(item)}
