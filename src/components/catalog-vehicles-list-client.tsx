@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { shouldShowPatentsToViewer } from "@/lib/catalog-patent-visibility";
 import { inferVehicleSiniestradoStatus } from "@/components/catalog-card";
 import {
   buildCommercialEventByVehicleKey,
@@ -82,10 +83,12 @@ function VehicleListRow({
   item,
   commercialBadge,
   priceLabel,
+  showPatents,
 }: {
   item: CatalogItem;
   commercialBadge: VehicleCommercialEventBadge | null;
   priceLabel: string | null;
+  showPatents: boolean;
 }) {
   const key = getVehicleKey(item);
   const coverCandidate = item.thumbnail ?? item.images[0];
@@ -114,7 +117,9 @@ function VehicleListRow({
 
       <div className="min-w-0 space-y-2">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{getPatent(item)}</p>
+          {showPatents ? (
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{getPatent(item)}</p>
+          ) : null}
           <h2 className="line-clamp-2 text-lg font-bold text-slate-900">{item.title}</h2>
           {item.subtitle ? (
             <p className="mt-1 line-clamp-2 text-sm text-slate-600">{shortText(item.subtitle, 180)}</p>
@@ -143,6 +148,25 @@ function VehicleListRow({
 
 export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/session", { cache: "no-store" });
+        const session = (await response.json()) as { loggedIn?: boolean };
+        if (!cancelled) setIsAdmin(Boolean(session.loggedIn));
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const showPatents = shouldShowPatentsToViewer(isAdmin);
 
   const items = useMemo(
     () => getVisibleCatalogItems(feed, initialConfig),
@@ -162,7 +186,7 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
       const haystack = [
         item.title,
         item.subtitle,
-        getPatent(item),
+        ...(showPatents ? [getPatent(item)] : []),
         item.location,
         raw.marca,
         raw.modelo,
@@ -173,7 +197,7 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [items, searchTerm]);
+  }, [items, searchTerm, showPatents]);
 
   return (
     <div className="catalog-bg min-h-full">
@@ -222,9 +246,11 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
               <input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Buscar por patente, marca, modelo..."
+                placeholder={
+                  showPatents ? "Buscar por patente, marca, modelo..." : "Buscar por marca, modelo..."
+                }
                 className="ui-focus w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-800"
-                aria-label="Buscar vehículos"
+                aria-label={showPatents ? "Buscar vehículos por patente, marca o modelo" : "Buscar vehículos por marca o modelo"}
               />
             </div>
             <span className="shrink-0 rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
@@ -245,6 +271,7 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
                 <VehicleListRow
                   key={key}
                   item={item}
+                  showPatents={showPatents}
                   commercialBadge={resolveCommercialEventBadge(item, initialConfig, commercialBadges)}
                   priceLabel={formatPrice(
                     resolveVehiclePriceRaw(item, initialConfig.vehiclePrices) ?? undefined,

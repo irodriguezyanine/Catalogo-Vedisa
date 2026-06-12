@@ -14,6 +14,7 @@ type CatalogCardProps = {
   originalPriceLabel?: string | null;
   commercialEventBadge?: VehicleCommercialEventBadge;
   density?: "compact" | "detailed";
+  showPatents?: boolean;
   onOpen?: () => void;
   onWhatsappClick?: () => void;
 };
@@ -169,6 +170,7 @@ export function CatalogCard({
   originalPriceLabel: originalPriceLabelOverride,
   commercialEventBadge,
   density = "detailed",
+  showPatents = true,
   onOpen,
   onWhatsappClick,
 }: CatalogCardProps) {
@@ -204,7 +206,9 @@ export function CatalogCard({
     if (!url.hash) url.hash = "catalogo";
     return url.toString();
   }, [itemKey]);
-  const whatsappText = `Hola, estoy interesado en ofertar por el vehículo ${patent} ${brandModel}`;
+  const whatsappText = showPatents
+    ? `Hola, estoy interesado en ofertar por el vehículo ${patent} ${brandModel}`
+    : `Hola, estoy interesado en ofertar por el vehículo ${brandModel}`;
   const whatsappUrl = `${WHATSAPP_BASE_URL}&text=${encodeURIComponent(
     `${whatsappText}${shareUrl ? `. Link: ${shareUrl}` : ""}`,
   )}&type=phone_number&app_absent=0`;
@@ -326,7 +330,7 @@ export function CatalogCard({
                 if (navigator.share && shareUrl) {
                   await navigator.share({
                     title: item.title,
-                    text: `Revisa este vehículo: ${patent}`,
+                    text: showPatents ? `Revisa este vehículo: ${patent}` : `Revisa este vehículo: ${brandModel}`,
                     url: shareUrl,
                   });
                 } else if (navigator.clipboard && shareUrl) {

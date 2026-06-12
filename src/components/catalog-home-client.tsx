@@ -34,6 +34,12 @@ import {
   saveCatalogPdfDocument,
   type CatalogPdfSection,
 } from "@/lib/catalog-pdf";
+import {
+  filterPatentDetailFields,
+  maskPatentForDisplay,
+  maskPatentForPdf,
+  shouldShowPatentsToViewer,
+} from "@/lib/catalog-patent-visibility";
 import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
 import { isCatalogPublishedVehicle } from "@/lib/catalog-publication-rules";
 import { clearPublicationBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
@@ -1010,7 +1016,9 @@ function matchesInventoryPatentSearch(
   item: CatalogItem,
   rawTerm: string,
   patentTokens: string[],
+  allowPatentSearch = true,
 ): boolean {
+  if (!allowPatentSearch) return false;
   const patent = normalizePatentToken(getPatent(item));
   const key = normalizePatentToken(getVehicleKey(item));
   if (patentTokens.length > 0) {
@@ -2602,6 +2610,7 @@ type SectionProps = {
   upcomingAuctionByVehicleKey?: Record<string, VehicleCommercialEventBadge>;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
+  showPatents?: boolean;
 };
 
 type HorizontalCardsRailProps = {
@@ -2611,6 +2620,7 @@ type HorizontalCardsRailProps = {
   upcomingAuctionByVehicleKey?: Record<string, VehicleCommercialEventBadge>;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
+  showPatents?: boolean;
 };
 
 function HorizontalCardsRail({
@@ -2620,6 +2630,7 @@ function HorizontalCardsRail({
   upcomingAuctionByVehicleKey,
   onOpenVehicle,
   cardDensity,
+  showPatents = true,
 }: HorizontalCardsRailProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -2746,6 +2757,7 @@ function HorizontalCardsRail({
               priceLabel={formatPrice(resolveVehiclePriceRaw(item, priceMap) ?? undefined)}
               commercialEventBadge={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
               density={cardDensity}
+              showPatents={showPatents}
               onOpen={() => {
                 if (draggedRef.current) return;
                 onOpenVehicle(item);
@@ -2773,6 +2785,7 @@ function Section({
   upcomingAuctionByVehicleKey,
   onOpenVehicle,
   cardDensity,
+  showPatents = true,
 }: SectionProps) {
   return (
     <section id={id} className="section-shell scroll-mt-24">
@@ -2799,6 +2812,7 @@ function Section({
           upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
           onOpenVehicle={onOpenVehicle}
           cardDensity={cardDensity}
+          showPatents={showPatents}
         />
       )}
     </section>
@@ -2836,6 +2850,7 @@ type UpcomingAuctionsSectionProps = {
   upcomingAuctionByVehicleKey: Record<string, VehicleCommercialEventBadge>;
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
+  showPatents?: boolean;
 };
 
 function UpcomingAuctionsSection({
@@ -2845,6 +2860,7 @@ function UpcomingAuctionsSection({
   upcomingAuctionByVehicleKey,
   onOpenVehicle,
   cardDensity,
+  showPatents = true,
 }: UpcomingAuctionsSectionProps) {
   if (groups.length === 0) return null;
   const copy = UPCOMING_AUCTIONS_SECTION_COPY[variant];
@@ -2878,6 +2894,7 @@ function UpcomingAuctionsSection({
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 onOpenVehicle={onOpenVehicle}
                 cardDensity={cardDensity}
+                showPatents={showPatents}
               />
             ) : (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
@@ -3693,13 +3710,16 @@ export function CatalogHomeClient({
     setSelectedVehicle(directMatch ?? null);
   }, [isStandaloneDetailPage, standaloneVehicleKey, visibleItems]);
 
+  const showPatents = shouldShowPatentsToViewer(isAdmin);
+
   const homeFilteredItems = useMemo(() => {
     const query = normalizeText(homeSearchTerm);
     if (!query) return visibleItems;
     const patentTokens = extractPatentTokens(homeSearchTerm);
     if (patentTokens.length > 0) {
+      if (!showPatents) return [];
       return visibleItems.filter((item) =>
-        matchesInventoryPatentSearch(item, homeSearchTerm, patentTokens),
+        matchesInventoryPatentSearch(item, homeSearchTerm, patentTokens, showPatents),
       );
     }
     return visibleItems.filter((item) => {
@@ -3710,10 +3730,7 @@ export function CatalogHomeClient({
         item.status,
         item.location,
         item.lot,
-        raw.patente,
-        raw.PATENTE,
-        raw.PPU,
-        raw.stock_number,
+        ...(showPatents ? [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number] : []),
         raw.marca,
         raw.brand,
         raw.modelo,
@@ -3726,7 +3743,7 @@ export function CatalogHomeClient({
         .join(" ");
       return fuzzyMatches(normalizeText(source), query);
     });
-  }, [visibleItems, homeSearchTerm]);
+  }, [visibleItems, homeSearchTerm, showPatents]);
 
   const effectiveSectionVehicleIds = useMemo<Record<SectionId, string[]>>(() => {
     const sectionSets: Record<SectionId, Set<string>> = {
@@ -4038,7 +4055,7 @@ export function CatalogHomeClient({
       return {
         vehiclePrimary: vehicleDisplay.primary,
         vehicleSecondary: vehicleDisplay.secondary,
-        patent: getPatent(item),
+        patent: maskPatentForPdf(getPatent(item), showPatents),
         model: getModel(item),
         priceLabel:
           formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ?? "Sin precio",
@@ -4108,6 +4125,7 @@ export function CatalogHomeClient({
     homeVisibleItems,
     config.vehiclePrices,
     config.sectionTexts,
+    showPatents,
   ]);
 
   const featuredItems = useMemo(() => homeVisibleItems.slice(0, 16), [homeVisibleItems]);
@@ -4128,6 +4146,7 @@ export function CatalogHomeClient({
       const { doc, exportFileName, totalRows } = await generateCatalogPdfDocument(
         calendarPdfSections,
         logoDataUrl,
+        { showPatents },
       );
       saveCatalogPdfDocument(doc, exportFileName);
       trackEvent("calendar_pdf_download", {
@@ -4150,7 +4169,7 @@ export function CatalogHomeClient({
     } finally {
       setIsDownloadingCalendarPdf(false);
     }
-  }, [calendarPdfSections, isDownloadingCalendarPdf, showSystemNotice]);
+  }, [calendarPdfSections, isDownloadingCalendarPdf, showPatents, showSystemNotice]);
 
   const latestItems = useMemo(
     () =>
@@ -4259,14 +4278,15 @@ export function CatalogHomeClient({
 
   const selectedVehicleWhatsappUrl = useMemo(() => {
     if (!selectedVehicle) return "";
-    const patent = getPatent(selectedVehicle);
+    const patent = maskPatentForDisplay(getPatent(selectedVehicle), showPatents);
     const label = getModel(selectedVehicle);
     const shareLink = selectedVehicleShareUrl || "https://catalogo.vedisaremates.cl/#catalogo";
-    const text = `Hola, me interesa este vehículo: ${patent} - ${label}. ¿Me puedes asesorar? ${shareLink}`;
+    const vehicleLabel = patent ? `${patent} - ${label}` : label;
+    const text = `Hola, me interesa este vehículo: ${vehicleLabel}. ¿Me puedes asesorar? ${shareLink}`;
     return `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(
       text,
     )}&type=phone_number&app_absent=0`;
-  }, [selectedVehicle, selectedVehicleShareUrl]);
+  }, [selectedVehicle, selectedVehicleShareUrl, showPatents]);
 
   const selectedVehicleConditionLabel = useMemo(() => {
     if (!selectedVehicle) return null;
@@ -4489,7 +4509,7 @@ export function CatalogHomeClient({
       return String(value);
     };
 
-    return {
+    const fields = {
       general: toPairs([
         { label: "Patente", value: getPatent(selectedVehicle) },
         {
@@ -4943,7 +4963,12 @@ export function CatalogHomeClient({
         },
       ]),
     };
-  }, [selectedVehicle, selectedVehicleLookup, selectedVehicleOverride]);
+    return {
+      general: filterPatentDetailFields(fields.general, showPatents),
+      descripcion: fields.descripcion,
+      tecnica: filterPatentDetailFields(fields.tecnica, showPatents),
+    };
+  }, [selectedVehicle, selectedVehicleLookup, selectedVehicleOverride, showPatents]);
 
   const leadWhatsappUrl = useMemo(() => {
     const base = "https://api.whatsapp.com/send/?phone=56989323397";
@@ -5064,7 +5089,9 @@ export function CatalogHomeClient({
     if (!selectedVehicle) return;
     const shareUrl = selectedVehicleShareUrl;
     if (!shareUrl) return;
-    const title = `${getPatent(selectedVehicle)} · ${getModel(selectedVehicle)}`;
+    const patent = maskPatentForDisplay(getPatent(selectedVehicle), showPatents);
+    const model = getModel(selectedVehicle);
+    const title = patent ? `${patent} · ${model}` : model;
     const text = `Revisa este vehículo en Catálogo Vedisa: ${title}`;
     const canUseNativeShare = typeof navigator.share === "function";
     try {
@@ -5086,7 +5113,7 @@ export function CatalogHomeClient({
     } catch {
       showSystemNotice("error", "No se pudo compartir", "Intenta nuevamente en unos segundos.");
     }
-  }, [selectedVehicle, selectedVehicleShareUrl, showSystemNotice]);
+  }, [selectedVehicle, selectedVehicleShareUrl, showPatents, showSystemNotice]);
 
   const organizationSchema = useMemo(
     () => ({
@@ -10383,9 +10410,17 @@ export function CatalogHomeClient({
                     setHomeSearchTerm(event.target.value);
                     trackEvent("home_search_change", { query: event.target.value });
                   }}
-                  placeholder="Buscar por patente, marca, modelo o categoría..."
+                  placeholder={
+                    showPatents
+                      ? "Buscar por patente, marca, modelo o categoría..."
+                      : "Buscar por marca, modelo o categoría..."
+                  }
                   className="ui-focus w-full rounded-xl border-2 border-slate-300 bg-white py-3 pl-10 pr-28 text-sm font-medium text-slate-800 shadow-sm placeholder:text-slate-500"
-                  aria-label="Buscar vehículos por patente, marca, modelo o categoría"
+                  aria-label={
+                    showPatents
+                      ? "Buscar vehículos por patente, marca, modelo o categoría"
+                      : "Buscar vehículos por marca, modelo o categoría"
+                  }
                 />
                 {homeSearchTerm ? (
                   <button
@@ -10754,6 +10789,7 @@ export function CatalogHomeClient({
                   key={`latest-${item.id}`}
                   item={item}
                   density={cardDensity}
+                  showPatents={showPatents}
                   priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
                   promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
                   originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
@@ -10782,7 +10818,9 @@ export function CatalogHomeClient({
               <p className="mt-1 text-sm text-slate-600">
                 {homeVisibleItems.length > 0
                   ? "Unidades publicadas o asignadas a un evento del catálogo."
-                  : "La patente debe estar en inventario, publicada y agregada a un evento desde el editor."}
+                  : showPatents
+                    ? "La patente debe estar en inventario, publicada y agregada a un evento desde el editor."
+                    : "Prueba con marca, modelo o categoría. La unidad debe estar publicada y asignada a un evento."}
               </p>
             </header>
             {homeVisibleItems.length > 0 ? (
@@ -10792,6 +10830,7 @@ export function CatalogHomeClient({
                     key={`search-${getVehicleKey(item)}`}
                     item={item}
                     density={cardDensity}
+                    showPatents={showPatents}
                     priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
                     promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
                     originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
@@ -10829,6 +10868,7 @@ export function CatalogHomeClient({
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
+                showPatents={showPatents}
               />
             );
           }
@@ -10845,6 +10885,7 @@ export function CatalogHomeClient({
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
+                showPatents={showPatents}
               />
             ) : (
               <Section
@@ -10857,6 +10898,7 @@ export function CatalogHomeClient({
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
+                showPatents={showPatents}
               />
             );
           }
@@ -10871,6 +10913,7 @@ export function CatalogHomeClient({
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
+                showPatents={showPatents}
               />
             ) : (
               <Section
@@ -10883,6 +10926,7 @@ export function CatalogHomeClient({
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
+                showPatents={showPatents}
               />
             );
           }
@@ -10899,6 +10943,7 @@ export function CatalogHomeClient({
                 upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                 onOpenVehicle={openVehicleDetail}
                 cardDensity={cardDensity}
+                showPatents={showPatents}
               />
             );
           }
@@ -10933,7 +10978,8 @@ export function CatalogHomeClient({
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
                   No encontramos vehículos para esta combinación.
                   {" "}
-                  Prueba con “Livianos”, quita filtros activos o busca por patente exacta (ej: SYGD93).
+                  Prueba con “Livianos”, quita filtros activos
+                  {showPatents ? " o busca por patente exacta (ej: SYGD93)" : " o busca por marca o modelo"}.
                 </div>
               ) : (
                 <HorizontalCardsRail
@@ -10943,6 +10989,7 @@ export function CatalogHomeClient({
                   upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
                   onOpenVehicle={openVehicleDetail}
                   cardDensity={cardDensity}
+                  showPatents={showPatents}
                 />
               )}
             </section>
@@ -11085,7 +11132,7 @@ export function CatalogHomeClient({
           <VehicleDetailMobile
             vehicle={selectedVehicle}
             override={selectedVehicleOverride}
-            patent={getPatent(selectedVehicle)}
+            patent={maskPatentForDisplay(getPatent(selectedVehicle), showPatents)}
             displayTitle={
               selectedVehicle.title?.trim() && !isStaleEditorDraftValue(selectedVehicle.title, getPatent(selectedVehicle))
                 ? selectedVehicle.title
@@ -11150,7 +11197,11 @@ export function CatalogHomeClient({
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                     Vehículos disponibles
                   </p>
-                  <p className="truncate text-sm font-bold text-slate-900">{getPatent(selectedVehicle)}</p>
+                  <p className="truncate text-sm font-bold text-slate-900">
+                    {showPatents
+                      ? getPatent(selectedVehicle)
+                      : selectedVehicle.subtitle?.trim() || getModel(selectedVehicle)}
+                  </p>
                 </div>
               </div>
             </section>
@@ -11171,9 +11222,12 @@ export function CatalogHomeClient({
                 <div>
                   <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="whitespace-nowrap rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800">
-                      {selectedVehicle.subtitle?.trim() || getPatent(selectedVehicle)}
-                    </span>
+                    {(selectedVehicle.subtitle?.trim() || showPatents) ? (
+                      <span className="whitespace-nowrap rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800">
+                        {selectedVehicle.subtitle?.trim() ||
+                          (showPatents ? getPatent(selectedVehicle) : getModel(selectedVehicle))}
+                      </span>
+                    ) : null}
                     {selectedVehicleConditionLabel ? (
                       <span
                         className={`rounded-full border px-3 py-1 text-xs font-semibold ${selectedVehicleConditionClasses}`}
@@ -12042,7 +12096,9 @@ export function CatalogHomeClient({
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Enviar mi precio</p>
                 <h3 className="text-lg font-bold text-slate-900">{getModel(selectedVehicle)}</h3>
-                <p className="text-xs text-slate-500">Patente {getPatent(selectedVehicle)}</p>
+                {showPatents ? (
+                  <p className="text-xs text-slate-500">Patente {getPatent(selectedVehicle)}</p>
+                ) : null}
               </div>
               <button
                 type="button"
