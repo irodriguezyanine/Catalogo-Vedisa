@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { CatalogCard, type VehicleCommercialEventBadge } from "@/components/catalog-card";
 import { CatalogVehicleHighlightStrip } from "@/components/catalog-vehicle-highlight-strip";
 import { ShareIcon } from "@/components/share-icon";
+import { VehicleDetailMobile } from "@/components/vehicle-detail-mobile";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { OfferRecord } from "@/types/offers";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
@@ -11072,11 +11073,48 @@ export function CatalogHomeClient({
       ) : null}
 
       {selectedVehicle ? (
+        <>
+          <VehicleDetailMobile
+            vehicle={selectedVehicle}
+            override={selectedVehicleOverride}
+            patent={getPatent(selectedVehicle)}
+            displayTitle={
+              selectedVehicle.title?.trim() && !isStaleEditorDraftValue(selectedVehicle.title, getPatent(selectedVehicle))
+                ? selectedVehicle.title
+                : getModel(selectedVehicle)
+            }
+            subtitle={selectedVehicle.subtitle ?? undefined}
+            priceLabel={selectedVehiclePriceLabel}
+            promoEnabled={selectedVehiclePromoMeta.promoEnabled}
+            originalPriceLabel={selectedVehiclePromoMeta.originalPriceLabel}
+            referencePriceAmount={selectedVehicleReferencePriceAmount}
+            conditionLabel={selectedVehicleConditionLabel}
+            conditionClasses={selectedVehicleConditionClasses}
+            view3dUrl={selectedVehicle.view3dUrl}
+            mainImage={selectedVehicleMainImage}
+            galleryImages={selectedVehicleGalleryImages}
+            imageIndex={selectedVehicleImageIndex}
+            onImageIndexChange={setSelectedVehicleImageIndex}
+            onOpenLightbox={openSelectedVehicleLightboxAt}
+            descriptionHtml={formatExtendedDescriptionHtml(selectedVehicleExpandedDescription)}
+            generalFields={selectedVehicleFieldsByTab.general}
+            technicalFields={selectedVehicleFieldsByTab.tecnica}
+            documents={selectedVehicleLotDocuments}
+            whatsappUrl={selectedVehicleWhatsappUrl}
+            whatsappLabel={selectedVehiclePrimaryCtaLabel}
+            onBack={navigateBackFromVehicleDetail}
+            onOffer={openOfferModal}
+            onShare={() => {
+              void shareSelectedVehicle();
+            }}
+            onWhatsappTrack={() => trackEvent("whatsapp_click_modal_mobile", { itemKey: selectedVehicleKey })}
+            backHref={isStandaloneDetailPage ? standaloneBackHrefProp : undefined}
+          />
         <div
           className={
             isStandaloneDetailPage
-              ? "relative z-10 min-h-screen"
-              : "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm md:p-5"
+              ? "relative z-10 hidden min-h-screen md:block"
+              : "fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm md:flex md:p-5"
           }
           onClick={
             isStandaloneDetailPage
@@ -11108,19 +11146,7 @@ export function CatalogHomeClient({
                 </div>
               </div>
             </section>
-          ) : (
-          <button
-            type="button"
-            onClick={navigateBackFromVehicleDetail}
-            className="ui-focus fixed right-4 top-[calc(env(safe-area-inset-top)+10px)] z-[70] inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/40 bg-slate-900/30 text-white backdrop-blur-sm transition hover:bg-slate-900/50 md:hidden"
-            aria-label="Cerrar detalle"
-            title="Cerrar"
-          >
-            <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
-              <path fillRule="evenodd" d="M4.22 4.22a.75.75 0 0 1 1.06 0L10 8.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L11.06 10l4.72 4.72a.75.75 0 0 1-1.06 1.06L10 11.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L8.94 10 4.22 5.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-            </svg>
-          </button>
-          )}
+          ) : null}
           <div
             role="dialog"
             aria-modal={!isStandaloneDetailPage}
@@ -11288,109 +11314,6 @@ export function CatalogHomeClient({
                 </div>
               </div>
             </div>
-            {selectedVehicleLightboxImage ? (
-              <div
-                className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/80 p-4"
-                onClick={closeSelectedVehicleLightbox}
-              >
-                <div className="relative max-h-[92vh] w-full max-w-5xl">
-                  <div className="absolute left-3 top-3 z-10 inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-1 text-xs font-semibold text-white backdrop-blur-sm">
-                    <span>{(selectedVehicleLightboxIndex ?? 0) + 1}</span>
-                    <span>/</span>
-                    <span>{selectedVehicleGalleryImages.length}</span>
-                  </div>
-                  <div className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-full bg-black/45 p-1 backdrop-blur-sm">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        zoomSelectedVehicleLightbox("out");
-                      }}
-                      className="ui-focus rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700"
-                      title="Alejar"
-                      aria-label="Alejar foto"
-                    >
-                      −
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        zoomSelectedVehicleLightbox("in");
-                      }}
-                      className="ui-focus rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700"
-                      title="Acercar"
-                      aria-label="Acercar foto"
-                    >
-                      +
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        zoomSelectedVehicleLightbox("reset");
-                      }}
-                      className="ui-focus rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700"
-                      title="Zoom 100%"
-                      aria-label="Restablecer zoom"
-                    >
-                      100%
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        closeSelectedVehicleLightbox();
-                      }}
-                      className="ui-focus rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-700"
-                    >
-                      Cerrar
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      moveSelectedVehicleLightbox("prev");
-                    }}
-                    className="ui-focus absolute left-2 top-1/2 z-10 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-black/35 text-white backdrop-blur-sm hover:bg-black/50 md:inline-flex"
-                    aria-label="Foto anterior"
-                    title="Anterior"
-                  >
-                    <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
-                      <path fillRule="evenodd" d="M12.78 4.22a.75.75 0 0 1 0 1.06L8.06 10l4.72 4.72a.75.75 0 1 1-1.06 1.06l-5.25-5.25a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      moveSelectedVehicleLightbox("next");
-                    }}
-                    className="ui-focus absolute right-2 top-1/2 z-10 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-black/35 text-white backdrop-blur-sm hover:bg-black/50 md:inline-flex"
-                    aria-label="Foto siguiente"
-                    title="Siguiente"
-                  >
-                    <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
-                      <path fillRule="evenodd" d="M7.22 15.78a.75.75 0 0 1 0-1.06L11.94 10 7.22 5.28a.75.75 0 1 1 1.06-1.06l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 0 1-1.06 0Z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                  <div
-                    className="flex max-h-[92vh] items-center justify-center overflow-auto rounded-xl"
-                    onWheel={onSelectedVehicleLightboxWheel}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={selectedVehicleLightboxImage}
-                      alt={`Foto ampliada ${selectedVehicle.title}`}
-                      className="max-h-[92vh] w-full rounded-xl object-contain transition-transform duration-200"
-                      style={{ transform: `scale(${selectedVehicleLightboxZoom})` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : null}
             <CatalogVehicleHighlightStrip item={selectedVehicle} override={selectedVehicleOverride} />
             <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="grid md:grid-cols-2">
@@ -11492,7 +11415,7 @@ export function CatalogHomeClient({
             </div>
           </div>
           <div
-            className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-[76] md:bottom-5"
+            className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-[76] hidden md:bottom-5 md:block"
             aria-label="Acciones del vehículo"
           >
             <div
@@ -11570,6 +11493,70 @@ export function CatalogHomeClient({
             </div>
           </div>
         </div>
+          {selectedVehicleLightboxImage ? (
+            <div
+              className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 p-4"
+              onClick={closeSelectedVehicleLightbox}
+            >
+              <div className="relative max-h-[92vh] w-full max-w-5xl">
+                <div className="absolute left-3 top-3 z-10 inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-1 text-xs font-semibold text-white backdrop-blur-sm">
+                  <span>{(selectedVehicleLightboxIndex ?? 0) + 1}</span>
+                  <span>/</span>
+                  <span>{selectedVehicleGalleryImages.length}</span>
+                </div>
+                <div className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-full bg-black/45 p-1 backdrop-blur-sm">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      zoomSelectedVehicleLightbox("out");
+                    }}
+                    className="ui-focus rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700"
+                    title="Alejar"
+                    aria-label="Alejar foto"
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      zoomSelectedVehicleLightbox("in");
+                    }}
+                    className="ui-focus rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700"
+                    title="Acercar"
+                    aria-label="Acercar foto"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeSelectedVehicleLightbox();
+                    }}
+                    className="ui-focus rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-700"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+                <div
+                  className="flex max-h-[92vh] items-center justify-center overflow-auto rounded-xl"
+                  onWheel={onSelectedVehicleLightboxWheel}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={selectedVehicleLightboxImage}
+                    alt={`Foto ampliada ${selectedVehicle.title}`}
+                    className="max-h-[92vh] w-full rounded-xl object-contain transition-transform duration-200"
+                    style={{ transform: `scale(${selectedVehicleLightboxZoom})` }}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {isAdmin && pendingRevertSale ? (
