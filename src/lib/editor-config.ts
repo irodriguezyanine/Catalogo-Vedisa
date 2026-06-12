@@ -111,9 +111,7 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       showHeroCtas: migrated?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
       showFeaturedStrip:
         migrated?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
-      showRecentPublications:
-        migrated?.homeLayout?.showRecentPublications ??
-        defaults.homeLayout.showRecentPublications,
+      showRecentPublications: false,
       showFavoritesSection: false,
       showHowToSection:
         (migrated?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
@@ -130,7 +128,12 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       defaultCardDensity:
         migrated?.homeLayout?.defaultCardDensity ?? defaults.homeLayout.defaultCardDensity,
       sectionSpacing: migrated?.homeLayout?.sectionSpacing ?? defaults.homeLayout.sectionSpacing,
-      sectionOrder: migrated?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
+      sectionOrder: (migrated?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder).filter(
+        (sectionId) =>
+          sectionId === "proximos-remates" ||
+          sectionId === "ventas-directas" ||
+          String(sectionId).startsWith("managed:"),
+      ),
     },
     manualPublications: migrated?.manualPublications ?? defaults.manualPublications,
     managedCategories: migrated?.managedCategories ?? defaults.managedCategories,

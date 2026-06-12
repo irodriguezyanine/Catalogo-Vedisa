@@ -227,7 +227,7 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
     showCommercialPanel: true,
     defaultCardDensity: "detailed",
     sectionSpacing: "normal",
-    sectionOrder: ["proximos-remates", "ventas-directas", "novedades", "catalogo"],
+    sectionOrder: ["proximos-remates", "ventas-directas"],
   },
   manualPublications: [],
   managedCategories: [],

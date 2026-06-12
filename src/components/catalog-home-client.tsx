@@ -103,7 +103,7 @@ type EditorGroupFilter = "all" | SectionId | `managed:${string}`;
 type EditorVisibilityFilter = "all" | "visible" | "hidden";
 type EditorVehicleCategoryFilter = "all" | "livianos" | "pesados" | "maquinaria" | "chatarra" | "otros";
 type BatchAssignTarget =
-  | { type: "section"; sectionId: "ventas-directas" | "novedades" | "catalogo" }
+  | { type: "section"; sectionId: "ventas-directas" }
   | { type: "auction"; auctionId: string };
 type GroupManageTarget = BatchAssignTarget;
 type SortOption = "recomendado" | "relevancia" | "fecha-remate" | "precio-asc" | "precio-desc" | "titulo";
@@ -274,13 +274,8 @@ const SECTION_LABELS: Record<SectionId, string> = {
   novedades: "Novedades",
   catalogo: "Catálogo",
 };
-const BASE_HOME_SECTION_ORDER: SectionId[] = [
-  "proximos-remates",
-  "ventas-directas",
-  "novedades",
-  "catalogo",
-];
-const BASE_SECTION_IDS_IN_ADMIN: SectionId[] = ["novedades", "catalogo"];
+const BASE_HOME_SECTION_ORDER: SectionId[] = ["proximos-remates", "ventas-directas"];
+const RETIRED_HOME_SECTION_IDS = new Set<SectionId>(["novedades", "catalogo"]);
 const sectionCategoryKey = (sectionId: SectionId) => `section:${sectionId}` as const;
 const auctionCategoryKey = (auctionId: string) => `auction:${auctionId}`;
 const managedCategoryKey = (categoryId: string) => `managed:${categoryId}`;
@@ -840,9 +835,7 @@ function normalizeEditorConfigClient(
       showHeroCtas: migrated?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
       showFeaturedStrip:
         migrated?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
-      showRecentPublications:
-        migrated?.homeLayout?.showRecentPublications ??
-        defaults.homeLayout.showRecentPublications,
+      showRecentPublications: false,
       showFavoritesSection: false,
       showHowToSection:
         (migrated?.homeLayout?.showHowToSection ?? defaults.homeLayout.showHowToSection) ||
@@ -859,7 +852,12 @@ function normalizeEditorConfigClient(
       defaultCardDensity:
         migrated?.homeLayout?.defaultCardDensity ?? defaults.homeLayout.defaultCardDensity,
       sectionSpacing: migrated?.homeLayout?.sectionSpacing ?? defaults.homeLayout.sectionSpacing,
-      sectionOrder: migrated?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder,
+      sectionOrder: (migrated?.homeLayout?.sectionOrder ?? defaults.homeLayout.sectionOrder).filter(
+        (sectionId) =>
+          sectionId === "proximos-remates" ||
+          sectionId === "ventas-directas" ||
+          String(sectionId).startsWith("managed:"),
+      ),
     },
     manualPublications: migrated?.manualPublications ?? defaults.manualPublications,
     managedCategories: migrated?.managedCategories ?? defaults.managedCategories,
@@ -911,7 +909,7 @@ const EMPTY_MANUAL_PUBLICATION_DRAFT: ManualPublicationDraft = {
   promoPrice: "",
   upcomingAuctionId: "",
   visible: true,
-  sectionIds: ["catalogo"],
+  sectionIds: ["ventas-directas"],
 };
 
 function normalizeText(value?: string): string {
@@ -3089,7 +3087,6 @@ export function CatalogHomeClient({
   const glo3dClientCooldownUntilRef = useRef(0);
   const [glo3dCooldownUntil, setGlo3dCooldownUntil] = useState(0);
   const [glo3dCooldownSecondsLeft, setGlo3dCooldownSecondsLeft] = useState(0);
-  const [activeTypeTab, setActiveTypeTab] = useState<VehicleTypeId>("livianos");
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
   const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
   const [topSectionFilter, setTopSectionFilter] = useState<"all" | SectionId>("all");
@@ -3151,7 +3148,6 @@ export function CatalogHomeClient({
   const [newCategoryDescription, setNewCategoryDescription] = useState("");
   const [showCreateCategoryForm, setShowCreateCategoryForm] = useState(false);
   const [createGroupKind, setCreateGroupKind] = useState<"categoria" | "remate" | "venta_directa">("categoria");
-  const [editingSectionTextId, setEditingSectionTextId] = useState<SectionId | null>(null);
   const [assignCategoryId, setAssignCategoryId] = useState<string | null>(null);
   const [assignSearchTerm, setAssignSearchTerm] = useState("");
   const [finalizeAuctionId, setFinalizeAuctionId] = useState<string | null>(null);
@@ -3497,7 +3493,7 @@ export function CatalogHomeClient({
     const url = new URL(window.location.href);
     if (vehicleKey) {
       url.searchParams.set("vehiculo", vehicleKey);
-      if (!url.hash) url.hash = "catalogo";
+      if (!url.hash) url.hash = "proximos-remates";
     } else {
       url.searchParams.delete("vehiculo");
     }
@@ -4146,17 +4142,6 @@ export function CatalogHomeClient({
 
   const proximosRemates = getSectionItems("proximos-remates");
   const ventasDirectas = getSectionItems("ventas-directas");
-  const novedades = getSectionItems("novedades");
-  const catalogoItems = getSectionItems("catalogo");
-  const hasHomePreFilter =
-    homeSearchTerm.trim().length > 0 ||
-    quickFilters.length > 0 ||
-    homeSiniestradoFilter !== "all" ||
-    homeSort === "precio-asc" ||
-    topSectionFilter !== "all";
-  const filteredCatalogItems = hasHomePreFilter
-    ? catalogoItems
-    : catalogoItems.filter((item) => inferVehicleType(item) === activeTypeTab);
   const managedCategorySections = useMemo(
     () =>
       (config.managedCategories ?? [])
@@ -4196,7 +4181,8 @@ export function CatalogHomeClient({
     const unique: HomeSectionOrderId[] = [];
     for (const rawSectionId of config.homeLayout.sectionOrder ?? []) {
       const sectionId = rawSectionId as HomeSectionOrderId;
-      const isValidBase = isBaseHomeSectionOrderId(sectionId);
+      const isValidBase =
+        isBaseHomeSectionOrderId(sectionId) && !RETIRED_HOME_SECTION_IDS.has(sectionId as SectionId);
       const isValidManaged =
         sectionId.startsWith("managed:") && validManagedIds.has(sectionId as HomeSectionOrderId);
       if (!isValidBase && !isValidManaged) continue;
@@ -4224,8 +4210,6 @@ export function CatalogHomeClient({
         ? visibleUpcomingVentaDirectaGroups.reduce((acc, group) => acc + group.items.length, 0)
         : ventasDirectas.length,
     );
-    map.set("novedades", novedades.length);
-    map.set("catalogo", filteredCatalogItems.length);
     for (const [managedId, count] of managedCategoryCountById.entries()) {
       map.set(managedId as HomeSectionOrderId, count);
     }
@@ -4237,8 +4221,6 @@ export function CatalogHomeClient({
     visibleUpcomingVentaDirectaGroups,
     proximosRemates.length,
     ventasDirectas.length,
-    novedades.length,
-    filteredCatalogItems.length,
     managedCategoryCountById,
   ]);
 
@@ -4367,18 +4349,6 @@ export function CatalogHomeClient({
     }
   }, [calendarPdfSections, isDownloadingCalendarPdf, showPatents, showSystemNotice]);
 
-  const latestItems = useMemo(
-    () =>
-      [...novedades]
-        .sort(
-          (a, b) =>
-            new Date(b.auctionDate ?? "1900-01-01").getTime() -
-            new Date(a.auctionDate ?? "1900-01-01").getTime(),
-        )
-        .slice(0, 6),
-    [novedades],
-  );
-
   const nextAuction = useMemo(() => {
     const today = new Date();
     const upcoming = sortedRemateAuctions
@@ -4476,7 +4446,7 @@ export function CatalogHomeClient({
     }
     const url = new URL(window.location.href);
     url.searchParams.set("vehiculo", selectedVehicleKey);
-    if (!url.hash) url.hash = "catalogo";
+    if (!url.hash) url.hash = "proximos-remates";
     return url.toString();
   }, [isStandaloneDetailPage, selectedVehicle, selectedVehicleKey]);
 
@@ -4484,7 +4454,7 @@ export function CatalogHomeClient({
     if (!selectedVehicle) return "";
     const patent = maskPatentForDisplay(getPatent(selectedVehicle), showPatents);
     const label = getModel(selectedVehicle);
-    const shareLink = selectedVehicleShareUrl || "https://catalogo.vedisaremates.cl/#catalogo";
+    const shareLink = selectedVehicleShareUrl || "https://catalogo.vedisaremates.cl/#proximos-remates";
     const vehicleLabel = patent ? `${patent} - ${label}` : label;
     const text = `Hola, me interesa este vehículo: ${vehicleLabel}. ¿Me puedes asesorar? ${shareLink}`;
     return `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(
@@ -5561,8 +5531,6 @@ export function CatalogHomeClient({
     const options: Array<{ value: EditorGroupFilter; label: string }> = [];
     if (sectionVehicleCounts["proximos-remates"] > 0) options.push({ value: "proximos-remates", label: "Próximos remates" });
     if (sectionVehicleCounts["ventas-directas"] > 0) options.push({ value: "ventas-directas", label: "Ventas directas" });
-    if (sectionVehicleCounts.novedades > 0) options.push({ value: "novedades", label: "Novedades" });
-    if (sectionVehicleCounts.catalogo > 0) options.push({ value: "catalogo", label: "Catálogo" });
     for (const category of config.managedCategories ?? []) {
       if ((category.vehicleIds ?? []).length > 0) {
         options.push({ value: `managed:${category.id}` as EditorGroupFilter, label: category.name });
@@ -5698,17 +5666,16 @@ export function CatalogHomeClient({
 
   const applyBulkMoveCategory = useCallback(() => {
     if (selectedInventoryKeys.length === 0) return;
-    const base = [
-      { id: "novedades", label: "Novedades" },
-      { id: "catalogo", label: "Catálogo" },
-    ];
     const managed = (config.managedCategories ?? []).map((c) => ({ id: `managed:${c.id}`, label: c.name }));
-    const options = [...base, ...managed];
-    const menu = options.map((o, i) => `${i + 1}. ${o.label}`).join("\n");
-    const raw = window.prompt(`Mover a categoría (número):\n${menu}\n0. Quitar categoría`);
+    if (managed.length === 0) {
+      showSystemNotice("info", "Sin categorías", "Crea una categoría personalizada antes de mover unidades.");
+      return;
+    }
+    const menu = managed.map((o, i) => `${i + 1}. ${o.label}`).join("\n");
+    const raw = window.prompt(`Mover a categoría personalizada (número):\n${menu}\n0. Quitar categoría`);
     const idx = Number(raw);
-    if (!Number.isFinite(idx) || idx < 0 || idx > options.length) return;
-    const target = idx === 0 ? null : options[idx - 1];
+    if (!Number.isFinite(idx) || idx < 0 || idx > managed.length) return;
+    const target = idx === 0 ? null : managed[idx - 1];
     setConfig((prev) => {
       const selected = new Set(selectedInventoryKeys);
       const nextSectionVehicleIds = {
@@ -5720,11 +5687,7 @@ export function CatalogHomeClient({
         ...category,
         vehicleIds: (category.vehicleIds ?? []).filter((id) => !selected.has(id)),
       }));
-      if (target?.id === "novedades" || target?.id === "catalogo") {
-        const set = new Set(nextSectionVehicleIds[target.id]);
-        for (const key of selected) set.add(key);
-        nextSectionVehicleIds[target.id] = Array.from(set);
-      } else if (target?.id?.startsWith("managed:")) {
+      if (target?.id?.startsWith("managed:")) {
         const managedId = target.id.replace("managed:", "");
         for (const category of nextManagedCategories) {
           if (category.id === managedId) {
@@ -6313,32 +6276,6 @@ export function CatalogHomeClient({
       };
     });
     if (assignCategoryId === categoryId) setAssignCategoryId(null);
-  };
-
-  const deleteBaseSection = (sectionId: SectionId) => {
-    if (!window.confirm(`¿Eliminar la sección base "${SECTION_LABELS[sectionId]}" del home?`)) return;
-    setConfig((prev) => {
-      const hidden = new Set(prev.hiddenCategoryIds ?? []);
-      hidden.add(sectionCategoryKey(sectionId));
-      return {
-        ...prev,
-        sectionVehicleIds: {
-          ...prev.sectionVehicleIds,
-          [sectionId]: [],
-        },
-        sectionTexts: {
-          ...prev.sectionTexts,
-          [sectionId]: { ...DEFAULT_EDITOR_CONFIG.sectionTexts[sectionId] },
-        },
-        hiddenCategoryIds: Array.from(hidden),
-      };
-    });
-    if (editorGroupFilter === sectionId) setEditorGroupFilter("all");
-    showSystemNotice(
-      "success",
-      "Sección base eliminada",
-      `${SECTION_LABELS[sectionId]} quedó sin unidades y oculta del home.`,
-    );
   };
 
   const toggleVehicleInManagedCategory = (categoryId: string, vehicleKey: string) => {
@@ -6985,7 +6922,7 @@ export function CatalogHomeClient({
     }
     const id = crypto.randomUUID();
     const sectionIds: SectionId[] =
-      manualDraft.sectionIds.length > 0 ? manualDraft.sectionIds : ["catalogo"];
+      manualDraft.sectionIds.length > 0 ? manualDraft.sectionIds : ["ventas-directas"];
     const normalizedNormalPrice = cleanOptional(manualDraft.normalPrice);
     const normalizedPromoPrice = cleanOptional(manualDraft.promoPrice);
     if (manualDraft.promoEnabled && !normalizedPromoPrice) {
@@ -7684,8 +7621,6 @@ export function CatalogHomeClient({
   const topSectionTabs: Array<{ id: SectionId; label: string }> = [
     { id: "proximos-remates", label: "Proximos remates" },
     { id: "ventas-directas", label: "Ventas directas" },
-    { id: "novedades", label: "Novedades" },
-    { id: "catalogo", label: "Catalogo" },
   ];
 
   const handleTopSectionTabClick = (sectionId: SectionId) => {
@@ -8904,7 +8839,7 @@ export function CatalogHomeClient({
                         setShowManualCreateModal(true);
                         return;
                       }
-                      if (editorGroupFilter === "ventas-directas" || editorGroupFilter === "novedades" || editorGroupFilter === "catalogo") {
+                      if (editorGroupFilter === "ventas-directas") {
                         openBatchAssignModal({ type: "section", sectionId: editorGroupFilter });
                         return;
                       }
@@ -9395,10 +9330,10 @@ export function CatalogHomeClient({
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Secciones base del home
+                      Grupos del catálogo
                     </p>
                     <p className="text-sm text-slate-600">
-                      Gestiona todos los grupos desde este panel: base, remates y categorías personalizadas.
+                      Gestiona remates, ventas directas y categorías personalizadas desde este panel.
                     </p>
                   </div>
                   <button
@@ -9525,121 +9460,12 @@ export function CatalogHomeClient({
                   </div>
                 ) : null}
 
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                      Recién publicados
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Sección opcional del home para destacar últimas unidades.
-                    </p>
-                  </div>
-                  <label className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={config.homeLayout.showRecentPublications}
-                      onChange={(event) =>
-                        setHomeLayout("showRecentPublications", event.target.checked)
-                      }
-                    />
-                    {config.homeLayout.showRecentPublications ? "Activado" : "Desactivado"}
-                  </label>
-                </div>
-
                 <div className="mt-3 space-y-2">
                   <div className="hidden gap-2 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[minmax(170px,1fr)_72px_228px]">
                     <span>Grupo</span>
                     <span className="text-center">Unidades</span>
                     <span className="text-right">Acciones</span>
                   </div>
-
-                  <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
-                    Secciones base
-                  </p>
-                  {BASE_SECTION_IDS_IN_ADMIN.map(
-                    (sectionId) => {
-                      const isEditingTexts = editingSectionTextId === sectionId;
-                      const sectionHidden = hiddenHomeCategoryIds.has(sectionCategoryKey(sectionId));
-                      return (
-                        <article
-                          key={sectionId}
-                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/30 px-2.5 py-2 md:grid-cols-[minmax(170px,1fr)_72px_228px] md:items-center"
-                        >
-                          <div className="min-h-8 md:flex md:items-center">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                              {SECTION_LABELS[sectionId]}
-                            </p>
-                          </div>
-                        <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
-                          {sectionVehicleCounts[sectionId]}
-                        </div>
-                        <div className="flex items-center justify-end gap-1.5 md:w-56">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              toggleCategoryHidden(sectionCategoryKey(sectionId), SECTION_LABELS[sectionId])
-                            }
-                            className={`ui-focus inline-flex h-8 w-8 items-center justify-center rounded border transition ${
-                              sectionHidden
-                                ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                            }`}
-                            aria-label={`${sectionHidden ? "Mostrar" : "Ocultar"} ${SECTION_LABELS[sectionId]} en home`}
-                            title={sectionHidden ? "Mostrar en home" : "Ocultar del home"}
-                          >
-                            {sectionHidden ? (
-                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16s-6.63-2-8.37-5.42a1.3 1.3 0 0 1 0-1.16C3.37 6 6.62 4 10 4Zm0 2c-2.6 0-5.16 1.5-6.71 4 .01.02.02.04.03.05C4.84 12.5 7.4 14 10 14s5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6Zm0 1.75A2.25 2.25 0 1 1 10 12.25 2.25 2.25 0 0 1 10 7.75Z" />
-                              </svg>
-                            ) : (
-                              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                                <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16c-1.72 0-3.42-.52-4.95-1.5l1.5-1.5c1.06.63 2.24.97 3.45.97 2.6 0 5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6c-1.2 0-2.38.34-3.43.96L5.1 5.49A9.85 9.85 0 0 1 10 4Zm7.2 13.6a.75.75 0 0 1-1.06 0l-13-13a.75.75 0 1 1 1.06-1.06l13 13a.75.75 0 0 1 0 1.06ZM10 7.75c.7 0 1.33.32 1.75.83L8.58 11.75A2.25 2.25 0 0 1 10 7.75Z" />
-                              </svg>
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openGroupManageModal({
-                                type: "section",
-                                sectionId: sectionId as "ventas-directas" | "novedades" | "catalogo",
-                              })
-                            }
-                            className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
-                            aria-label={`Ver y gestionar ${SECTION_LABELS[sectionId]}`}
-                            title="Ver y gestionar"
-                          >
-                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                              <path d="M10 4c4.5 0 7.8 3.16 8.9 5.5.13.28.13.62 0 .9C17.8 12.74 14.5 15.9 10 15.9S2.2 12.74 1.1 10.4a1.06 1.06 0 0 1 0-.9C2.2 7.16 5.5 4 10 4Zm0 2c-3.42 0-6.06 2.31-7.08 4 .99 1.69 3.64 4 7.08 4s6.09-2.31 7.08-4C16.06 8.31 13.42 6 10 6Zm0 1.5A2.5 2.5 0 1 1 7.5 10 2.5 2.5 0 0 1 10 7.5Z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openBatchAssignModal({ type: "section", sectionId: sectionId as "ventas-directas" | "novedades" | "catalogo" })
-                            }
-                            className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
-                            aria-label={`Agregar unidades a ${SECTION_LABELS[sectionId]}`}
-                            title="Agregar unidades"
-                          >
-                            +
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteBaseSection(sectionId)}
-                            className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
-                            aria-label={`Eliminar sección base ${SECTION_LABELS[sectionId]}`}
-                            title="Eliminar sección base"
-                          >
-                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                              <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Zm6 .5a.5.5 0 0 1 .5.5v.5h-7V3.5a.5.5 0 0 1 .5-.5h6ZM8 8.25a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3 0a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Z" />
-                            </svg>
-                          </button>
-                        </div>
-                      </article>
-                      );
-                    },
-                  )}
 
                   {([
                     {
@@ -11239,35 +11065,6 @@ export function CatalogHomeClient({
           </div>
         </section>
         ) : null}
-        {config.homeLayout.showRecentPublications && latestItems.length > 0 ? (
-          <section className="section-shell">
-            <header className="mb-4">
-              <p className="premium-kicker">Nuevas publicaciones</p>
-              <h2 className="text-2xl font-bold text-slate-900">Recién publicados</h2>
-            </header>
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {latestItems.map((item) => (
-                <CatalogCard
-                  key={`latest-${item.id}`}
-                  item={item}
-                  density={cardDensity}
-                  showPatents={showPatents}
-                  priceLabel={formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined)}
-                  promoEnabled={config.vehicleDetails[getVehicleKey(item)]?.promoEnabled}
-                  originalPriceLabel={config.vehicleDetails[getVehicleKey(item)]?.originalPrice}
-                  commercialEventBadge={upcomingAuctionByVehicleKey[getVehicleKey(item)]}
-                  onOpen={() => openVehicleDetail(item)}
-                  onWhatsappClick={() =>
-                    trackEvent("whatsapp_click_card", {
-                      section: "recien-publicados",
-                      itemKey: getVehicleKey(item),
-                    })
-                  }
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
         {hasActiveSearch ? (
           <section className="section-shell scroll-mt-24" id="resultados-busqueda">
             <header className="mb-4">
@@ -11392,70 +11189,7 @@ export function CatalogHomeClient({
               />
             );
           }
-          if (sectionId === "novedades") {
-            if (novedades.length === 0) return null;
-            return (
-              <Section
-                key="public-novedades"
-                id="novedades"
-                title={config.sectionTexts.novedades.title}
-                subtitle={config.sectionTexts.novedades.subtitle}
-                items={novedades}
-                priceMap={config.vehiclePrices}
-                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                onOpenVehicle={openVehicleDetail}
-                cardDensity={cardDensity}
-                showPatents={showPatents}
-              />
-            );
-          }
-          if (filteredCatalogItems.length === 0) return null;
-          return (
-            <section key="public-catalogo" id="catalogo" className="section-shell scroll-mt-24">
-              <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="premium-kicker">Explora y decide</p>
-                  <h2 className="text-2xl font-bold text-slate-900">{config.sectionTexts.catalogo.title}</h2>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {config.sectionTexts.catalogo.subtitle} Usa filtros para encontrar la unidad que buscas.
-                  </p>
-                </div>
-                {hasHomePreFilter ? null : (
-                  <div className="flex flex-wrap gap-2">
-                    {(["livianos", "pesados", "maquinaria", "otros"] as VehicleTypeId[]).map((type) => (
-                      <button
-                        key={type}
-                        onClick={() => setActiveTypeTab(type)}
-                        className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold transition ${
-                          activeTypeTab === type ? "bg-cyan-600 text-white shadow-sm" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                        }`}
-                      >
-                        {type === "livianos" ? "Vehiculos livianos" : type === "pesados" ? "Vehiculos pesados" : type === "maquinaria" ? "Maquinaria" : "Otros"}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </header>
-              {filteredCatalogItems.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-                  No encontramos vehículos para esta combinación.
-                  {" "}
-                  Prueba con “Livianos”, quita filtros activos
-                  {showPatents ? " o busca por patente exacta (ej: SYGD93)" : " o busca por marca o modelo"}.
-                </div>
-              ) : (
-                <CatalogSectionCards
-                  sectionKey="catalogo"
-                  items={filteredCatalogItems}
-                  priceMap={config.vehiclePrices}
-                  upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                  onOpenVehicle={openVehicleDetail}
-                  cardDensity={cardDensity}
-                  showPatents={showPatents}
-                />
-              )}
-            </section>
-          );
+          return null;
         })}
       </div>
       {config.homeLayout.showFeaturedStrip ? (
@@ -12509,7 +12243,7 @@ export function CatalogHomeClient({
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {(["proximos-remates", "ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => (
+                {(["proximos-remates", "ventas-directas"] as SectionId[]).map((sectionId) => (
                   <label key={`manual-modal-section-${sectionId}`} className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs text-cyan-800">
                     <input
                       type="checkbox"
@@ -13413,7 +13147,7 @@ export function CatalogHomeClient({
               </select>
 
               <div className="flex flex-wrap gap-1.5">
-                {(["ventas-directas", "novedades", "catalogo"] as SectionId[]).map((sectionId) => {
+                {(["ventas-directas"] as SectionId[]).map((sectionId) => {
                   const selected = (config.sectionVehicleIds[sectionId] ?? []).includes(managingVehicleKey);
                   return (
                     <label
