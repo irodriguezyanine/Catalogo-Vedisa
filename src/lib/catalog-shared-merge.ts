@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { clearPublicationBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
+import { clearHiddenBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
 import type { EditorConfig, UpcomingAuction } from "@/types/editor";
 
 export type SharedRemateRow = {
@@ -299,8 +299,13 @@ function preserveCatalogCommercialSections(config: EditorConfig) {
  */
 export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
   const nowMs = Date.now();
+  const soldVehicleKeys = new Set(config.soldVehicleIds ?? []);
   const rematesSection = new Set(config.sectionVehicleIds["proximos-remates"] ?? []);
   const ventaDirectaSection = new Set(config.sectionVehicleIds["ventas-directas"] ?? []);
+  for (const soldKey of soldVehicleKeys) {
+    rematesSection.delete(soldKey);
+    ventaDirectaSection.delete(soldKey);
+  }
   const oldAssignments = config.vehicleUpcomingAuctionIds ?? {};
   const byId = new Map<string, UpcomingAuction>();
 
@@ -334,7 +339,10 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
   );
   const visibleAuctionIds = new Set(upcomingAuctions.map((auction) => auction.id));
   const nextVehicleUpcomingAuctionIds = Object.fromEntries(
-    Object.entries(oldAssignments).filter(([, auctionId]) => visibleAuctionIds.has(auctionId)),
+    Object.entries(oldAssignments).filter(
+      ([vehicleKey, auctionId]) =>
+        visibleAuctionIds.has(auctionId) && !soldVehicleKeys.has(vehicleKey),
+    ),
   );
   const staleAssignedKeys = new Set(
     Object.keys(oldAssignments).filter((vehicleKey) => !(vehicleKey in nextVehicleUpcomingAuctionIds)),
@@ -377,7 +385,7 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
         inventoryAliases,
         item.patente,
         readExtraString(extra, ["inventario_id", "inventory_id", "vehicle_id", "catalog_vehicle_id"]),
-      );
+      ).filter((vehicleKey) => !soldVehicleKeys.has(vehicleKey));
       if (!vehicleKeys.length) continue;
 
       const auction = byId.get(auctionId);
@@ -389,7 +397,7 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
     }
   }
 
-  const unblockedPublication = clearPublicationBlocksForVehicleKeys(config, reassignedVehicleKeys);
+  const unblockedPublication = clearHiddenBlocksForVehicleKeys(config, reassignedVehicleKeys);
 
   return {
     ...config,

@@ -2614,6 +2614,8 @@ type SectionProps = {
   showPatents?: boolean;
 };
 
+const MOBILE_SECTION_PREVIEW_COUNT = 3;
+
 type HorizontalCardsRailProps = {
   sectionKey: string;
   items: CatalogItem[];
@@ -2623,6 +2625,8 @@ type HorizontalCardsRailProps = {
   cardDensity: CardDensity;
   showPatents?: boolean;
 };
+
+type CatalogSectionCardsProps = HorizontalCardsRailProps;
 
 function HorizontalCardsRail({
   sectionKey,
@@ -2777,6 +2781,102 @@ function HorizontalCardsRail({
   );
 }
 
+function CatalogSectionCards({
+  sectionKey,
+  items,
+  priceMap,
+  upcomingAuctionByVehicleKey,
+  onOpenVehicle,
+  cardDensity,
+  showPatents = true,
+}: CatalogSectionCardsProps) {
+  const [mobileExpanded, setMobileExpanded] = useState(false);
+  useEffect(() => {
+    setMobileExpanded(false);
+  }, [sectionKey, items.length]);
+  const hasMoreOnMobile = items.length > MOBILE_SECTION_PREVIEW_COUNT;
+  const mobileVisibleItems = mobileExpanded
+    ? items
+    : items.slice(0, MOBILE_SECTION_PREVIEW_COUNT);
+  const hiddenMobileCount = Math.max(0, items.length - MOBILE_SECTION_PREVIEW_COUNT);
+
+  const renderCard = (item: CatalogItem) => (
+    <CatalogCard
+      key={`${sectionKey}-${item.id}`}
+      item={item}
+      priceLabel={formatPrice(resolveVehiclePriceRaw(item, priceMap) ?? undefined)}
+      commercialEventBadge={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
+      density={cardDensity}
+      showPatents={showPatents}
+      onOpen={() => onOpenVehicle(item)}
+      onWhatsappClick={() =>
+        trackEvent("whatsapp_click_card", {
+          section: sectionKey,
+          itemKey: getVehicleKey(item),
+        })
+      }
+    />
+  );
+
+  return (
+    <>
+      <div className="md:hidden">
+        <div id={`${sectionKey}-mobile-cards`} className="grid grid-cols-1 gap-3">
+          {mobileVisibleItems.map((item) => renderCard(item))}
+        </div>
+        {hasMoreOnMobile ? (
+          <button
+            type="button"
+            onClick={() => setMobileExpanded((prev) => !prev)}
+            className="ui-focus mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            aria-expanded={mobileExpanded}
+            aria-controls={`${sectionKey}-mobile-cards`}
+          >
+            {mobileExpanded ? (
+              <>
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                  <path
+                    d="M5 12.5L10 7.5l5 5"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Ver menos publicaciones
+              </>
+            ) : (
+              <>
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                  <path
+                    d="M5 7.5L10 12.5l5-5"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Ver {hiddenMobileCount} publicacion{hiddenMobileCount === 1 ? "" : "es"} más
+              </>
+            )}
+          </button>
+        ) : null}
+      </div>
+      <div className="hidden md:block">
+        <HorizontalCardsRail
+          sectionKey={sectionKey}
+          items={items}
+          priceMap={priceMap}
+          upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+          onOpenVehicle={onOpenVehicle}
+          cardDensity={cardDensity}
+          showPatents={showPatents}
+        />
+      </div>
+    </>
+  );
+}
+
 function Section({
   id,
   title,
@@ -2806,7 +2906,7 @@ function Section({
           No encontramos unidades en esta sección. Prueba limpiar filtros o cambiar el tipo de vehículo.
         </div>
       ) : (
-        <HorizontalCardsRail
+        <CatalogSectionCards
           sectionKey={id}
           items={items}
           priceMap={priceMap}
@@ -2888,7 +2988,7 @@ function UpcomingAuctionsSection({
               </span>
             </div>
             {items.length > 0 ? (
-              <HorizontalCardsRail
+              <CatalogSectionCards
                 sectionKey={`${copy.sectionId}-${auction.id}`}
                 items={items}
                 priceMap={priceMap}
@@ -3110,6 +3210,7 @@ export function CatalogHomeClient({
   );
   const autoSaveReadyRef = useRef(false);
   const lastPersistedConfigRef = useRef("");
+  const persistEditorConfigRef = useRef<(config: EditorConfig) => Promise<void>>(async () => {});
 
   const editingValidationErrors = useMemo(() => {
     const errors: Partial<Record<keyof EditorVehicleDetails, string>> = {};
@@ -5679,6 +5780,62 @@ export function CatalogHomeClient({
     [],
   );
 
+  const buildConfigAfterMarkSold = useCallback(
+    (
+      prev: EditorConfig,
+      vehicleKey: string,
+      item: CatalogItem,
+      context?: {
+        auctionId?: string;
+        auctionName?: string;
+        soldCategory?: string;
+      },
+    ): EditorConfig => {
+      const soldRecord = buildSoldVehicleRecord(item, {
+        ...context,
+        soldCategory: resolveSoldCategory(vehicleKey, prev, context),
+      });
+      const soldSet = new Set(prev.soldVehicleIds ?? []);
+      soldSet.add(vehicleKey);
+
+      const hiddenSet = new Set(prev.hiddenVehicleIds ?? []);
+      hiddenSet.add(vehicleKey);
+
+      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      delete nextAssignments[vehicleKey];
+
+      const nextSectionVehicleIds = {
+        "proximos-remates": (prev.sectionVehicleIds["proximos-remates"] ?? []).filter(
+          (id) => id !== vehicleKey,
+        ),
+        "ventas-directas": (prev.sectionVehicleIds["ventas-directas"] ?? []).filter(
+          (id) => id !== vehicleKey,
+        ),
+        novedades: (prev.sectionVehicleIds.novedades ?? []).filter((id) => id !== vehicleKey),
+        catalogo: (prev.sectionVehicleIds.catalogo ?? []).filter((id) => id !== vehicleKey),
+      };
+
+      const nextManagedCategories = (prev.managedCategories ?? []).map((category) => ({
+        ...category,
+        vehicleIds: (category.vehicleIds ?? []).filter((id) => id !== vehicleKey),
+      }));
+
+      const existingHistory = prev.soldVehicleHistory ?? [];
+      const nextHistory = [soldRecord, ...existingHistory.filter((entry) => entry.vehicleKey !== vehicleKey)];
+
+      return {
+        ...prev,
+        soldVehicleIds: Array.from(soldSet),
+        soldVehicleHistory: nextHistory,
+        hiddenVehicleIds: Array.from(hiddenSet),
+        vehicleUpcomingAuctionIds: nextAssignments,
+        sectionVehicleIds: nextSectionVehicleIds,
+        managedCategories: nextManagedCategories,
+      };
+    },
+    [buildSoldVehicleRecord, resolveSoldCategory],
+  );
+
   const markVehicleAsSold = useCallback(
     (
       vehicleKey: string,
@@ -5690,51 +5847,17 @@ export function CatalogHomeClient({
     ) => {
       const item = itemsByKey.get(vehicleKey);
       if (!item) return;
+      let nextConfig: EditorConfig | null = null;
       setConfig((prev) => {
-        const soldRecord = buildSoldVehicleRecord(item, {
-          ...context,
-          soldCategory: resolveSoldCategory(vehicleKey, prev, context),
-        });
-        const soldSet = new Set(prev.soldVehicleIds ?? []);
-        soldSet.add(vehicleKey);
-
-        const hiddenSet = new Set(prev.hiddenVehicleIds ?? []);
-        hiddenSet.add(vehicleKey);
-
-        const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
-        delete nextAssignments[vehicleKey];
-
-        const nextSectionVehicleIds = {
-          "proximos-remates": (prev.sectionVehicleIds["proximos-remates"] ?? []).filter(
-            (id) => id !== vehicleKey,
-          ),
-          "ventas-directas": (prev.sectionVehicleIds["ventas-directas"] ?? []).filter(
-            (id) => id !== vehicleKey,
-          ),
-          novedades: (prev.sectionVehicleIds.novedades ?? []).filter((id) => id !== vehicleKey),
-          catalogo: (prev.sectionVehicleIds.catalogo ?? []).filter((id) => id !== vehicleKey),
-        };
-
-        const nextManagedCategories = (prev.managedCategories ?? []).map((category) => ({
-          ...category,
-          vehicleIds: (category.vehicleIds ?? []).filter((id) => id !== vehicleKey),
-        }));
-
-        const existingHistory = prev.soldVehicleHistory ?? [];
-        const nextHistory = [soldRecord, ...existingHistory.filter((entry) => entry.vehicleKey !== vehicleKey)];
-
-        return {
-          ...prev,
-          soldVehicleIds: Array.from(soldSet),
-          soldVehicleHistory: nextHistory,
-          hiddenVehicleIds: Array.from(hiddenSet),
-          vehicleUpcomingAuctionIds: nextAssignments,
-          sectionVehicleIds: nextSectionVehicleIds,
-          managedCategories: nextManagedCategories,
-        };
+        nextConfig = buildConfigAfterMarkSold(prev, vehicleKey, item, context);
+        return nextConfig;
       });
+      if (isAdmin && nextConfig) {
+        lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+        void persistEditorConfigRef.current(nextConfig);
+      }
     },
-    [buildSoldVehicleRecord, itemsByKey, resolveSoldCategory],
+    [buildConfigAfterMarkSold, isAdmin, itemsByKey],
   );
 
   const revertVehicleSale = useCallback((vehicleKey: string) => {
@@ -7021,10 +7144,10 @@ export function CatalogHomeClient({
     }
   }, [showSystemNotice]);
 
+  persistEditorConfigRef.current = persistEditorConfig;
 
   useEffect(() => {
-    const isAdminEditorOpen = isAdmin && adminView === "editor";
-    if (isBootstrapping || !isAdminEditorOpen) return;
+    if (isBootstrapping || !isAdmin) return;
     const serializedConfig = JSON.stringify(config);
     if (!autoSaveReadyRef.current) {
       autoSaveReadyRef.current = true;
@@ -11100,7 +11223,7 @@ export function CatalogHomeClient({
                   {showPatents ? " o busca por patente exacta (ej: SYGD93)" : " o busca por marca o modelo"}.
                 </div>
               ) : (
-                <HorizontalCardsRail
+                <CatalogSectionCards
                   sectionKey="catalogo"
                   items={filteredCatalogItems}
                   priceMap={config.vehiclePrices}
