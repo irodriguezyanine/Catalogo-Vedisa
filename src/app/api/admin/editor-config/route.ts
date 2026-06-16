@@ -4,10 +4,13 @@ import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
 import { getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { toPublicEditorSnapshot } from "@/lib/public-editor-config";
+import { assertProductionSecrets, validateEditorConfigPayload } from "@/lib/validate-editor-config";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+assertProductionSecrets();
 
 export async function GET() {
   const cookieStore = await cookies();
@@ -37,6 +40,10 @@ export async function PUT(req: Request) {
     deletedAuctionIds?: string[];
   };
   const config = body.config ?? DEFAULT_EDITOR_CONFIG;
+  const validation = validateEditorConfigPayload(config);
+  if (!validation.ok) {
+    return Response.json({ ok: false, error: validation.error }, { status: 400 });
+  }
   const result = await saveEditorConfig(config, session.email);
   if (!result.ok) {
     return Response.json({ ok: false, error: result.error }, { status: 400 });

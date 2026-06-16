@@ -1,3 +1,4 @@
+import { recordSharedSyncDlqEntries } from "@/lib/catalog-sync-dlq";
 import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
@@ -25,6 +26,12 @@ export async function reconcileSharedPlatforms(
     throw new Error(saved.error ?? "No se pudo persistir la configuración fusionada.");
   }
   const sync = await syncEditorConfigToSharedTablesWithOptions(mergedConfig, {});
+  if (sync.skipped.length > 0) {
+    void recordSharedSyncDlqEntries(sync.skipped, {
+      source: updatedBy,
+      skippedCount: sync.skipped.length,
+    });
+  }
   return {
     mergedConfig,
     persisted: saved.ok,

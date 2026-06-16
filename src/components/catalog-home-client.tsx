@@ -64,6 +64,22 @@ import {
   resolveGlo3dViewerPreviewUrl,
 } from "@/lib/glo3d-viewer-url";
 import {
+  GLO3D_BATCH_IMPORT_MAX,
+  isGlo3dRateLimitMessage,
+  isGlo3dRateLimitResponse,
+} from "@/lib/glo3d-client-cooldown";
+import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
+import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
+import {
+  VehicleListThumbnailWithSync,
+  VehicleQuickSyncButton,
+} from "@/components/admin/vehicle-sync-thumbnail";
+import {
+  resolveVehicleThumbnailSrc,
+  vehicleNeedsQuickSync,
+  vehicleTitleNeedsSync,
+} from "@/lib/vehicle-sync-helpers";
+import {
   PRUEBA_DESPLAZAMIENTO_LOOKUP_KEYS,
   PRUEBA_MOTOR_LOOKUP_KEYS,
   resolvePruebaDesplazamientoSiNo,
@@ -516,60 +532,6 @@ function resolveEstadoRetiroForVehicleKey(
   return "en_tasacion";
 }
 
-const GLO3D_CLIENT_COOLDOWN_MS = 30_000;
-const GLO3D_MIN_CLIENT_COOLDOWN_MS = 30_000;
-const GLO3D_COOLDOWN_STORAGE_KEY = "vedisa:glo3d-cooldown-until";
-const GLO3D_BATCH_IMPORT_MAX = 8;
-
-function readPersistedGlo3dCooldownUntil(): number {
-  if (typeof window === "undefined") return 0;
-  try {
-    const raw = window.sessionStorage.getItem(GLO3D_COOLDOWN_STORAGE_KEY);
-    const until = Number(raw);
-    return Number.isFinite(until) && until > Date.now() ? until : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function persistGlo3dCooldownUntil(until: number): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (until > Date.now()) {
-      window.sessionStorage.setItem(GLO3D_COOLDOWN_STORAGE_KEY, String(until));
-    } else {
-      window.sessionStorage.removeItem(GLO3D_COOLDOWN_STORAGE_KEY);
-    }
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function resolveGlo3dClientCooldownMs(retryAfterMs?: number): number {
-  return Math.max(
-    GLO3D_MIN_CLIENT_COOLDOWN_MS,
-    GLO3D_CLIENT_COOLDOWN_MS,
-    retryAfterMs ?? 0,
-  );
-}
-
-function isGlo3dRateLimitResponse(
-  response: Response,
-  payload?: { rateLimited?: boolean; glo3dRateLimited?: boolean },
-): boolean {
-  return response.status === 429 || Boolean(payload?.rateLimited || payload?.glo3dRateLimited);
-}
-
-function isGlo3dRateLimitMessage(message: string): boolean {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("saturad") ||
-    normalized.includes("429") ||
-    normalized.includes("en pausa") ||
-    normalized.includes("espera")
-  );
-}
-
 function vehicleNeedsSourceSync(
   item: CatalogItem,
   vehicleKey: string,
@@ -586,51 +548,12 @@ function vehicleNeedsSourceSync(
     isPlaceholderVehicleLabel(model);
   const missingMedia = !details?.thumbnail && !item.thumbnail;
   const missingTechnical = !details?.pruebaMotor && !details?.llaves && !details?.kilometraje;
-  return missingIdentity || missingMedia || missingTechnical;
-}
-
-function hasRealVehicleThumbnail(
-  item: CatalogItem,
-  vehicleKey: string,
-  editorConfig: EditorConfig,
-): boolean {
-  const details = editorConfig.vehicleDetails?.[vehicleKey];
-  const candidate =
-    details?.thumbnail ??
-    item.thumbnail ??
-    item.images.find((url) => url.startsWith("http"));
-  if (!candidate?.trim()) return false;
-  if (candidate.includes("placeholder")) return false;
-  return candidate.startsWith("http");
-}
-
-function vehicleTitleNeedsSync(
-  item: CatalogItem,
-  vehicleKey: string,
-  editorConfig: EditorConfig,
-): boolean {
-  const details = editorConfig.vehicleDetails?.[vehicleKey];
-  const patente = getPatent(item);
-  const title = (details?.title ?? item.title ?? "").trim();
-  if (!title || isStaleEditorDraftValue(title, patente)) return true;
-  const model = getModel(item).trim();
-  if (model && title.toUpperCase() === model.toUpperCase()) return true;
-  const brand = (details?.brand ?? String((item.raw as Record<string, unknown>).marca ?? "")).trim();
-  const year = (details?.year ?? String((item.raw as Record<string, unknown>).ano ?? "")).trim();
-  if (brand && !isPlaceholderVehicleLabel(brand) && !title.toUpperCase().includes(brand.toUpperCase())) {
-    return true;
-  }
-  if (year && !title.includes(year)) return true;
-  return false;
-}
-
-function vehicleNeedsQuickSync(
-  item: CatalogItem,
-  vehicleKey: string,
-  editorConfig: EditorConfig,
-): boolean {
-  if (vehicleKey.startsWith("manual-")) return false;
-  return !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) || vehicleTitleNeedsSync(item, vehicleKey, editorConfig);
+  return (
+    missingIdentity ||
+    missingMedia ||
+    missingTechnical ||
+    vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleEditorDraftValue)
+  );
 }
 
 function vehicleNeedsAssignEnrich(
@@ -647,114 +570,7 @@ function vehicleNeedsAssignEnrich(
     isPlaceholderVehicleLabel(title) ||
     isPlaceholderVehicleLabel(brand) ||
     isPlaceholderVehicleLabel(model) ||
-    vehicleTitleNeedsSync(item, vehicleKey, editorConfig)
-  );
-}
-
-function resolveVehicleThumbnailSrc(item: CatalogItem): string {
-  const candidate =
-    item.thumbnail ?? item.images.find((url) => url.startsWith("http") && !url.includes("placeholder"));
-  return candidate ?? "/placeholder-car.svg";
-}
-
-function VehicleSyncIcon({ className = "h-4 w-4" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 20 20" className={className} fill="currentColor" aria-hidden="true">
-      <path d="M4.5 3A1.5 1.5 0 0 0 3 4.5v2.879a1 1 0 0 0 .293.707l2.122 2.122a1 1 0 0 0 1.414-1.414L5.414 7.5H7.5A1.5 1.5 0 0 0 9 6V4.5A1.5 1.5 0 0 0 7.5 3h-3ZM13 3A1.5 1.5 0 0 0 11.5 4.5V6a1.5 1.5 0 0 0 1.5 1.5h2.086l-1.415 1.415a1 1 0 1 0 1.414 1.414l2.122-2.122A1 1 0 0 0 17 7.379V4.5A1.5 1.5 0 0 0 15.5 3H13Zm-8 10A1.5 1.5 0 0 0 3.5 14.5V17a1.5 1.5 0 0 0 1.5 1.5h3A1.5 1.5 0 0 0 9 17v-1.5A1.5 1.5 0 0 0 7.5 14H5.414l1.415 1.415a1 1 0 0 1-1.414 1.414L3.293 14.707A1 1 0 0 1 3 14V11.5A1.5 1.5 0 0 1 4.5 10h.5v1.5A1.5 1.5 0 0 1 6.5 13H7v1.5A1.5 1.5 0 0 1 5.5 16h-2Zm11-1.5A1.5 1.5 0 0 0 15 14.5V17a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 17v-1.5a1.5 1.5 0 0 1 1.5-1.5h2.086l-1.415-1.415a1 1 0 1 1 1.414-1.414l2.122 2.122a1 1 0 0 1 .293.707V17a1.5 1.5 0 0 0 1.5 1.5h.5v-1.5A1.5 1.5 0 0 0 15.5 13H15v-1.5A1.5 1.5 0 0 0 13.5 10h2Z" />
-    </svg>
-  );
-}
-
-function VehicleListThumbnailWithSync({
-  item,
-  vehicleKey,
-  editorConfig,
-  onSync,
-  syncingVehicleKey,
-  glo3dCooldownLabel,
-  className = "relative mx-auto h-12 w-20 overflow-hidden rounded-md border border-slate-200 bg-slate-100",
-}: {
-  item: CatalogItem;
-  vehicleKey: string;
-  editorConfig: EditorConfig;
-  onSync: (key: string) => void;
-  syncingVehicleKey: string | null;
-  glo3dCooldownLabel?: string;
-  className?: string;
-}) {
-  const needsQuickSync = vehicleNeedsQuickSync(item, vehicleKey, editorConfig);
-  const isSyncing = syncingVehicleKey === vehicleKey;
-  const patente = getPatent(item);
-  const syncTitle = glo3dCooldownLabel
-    ? `Sincronizar ${patente} solo con Autored (Glo3D en pausa)`
-    : "Sincronizar Glo3D + Autored";
-  return (
-    <div className={className}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={resolveVehicleThumbnailSrc(item)}
-        alt={`Miniatura ${getModel(item)}`}
-        className="h-full w-full object-cover"
-        loading="lazy"
-        onError={(event) => {
-          event.currentTarget.src = "/placeholder-car.svg";
-        }}
-      />
-      {needsQuickSync ? (
-        <button
-          type="button"
-          onClick={() => onSync(vehicleKey)}
-          disabled={Boolean(syncingVehicleKey)}
-          className="ui-focus absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-slate-900/50 text-white transition hover:bg-cyan-900/65 disabled:cursor-wait"
-          aria-label={`Sincronizar ${patente} con Glo3D y Autored`}
-          title={syncTitle}
-        >
-          {isSyncing ? (
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-          ) : (
-            <VehicleSyncIcon />
-          )}
-            <span className="text-[9px] font-semibold leading-none">
-              {isSyncing ? "Sync…" : glo3dCooldownLabel ? "Autored" : "Sync"}
-            </span>
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function VehicleQuickSyncButton({
-  item,
-  vehicleKey,
-  editorConfig,
-  onSync,
-  syncingVehicleKey,
-  glo3dCooldownLabel,
-}: {
-  item: CatalogItem;
-  vehicleKey: string;
-  editorConfig: EditorConfig;
-  onSync: (key: string) => void;
-  syncingVehicleKey: string | null;
-  glo3dCooldownLabel?: string;
-}) {
-  if (!vehicleNeedsQuickSync(item, vehicleKey, editorConfig)) return null;
-  const isSyncing = syncingVehicleKey === vehicleKey;
-  return (
-    <button
-      type="button"
-      onClick={() => onSync(vehicleKey)}
-      disabled={Boolean(syncingVehicleKey)}
-      className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-amber-300 bg-amber-50 text-amber-700 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
-      aria-label={`Sincronizar ${getPatent(item)}`}
-      title={glo3dCooldownLabel ? "Sincronizar solo Autored" : "Sincronizar Glo3D + Autored"}
-    >
-      {isSyncing ? (
-        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700" />
-      ) : (
-        <VehicleSyncIcon className="h-4 w-4" />
-      )}
-    </button>
+    vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleEditorDraftValue)
   );
 }
 
@@ -3109,9 +2925,6 @@ export function CatalogHomeClient({
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string>("");
   const [liveFeedItems, setLiveFeedItems] = useState<CatalogItem[]>(feed.items);
   const lastAutoImportPatentRef = useRef("");
-  const glo3dClientCooldownUntilRef = useRef(0);
-  const [glo3dCooldownUntil, setGlo3dCooldownUntil] = useState(0);
-  const [glo3dCooldownSecondsLeft, setGlo3dCooldownSecondsLeft] = useState(0);
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
   const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
   const [topSectionFilter, setTopSectionFilter] = useState<"all" | SectionId>("all");
@@ -3835,6 +3648,17 @@ export function CatalogHomeClient({
       setSystemNotice({ id: Date.now(), tone, title, message });
     },
     [],
+  );
+
+  const {
+    cooldownUntilRef,
+    secondsLeft,
+    cooldownLabel,
+    isOnCooldown,
+    assertAllowed,
+    markCooldown,
+  } = useGlo3dClientCooldown((title, message) =>
+    showSystemNotice("info", title, message),
   );
 
   const manualItems = useMemo(
@@ -6340,56 +6164,6 @@ export function CatalogHomeClient({
     lastAutoImportPatentRef.current = "";
   };
 
-  const assertGlo3dClientAllowed = useCallback((): boolean => {
-    const remaining = glo3dClientCooldownUntilRef.current - Date.now();
-    if (remaining <= 0) return true;
-    showSystemNotice(
-      "info",
-      "Glo3D en pausa",
-      `Espera ${Math.ceil(remaining / 1000)} segundos antes de volver a consultar Glo3D.`,
-    );
-    return false;
-  }, [showSystemNotice]);
-
-  useEffect(() => {
-    const until = readPersistedGlo3dCooldownUntil();
-    if (until <= Date.now()) return;
-    glo3dClientCooldownUntilRef.current = until;
-    setGlo3dCooldownUntil(until);
-    setGlo3dCooldownSecondsLeft(Math.ceil((until - Date.now()) / 1000));
-  }, []);
-
-  const markGlo3dClientCooldown = useCallback((retryAfterMs?: number) => {
-    const cooldownMs = resolveGlo3dClientCooldownMs(retryAfterMs);
-    const until = Math.max(glo3dClientCooldownUntilRef.current, Date.now() + cooldownMs);
-    glo3dClientCooldownUntilRef.current = until;
-    persistGlo3dCooldownUntil(until);
-    setGlo3dCooldownUntil(until);
-    setGlo3dCooldownSecondsLeft(Math.ceil((until - Date.now()) / 1000));
-  }, []);
-
-  useEffect(() => {
-    if (glo3dCooldownUntil <= Date.now()) {
-      setGlo3dCooldownSecondsLeft(0);
-      persistGlo3dCooldownUntil(0);
-      return;
-    }
-    const tick = () => {
-      const remainingMs = glo3dClientCooldownUntilRef.current - Date.now();
-      if (remainingMs <= 0) {
-        glo3dClientCooldownUntilRef.current = 0;
-        setGlo3dCooldownUntil(0);
-        setGlo3dCooldownSecondsLeft(0);
-        persistGlo3dCooldownUntil(0);
-        return;
-      }
-      setGlo3dCooldownSecondsLeft(Math.ceil(remainingMs / 1000));
-    };
-    tick();
-    const interval = window.setInterval(tick, 1000);
-    return () => window.clearInterval(interval);
-  }, [glo3dCooldownUntil]);
-
   const mergeImportedVehicleDetails = (
     previous: EditorVehicleDetails | undefined,
     imported: EditorVehicleDetails,
@@ -6492,8 +6266,8 @@ export function CatalogHomeClient({
   );
 
   const importPatentsForBatchAssign = async () => {
-    const glo3dOnCooldown = glo3dClientCooldownUntilRef.current > Date.now();
-    if (!glo3dOnCooldown && !assertGlo3dClientAllowed()) return;
+    const glo3dOnCooldown = isOnCooldown();
+    if (!glo3dOnCooldown && !assertAllowed()) return;
     const singlePatent = resolveAutoImportPatent(batchAssignSearchTerm);
     const patentTokens = (singlePatent ? [singlePatent] : extractPatentTokens(batchAssignSearchTerm)).slice(
       0,
@@ -6570,7 +6344,7 @@ export function CatalogHomeClient({
       };
 
       if (!glo3dOnCooldown && isGlo3dRateLimitResponse(response, payload)) {
-        markGlo3dClientCooldown(payload.retryAfterMs);
+        markCooldown(payload.retryAfterMs);
       }
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "No se pudo importar la patente.");
@@ -6605,7 +6379,7 @@ export function CatalogHomeClient({
 
       if (payload.errors && payload.errors.length > 0) {
         const first = payload.errors[0];
-        if (isGlo3dRateLimitMessage(first.error)) markGlo3dClientCooldown();
+        if (isGlo3dRateLimitMessage(first.error)) markCooldown();
         showSystemNotice(
           "info",
           "Importación parcial",
@@ -6632,13 +6406,13 @@ export function CatalogHomeClient({
             ? error.message
             : "No se pudo importar la patente.";
       if (isGlo3dRateLimitMessage(message)) {
-        markGlo3dClientCooldown();
+        markCooldown();
       }
       showSystemNotice(
         "error",
         isGlo3dRateLimitMessage(message) ? "Glo3D saturado" : "Importación fallida",
-        glo3dClientCooldownUntilRef.current > Date.now()
-          ? `${message} Podrás reintentar en ${Math.ceil((glo3dClientCooldownUntilRef.current - Date.now()) / 1000)} segundos.`
+        cooldownUntilRef.current > Date.now()
+          ? `${message} Podrás reintentar en ${Math.ceil((cooldownUntilRef.current - Date.now()) / 1000)} segundos.`
           : message,
       );
     } finally {
@@ -6735,9 +6509,9 @@ export function CatalogHomeClient({
         if (patente && patente !== "—") patentsToEnrich.push(patente);
       }
 
-      const glo3dOnCooldown = glo3dClientCooldownUntilRef.current > Date.now();
+      const glo3dOnCooldown = isOnCooldown();
       if (patentsToEnrich.length > 0) {
-        if (!glo3dOnCooldown && !assertGlo3dClientAllowed()) return;
+        if (!glo3dOnCooldown && !assertAllowed()) return;
         try {
           const endpoint =
             patentsToEnrich.length > 1
@@ -6774,7 +6548,7 @@ export function CatalogHomeClient({
             retryAfterMs?: number;
           };
           if (!glo3dOnCooldown && isGlo3dRateLimitResponse(response, payload)) {
-            markGlo3dClientCooldown(payload.retryAfterMs);
+            markCooldown(payload.retryAfterMs);
           }
           if (response.ok && payload.ok) {
             const rows =
@@ -7407,8 +7181,8 @@ export function CatalogHomeClient({
         showSystemNotice("error", "Sin patente", "Esta unidad no tiene patente para sincronizar.");
         return;
       }
-      const glo3dOnCooldown = glo3dClientCooldownUntilRef.current > Date.now();
-      if (!glo3dOnCooldown && !assertGlo3dClientAllowed()) return;
+      const glo3dOnCooldown = isOnCooldown();
+      if (!glo3dOnCooldown && !assertAllowed()) return;
 
       setSyncingVehicleKey(vehicleKey);
       try {
@@ -7444,13 +7218,13 @@ export function CatalogHomeClient({
           rateLimited?: boolean;
         };
         if (!glo3dOnCooldown && isGlo3dRateLimitResponse(response, payload)) {
-          markGlo3dClientCooldown(payload.retryAfterMs);
+          markCooldown(payload.retryAfterMs);
         }
         if (!response.ok || !payload.ok || !payload.item) {
           throw new Error(payload.error ?? `No se pudo sincronizar ${patente}.`);
         }
         if (!glo3dOnCooldown && payload.glo3dRateLimited) {
-          markGlo3dClientCooldown(payload.retryAfterMs);
+          markCooldown(payload.retryAfterMs);
         }
 
         const resolvedKey = applyImportedPatentPayload({
@@ -7499,7 +7273,7 @@ export function CatalogHomeClient({
             : error instanceof Error
               ? error.message
               : "No se pudo sincronizar la unidad.";
-        if (isGlo3dRateLimitMessage(message)) markGlo3dClientCooldown();
+        if (isGlo3dRateLimitMessage(message)) markCooldown();
         showSystemNotice(
           "error",
           isGlo3dRateLimitMessage(message) ? "Glo3D saturado" : "Sincronización fallida",
@@ -7515,7 +7289,7 @@ export function CatalogHomeClient({
       editingVehicleKey,
       itemsByKey,
       managingVehicleKey,
-      markGlo3dClientCooldown,
+      markCooldown,
       showSystemNotice,
       sortedUpcomingAuctions,
     ],
@@ -9064,7 +8838,7 @@ export function CatalogHomeClient({
                   {paginatedEditorItems.map((item) => {
                     const key = getVehicleKey(item);
                     const hidden = mergedHiddenVehicleIds.has(key);
-                    const needsQuickSync = vehicleNeedsQuickSync(item, key, config);
+                    const needsQuickSync = vehicleNeedsQuickSync(item, key, config, isStaleEditorDraftValue);
                     const eventBadge = upcomingAuctionByVehicleKey[key];
                     const auctionLabel = eventBadge
                       ? eventBadge.kind === "venta_directa"
@@ -9118,9 +8892,8 @@ export function CatalogHomeClient({
                           editorConfig={config}
                           onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
                           syncingVehicleKey={syncingVehicleKey}
-                          glo3dCooldownLabel={
-                            glo3dCooldownSecondsLeft > 0 ? `${glo3dCooldownSecondsLeft}s` : undefined
-                          }
+                          glo3dCooldownLabel={cooldownLabel}
+                          isStaleTitle={isStaleEditorDraftValue}
                         />
                         <div className="min-w-0 text-xs text-slate-600 sm:text-right">
                           <p className="line-clamp-1 font-semibold text-slate-700">{auctionLabel}</p>
@@ -9136,9 +8909,9 @@ export function CatalogHomeClient({
                             editorConfig={config}
                             onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
                             syncingVehicleKey={syncingVehicleKey}
-                            glo3dCooldownLabel={
-                            glo3dCooldownSecondsLeft > 0 ? `${glo3dCooldownSecondsLeft}s` : undefined
-                          }
+                            glo3dCooldownLabel={cooldownLabel}
+                            isStaleTitle={isStaleEditorDraftValue}
+                            variant="icon"
                           />
                           <button
                             type="button"
@@ -12625,7 +12398,7 @@ export function CatalogHomeClient({
                 groupManageItems.map((item) => {
                   const key = getVehicleKey(item);
                   const hidden = mergedHiddenVehicleIds.has(key);
-                  const needsQuickSync = vehicleNeedsQuickSync(item, key, config);
+                  const needsQuickSync = vehicleNeedsQuickSync(item, key, config, isStaleEditorDraftValue);
                   const selected = groupManageSelectedKeys.includes(key);
                   return (
                     <article
@@ -12673,9 +12446,8 @@ export function CatalogHomeClient({
                         editorConfig={config}
                         onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
                         syncingVehicleKey={syncingVehicleKey}
-                            glo3dCooldownLabel={
-                              glo3dCooldownSecondsLeft > 0 ? `${glo3dCooldownSecondsLeft}s` : undefined
-                            }
+                        glo3dCooldownLabel={cooldownLabel}
+                        isStaleTitle={isStaleEditorDraftValue}
                       />
                       <div className="min-w-0 text-xs text-slate-600 sm:text-right">
                         <p className="line-clamp-1">
@@ -12690,9 +12462,9 @@ export function CatalogHomeClient({
                           editorConfig={config}
                           onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
                           syncingVehicleKey={syncingVehicleKey}
-                          glo3dCooldownLabel={
-                            glo3dCooldownSecondsLeft > 0 ? `${glo3dCooldownSecondsLeft}s` : undefined
-                          }
+                          glo3dCooldownLabel={cooldownLabel}
+                          isStaleTitle={isStaleEditorDraftValue}
+                          variant="icon"
                         />
                         <button
                           type="button"
@@ -12823,7 +12595,7 @@ export function CatalogHomeClient({
               >
                 {batchAssignImporting
                   ? "Importando…"
-                  : glo3dCooldownSecondsLeft > 0
+                  : secondsLeft > 0
                     ? "Importar Autored"
                     : "Importar Glo3D"}
               </button>
@@ -12836,9 +12608,9 @@ export function CatalogHomeClient({
               </p>
             ) : null}
 
-            {glo3dCooldownSecondsLeft > 0 ? (
+            {secondsLeft > 0 ? (
               <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                Glo3D en pausa ({glo3dCooldownSecondsLeft}s). Puedes usar{" "}
+                Glo3D en pausa ({secondsLeft}s). Puedes usar{" "}
                 <strong>Importar Autored</strong> para traer marca, modelo y ficha sin esperar. El
                 visor 3D y fotos Glo3D se completan cuando termine la pausa.
               </p>
@@ -12898,9 +12670,8 @@ export function CatalogHomeClient({
                       editorConfig={config}
                       onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
                       syncingVehicleKey={syncingVehicleKey}
-                            glo3dCooldownLabel={
-                              glo3dCooldownSecondsLeft > 0 ? `${glo3dCooldownSecondsLeft}s` : undefined
-                            }
+                      glo3dCooldownLabel={cooldownLabel}
+                      isStaleTitle={isStaleEditorDraftValue}
                       className="relative h-11 w-16 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100"
                     />
                     <button
@@ -12913,7 +12684,7 @@ export function CatalogHomeClient({
                       </p>
                       <p className="text-xs text-slate-500">
                         {getPatent(item)}{" "}
-                        {vehicleNeedsQuickSync(item, key, config)
+                        {vehicleNeedsQuickSync(item, key, config, isStaleEditorDraftValue)
                           ? "· sin sync"
                           : vehicleNeedsAssignEnrich(item, key, config)
                             ? "· ficha incompleta"
@@ -12929,9 +12700,9 @@ export function CatalogHomeClient({
                       editorConfig={config}
                       onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
                       syncingVehicleKey={syncingVehicleKey}
-                            glo3dCooldownLabel={
-                              glo3dCooldownSecondsLeft > 0 ? `${glo3dCooldownSecondsLeft}s` : undefined
-                            }
+                      glo3dCooldownLabel={cooldownLabel}
+                      isStaleTitle={isStaleEditorDraftValue}
+                      variant="icon"
                     />
                     <span
                       className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
@@ -13058,23 +12829,16 @@ export function CatalogHomeClient({
         </div>
       ) : null}
 
-      {showLogin ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div role="dialog" aria-modal="true" aria-label="Inicio de sesión administrador" className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-semibold text-slate-900">Login</h3>
-            <p className="mt-1 text-sm text-slate-500">Solo administradores pueden editar categorías y vehículos.</p>
-            <div className="mt-4 space-y-2">
-              <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Correo" aria-label="Correo de administrador" />
-              <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Contraseña" aria-label="Contraseña de administrador" />
-            </div>
-            {loginError ? <p className="mt-2 text-xs text-red-600">{loginError}</p> : null}
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setShowLogin(false)} className="ui-focus rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-50">Cancelar</button>
-              <button onClick={login} className="ui-focus rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500">Entrar</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <AdminLoginDialog
+        open={showLogin}
+        email={loginEmail}
+        password={loginPassword}
+        error={loginError}
+        onEmailChange={setLoginEmail}
+        onPasswordChange={setLoginPassword}
+        onCancel={() => setShowLogin(false)}
+        onSubmit={login}
+      />
       {showPublicHome && !selectedVehicle ? (
         <a
           href={WHATSAPP_CTA_URL}
@@ -13152,14 +12916,14 @@ export function CatalogHomeClient({
                     disabled={Boolean(syncingVehicleKey)}
                     className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
                     title={
-                      glo3dCooldownSecondsLeft > 0
+                      secondsLeft > 0
                         ? "Glo3D en pausa: sincroniza solo Autored"
                         : "Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
                     }
                   >
                     {syncingVehicleKey === managingVehicleKey
                       ? "Sync…"
-                      : glo3dCooldownSecondsLeft > 0
+                      : secondsLeft > 0
                         ? "Sync Autored"
                         : "Sync Glo3D"}
                   </button>
@@ -13174,9 +12938,9 @@ export function CatalogHomeClient({
               </div>
             </div>
 
-            {glo3dCooldownSecondsLeft > 0 && !managingVehicleKey.startsWith("manual-") ? (
+            {secondsLeft > 0 && !managingVehicleKey.startsWith("manual-") ? (
               <p className="border-b border-amber-100 bg-amber-50 px-3 py-1 text-[10px] text-amber-800">
-                Glo3D en pausa ({glo3dCooldownSecondsLeft}s); Autored sigue disponible.
+                Glo3D en pausa ({secondsLeft}s); Autored sigue disponible.
               </p>
             ) : null}
 
@@ -13384,7 +13148,7 @@ export function CatalogHomeClient({
                       >
                         {syncingVehicleKey === editingVehicleKey
                           ? "Sync…"
-                          : glo3dCooldownSecondsLeft > 0
+                          : secondsLeft > 0
                             ? "Sync Autored"
                             : "Sync Glo3D + Autored"}
                       </button>

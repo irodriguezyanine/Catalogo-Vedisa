@@ -116,13 +116,13 @@ export function CatalogVehicleHighlightStrip({ item, override }: Props) {
   return (
     <section
       aria-label="Características destacadas del vehículo"
-      className="mt-4 overflow-x-auto rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50/90 via-white to-cyan-50/70 p-3 shadow-sm"
+      className="mt-4 snap-x snap-mandatory overflow-x-auto rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50/90 via-white to-cyan-50/70 p-3 shadow-sm"
     >
       <div className="flex min-w-max items-stretch gap-2 sm:gap-3">
         {highlights.map((highlight) => (
           <div
             key={highlight.id}
-            className="flex min-w-[104px] max-w-[140px] flex-col items-center justify-center gap-2 rounded-xl border border-slate-200/90 bg-white/95 px-3 py-3 text-center shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+            className="flex min-w-[104px] max-w-[140px] snap-start flex-col items-center justify-center gap-2 rounded-xl border border-slate-200/90 bg-white/95 px-3 py-3 text-center shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
           >
             <HighlightIcon id={highlight.id} />
             <p className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-700 sm:text-[11px]">

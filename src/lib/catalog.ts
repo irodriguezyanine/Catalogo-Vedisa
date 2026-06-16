@@ -1484,9 +1484,20 @@ async function fetchGlo3dByStocks(stocks: string[]): Promise<Map<string, Glo3dIn
 
 async function enrichWithGlo3dInventory(items: CatalogItem[]): Promise<CatalogItem[]> {
   if (items.length === 0) return items;
+  const enrichMax = Number(process.env.GLO3D_FEED_ENRICH_MAX ?? "80");
   const stocks = Array.from(
-    new Set(items.map(getItemStock).filter((value): value is string => !!value)),
-  );
+    new Set(
+      items
+        .filter((item) => {
+          const hasMedia =
+            Boolean(item.view3dUrl) ||
+            Boolean(item.thumbnail?.startsWith("http") && !item.thumbnail.includes("placeholder"));
+          return !hasMedia;
+        })
+        .map(getItemStock)
+        .filter((value): value is string => !!value),
+    ),
+  ).slice(0, enrichMax > 0 ? enrichMax : 80);
   if (stocks.length === 0) return items;
 
   const glo3dMap = await fetchGlo3dByStocks(stocks);

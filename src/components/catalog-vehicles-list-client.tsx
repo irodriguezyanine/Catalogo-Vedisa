@@ -23,6 +23,8 @@ type Props = {
   initialConfig: EditorConfig;
 };
 
+const PAGE_SIZE = 24;
+
 function isLikelyImageUrl(url?: string): boolean {
   if (!url || !url.startsWith("http")) return false;
   const normalized = url.toLowerCase();
@@ -148,6 +150,7 @@ function VehicleListRow({
 
 export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [page, setPage] = useState(1);
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
@@ -198,6 +201,21 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
       return haystack.includes(query);
     });
   }, [items, searchTerm, showPatents]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const pagedItems = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredItems.slice(start, start + PAGE_SIZE);
+  }, [filteredItems, page]);
 
   return (
     <div className="catalog-bg min-h-full">
@@ -253,7 +271,10 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
                 aria-label={showPatents ? "Buscar vehículos por patente, marca o modelo" : "Buscar vehículos por marca o modelo"}
               />
             </div>
-            <span className="shrink-0 rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+            <span
+              className="shrink-0 rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+              aria-live="polite"
+            >
               {filteredItems.length} vehículo{filteredItems.length === 1 ? "" : "s"}
             </span>
           </div>
@@ -265,7 +286,7 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {filteredItems.map((item) => {
+            {pagedItems.map((item) => {
               const key = getVehicleKey(item);
               return (
                 <VehicleListRow
@@ -279,6 +300,32 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
                 />
               );
             })}
+            {totalPages > 1 ? (
+              <nav
+                className="flex flex-wrap items-center justify-center gap-2 pt-4"
+                aria-label="Paginación de vehículos"
+              >
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  className="ui-focus rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Anterior
+                </button>
+                <span className="px-2 text-sm text-slate-600" aria-live="polite">
+                  Página {page} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  className="ui-focus rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Siguiente
+                </button>
+              </nav>
+            ) : null}
           </div>
         )}
       </main>

@@ -178,7 +178,7 @@ export function VehicleDetailMobile({
           ) : null}
         </div>
         <nav
-          className="flex gap-2 overflow-x-auto px-3 pb-2.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-2.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           aria-label="Ir a sección"
         >
           {visibleSections.map((section) => (
@@ -229,7 +229,7 @@ export function VehicleDetailMobile({
             </button>
           )}
           {view3dUrl && galleryImages.length > 1 ? (
-            <div className="flex gap-2 overflow-x-auto bg-white p-2">
+            <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto bg-white p-2">
               {galleryImages.map((imageUrl, index) => (
                 <button
                   key={`${imageUrl}-${index}`}
