@@ -70,6 +70,7 @@ import {
 } from "@/lib/glo3d-client-cooldown";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
+import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background-video";
 import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
 import { HomeInventorySearch } from "@/components/home-inventory-search";
@@ -10841,29 +10842,21 @@ export function CatalogHomeClient({
       >
         <section className="relative z-10 mx-auto grid max-w-7xl gap-4 px-4 py-5 sm:px-6 md:py-6 lg:grid-cols-12 lg:px-8">
           <div
-            className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero ${
-              config.homeLayout.heroTheme === "indigo"
-                ? "border-indigo-200 bg-indigo-50/40"
-                : config.homeLayout.heroTheme === "slate"
-                  ? "border-slate-300 bg-slate-100/70"
-                  : "border-cyan-200 bg-cyan-50/30"
-            } ${config.homeLayout.heroAlignment === "center" ? "text-center" : "text-left"}`}
+            className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero premium-panel-hero--video ${
+              config.homeLayout.heroAlignment === "center" ? "text-center" : "text-left"
+            }`}
           >
-            <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${
-              config.homeLayout.heroTheme === "indigo"
-                ? "text-indigo-700"
-                : config.homeLayout.heroTheme === "slate"
-                  ? "text-slate-700"
-                  : "text-cyan-700"
-            }`}>{config.homeLayout.heroKicker}</p>
+            <CatalogHeroBackgroundVideo />
+            <div className="hero-video-content">
+            <p className="hero-video-kicker text-xs font-semibold uppercase tracking-[0.2em]">{config.homeLayout.heroKicker}</p>
             <h1
-              className="mt-2 text-3xl font-black leading-tight text-slate-900 md:text-4xl [&_a]:text-cyan-700 [&_a]:underline [&_b]:font-black [&_strong]:font-black [&_em]:italic [&_i]:italic [&_u]:underline"
+              className="hero-video-title mt-2 text-3xl font-black leading-tight md:text-4xl [&_a]:underline [&_b]:font-black [&_strong]:font-black [&_em]:italic [&_i]:italic [&_u]:underline"
               dangerouslySetInnerHTML={{
                 __html: formatHomeHeroHtml(config.homeLayout.heroTitle) || "Sin título",
               }}
             />
             <div
-              className={`mt-3 text-sm leading-relaxed text-slate-700 md:text-base [&_a]:text-cyan-700 [&_a]:underline [&_b]:font-bold [&_strong]:font-bold [&_em]:italic [&_i]:italic [&_u]:underline [&_li]:ml-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5 [&_p]:mb-2 ${
+              className={`hero-video-description mt-3 text-sm leading-relaxed md:text-base [&_a]:underline [&_b]:font-bold [&_strong]:font-bold [&_em]:italic [&_i]:italic [&_u]:underline [&_li]:ml-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5 [&_p]:mb-2 ${
                 config.homeLayout.heroAlignment === "center"
                   ? config.homeLayout.heroMaxWidth === "xl"
                     ? "mx-auto max-w-xl"
@@ -10882,13 +10875,13 @@ export function CatalogHomeClient({
             />
             {config.homeLayout.showHeroChips ? (
             <div className={`mt-4 flex flex-wrap gap-2 ${config.homeLayout.heroAlignment === "center" ? "justify-center" : ""}`}>
-              <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">Visor 3D</span>
-              <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">Agenda por remate</span>
-              <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">Trazabilidad técnica</span>
+              <span className="hero-video-chip rounded-full border px-3 py-1 text-xs font-semibold">Visor 3D</span>
+              <span className="hero-video-chip rounded-full border px-3 py-1 text-xs font-semibold">Agenda por remate</span>
+              <span className="hero-video-chip rounded-full border px-3 py-1 text-xs font-semibold">Trazabilidad técnica</span>
             </div>
             ) : null}
             {config.homeLayout.showHeroCtas ? (
-            <div className={`mt-4 flex flex-wrap gap-3 border-t border-slate-200 pt-4 ${config.homeLayout.heroAlignment === "center" ? "justify-center" : ""}`}>
+            <div className={`hero-video-cta-divider mt-4 flex flex-wrap gap-3 border-t pt-4 ${config.homeLayout.heroAlignment === "center" ? "justify-center" : ""}`}>
               <a href={config.homeLayout.heroPrimaryCtaHref || "/vehiculos"} className="premium-btn-primary ui-focus">
                 {config.homeLayout.heroPrimaryCtaLabel || "Ver catálogo completo"}
               </a>
@@ -10898,14 +10891,15 @@ export function CatalogHomeClient({
             </div>
             ) : null}
             {heroAuctionCountdown ? (
-            <div className={`mt-4 inline-flex w-fit flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 ${config.homeLayout.heroAlignment === "center" ? "mx-auto justify-center" : ""}`}>
+            <div className={`hero-video-countdown mt-4 inline-flex w-fit flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${config.homeLayout.heroAlignment === "center" ? "mx-auto justify-center" : ""}`}>
               <span>{heroAuctionCountdown.label}</span>
-              <span className="text-amber-800">-</span>
+              <span className="text-amber-200/80">-</span>
               <span>{heroAuctionCountdown.name}</span>
-              <span className="text-amber-800">-</span>
+              <span className="text-amber-200/80">-</span>
               <span>{heroAuctionCountdown.dateLabel}</span>
             </div>
             ) : null}
+            </div>
           </div>
           {config.homeLayout.showCommercialPanel ? (
           <div className="premium-panel lg:col-span-4">
