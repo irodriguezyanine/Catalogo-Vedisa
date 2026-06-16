@@ -3,11 +3,11 @@
   "crons": [
     {
       "path": "/api/cron/warm-catalog",
-      "schedule": "0 */2 * * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/cron/reconcile-shared",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 5 * * *"
     }
   ]
 }
