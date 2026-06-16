@@ -60,6 +60,10 @@ import {
   type LotDocumentLink,
 } from "@/lib/lot-documents";
 import {
+  normalizeGlo3dViewerInput,
+  resolveGlo3dViewerPreviewUrl,
+} from "@/lib/glo3d-viewer-url";
+import {
   PRUEBA_DESPLAZAMIENTO_LOOKUP_KEYS,
   PRUEBA_MOTOR_LOOKUP_KEYS,
   resolvePruebaDesplazamientoSiNo,
@@ -431,7 +435,10 @@ function mergeSyncedVehicleDetails(
     aro: pick(synced.aro) ?? draft.aro,
     cilindrada: pick(synced.cilindrada) ?? draft.cilindrada,
     thumbnail: pick(synced.thumbnail) ?? draft.thumbnail ?? item.thumbnail ?? "",
-    view3dUrl: pick(synced.view3dUrl) ?? draft.view3dUrl ?? item.view3dUrl ?? "",
+    view3dUrl: (() => {
+      const raw = pick(synced.view3dUrl) ?? draft.view3dUrl ?? item.view3dUrl ?? "";
+      return normalizeGlo3dViewerInput(raw) ?? raw;
+    })(),
     imagesCsv:
       pick(synced.imagesCsv) ??
       draft.imagesCsv ??
@@ -2344,7 +2351,7 @@ function sanitizeDetails(details: EditorVehicleDetails): EditorVehicleDetails | 
     rutPropietarioAnterior: cleanOptional(details.rutPropietarioAnterior),
     rutVerificador: cleanOptional(details.rutVerificador),
     thumbnail: cleanOptional(details.thumbnail),
-    view3dUrl: cleanOptional(details.view3dUrl),
+    view3dUrl: cleanOptional(normalizeGlo3dViewerInput(details.view3dUrl)),
     imagesCsv: cleanOptional(details.imagesCsv),
     lotDocumentsJson: cleanOptional(details.lotDocumentsJson),
   };
@@ -7039,7 +7046,7 @@ export function CatalogHomeClient({
       category: cleanOptional(manualDraft.category),
       images: cloudinaryImages,
       thumbnail: cleanOptional(manualDraft.thumbnail) ?? cloudinaryImages[0],
-      view3dUrl: cleanOptional(manualDraft.view3dUrl),
+      view3dUrl: cleanOptional(normalizeGlo3dViewerInput(manualDraft.view3dUrl)),
       sectionIds,
       upcomingAuctionId: cleanOptional(manualDraft.upcomingAuctionId),
       visible: manualDraft.visible,
@@ -12302,11 +12309,16 @@ export function CatalogHomeClient({
                       placeholder="URL portada Cloudinary (opcional, si no se usa la primera)"
                       className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
                     />
-                    <input
+                    <textarea
                       value={manualDraft.view3dUrl}
                       onChange={(event) => setManualDraft((prev) => ({ ...prev, view3dUrl: event.target.value }))}
-                      placeholder="URL visor 3D (opcional)"
-                      className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                      onBlur={(event) => {
+                        const normalized = normalizeGlo3dViewerInput(event.target.value);
+                        if (!normalized || normalized === event.target.value.trim()) return;
+                        setManualDraft((prev) => ({ ...prev, view3dUrl: normalized }));
+                      }}
+                      placeholder="Visor 3D: URL Glo3D, iframeNova o iframe completo (opcional)"
+                      className="ui-focus min-h-16 rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
                     />
                   </div>
                 </details>
@@ -13864,20 +13876,31 @@ export function CatalogHomeClient({
                     Visor 3D (Glo3D)
                   </p>
                   <EditorLabeledField label="URL del visor 3D" className="mt-2">
-                    <input
-                      className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                      placeholder="https://..."
+                    <textarea
+                      className="min-h-20 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="Pega URL Glo3D, enlace iframeNova o el iframe completo"
                       value={editingDetails.view3dUrl ?? editingItem?.view3dUrl ?? ""}
                       onChange={(event) =>
                         setEditingDetails((prev) => ({ ...(prev ?? {}), view3dUrl: event.target.value }))
                       }
+                      onBlur={(event) => {
+                        const normalized = normalizeGlo3dViewerInput(event.target.value);
+                        if (!normalized || normalized === event.target.value.trim()) return;
+                        setEditingDetails((prev) => ({ ...(prev ?? {}), view3dUrl: normalized }));
+                      }}
                     />
                   </EditorLabeledField>
-                  {(editingDetails.view3dUrl ?? editingItem?.view3dUrl)?.startsWith("http") ? (
+                  {resolveGlo3dViewerPreviewUrl(
+                    editingDetails.view3dUrl ?? editingItem?.view3dUrl,
+                  ) ? (
                     <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-900/5">
                       <iframe
                         title="Vista previa visor 3D"
-                        src={editingDetails.view3dUrl ?? editingItem?.view3dUrl}
+                        src={
+                          resolveGlo3dViewerPreviewUrl(
+                            editingDetails.view3dUrl ?? editingItem?.view3dUrl,
+                          ) ?? ""
+                        }
                         className="h-56 w-full"
                         loading="lazy"
                         allow="fullscreen"
