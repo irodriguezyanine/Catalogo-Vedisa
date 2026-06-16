@@ -1,4 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
+import {
+  collectDirectSaleVehicleKeys,
+  DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  DEFAULT_VENTA_DIRECTA_EVENT_NAME,
+  ESTADO_RETIRO_VENTA_DIRECTA,
+  resolveCommercialEventType,
+} from "@/lib/catalog-shared-constants";
 import type { EditorConfig, EditorVehicleDetails, ManualPublication } from "@/types/editor";
 
 type SyncResult = {
@@ -49,10 +56,7 @@ const REMATES_TABLE = process.env.CATALOG_SYNC_REMATES_TABLE ?? "remates";
 const REMATES_ITEMS_TABLE = process.env.CATALOG_SYNC_REMATES_ITEMS_TABLE ?? "remates_items";
 
 const ESTADO_RETIRO_REMATE = "en_bodega_a_remate";
-const ESTADO_RETIRO_VENTA_DIRECTA = "en_bodega_a_venta_directa";
 const ESTADO_RETIRO_DEFAULT = "en_tasacion";
-const DEFAULT_VENTA_DIRECTA_EVENT_ID = "6f4a7e7a-0c83-4e0a-8a7e-9d60f6797f11";
-const DEFAULT_VENTA_DIRECTA_EVENT_NAME = "Venta Directa - Catálogo";
 
 function isMissingRematesTipoColumn(error: unknown): boolean {
   const code = String((error as { code?: unknown })?.code ?? "").toUpperCase();
@@ -125,24 +129,16 @@ function parseIsoOrNull(value?: string | null): string | null {
   return d.toISOString();
 }
 
-function isVentaDirectaEventName(value?: string | null): boolean {
-  const normalized = String(value ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "");
-  if (!normalized) return false;
-  return (
-    normalized.includes("ventadirecta") ||
-    normalized.includes("vtadirecta") ||
-    normalized.includes("vtdirecta") ||
-    normalized.includes("ventadir")
-  );
-}
+function buildSyncTargets(config: EditorConfig) {
+  const remateAssignments = config.vehicleUpcomingAuctionIds ?? {};
+  const directSaleKeys = collectDirectSaleVehicleKeys(config);
+  const remateKeys = new Set<string>(Object.keys(remateAssignments));
 
-function getAuctionEventType(auction: { name?: string | null; eventType?: string | null }): "remate" | "venta_directa" {
-  if (auction.eventType === "venta_directa" || auction.eventType === "remate") return auction.eventType;
-  return isVentaDirectaEventName(auction.name) ? "venta_directa" : "remate";
+  return {
+    remateAssignments,
+    remateKeys,
+    directSaleKeys,
+  };
 }
 
 function manualById(config: EditorConfig): Map<string, ManualPublication> {
@@ -276,18 +272,6 @@ function buildRemateItemPayload(
   };
 }
 
-function buildSyncTargets(config: EditorConfig) {
-  const remateAssignments = config.vehicleUpcomingAuctionIds ?? {};
-  const directSaleKeys = new Set(config.sectionVehicleIds?.["ventas-directas"] ?? []);
-  const remateKeys = new Set<string>(Object.keys(remateAssignments));
-
-  return {
-    remateAssignments,
-    remateKeys,
-    directSaleKeys,
-  };
-}
-
 async function findInventarioByPatent(
   supabase: ReturnType<typeof getServerSupabase> extends infer T ? Exclude<T, null> : never,
   patente: string,
@@ -361,6 +345,11 @@ export async function syncEditorConfigToSharedTablesWithOptions(
     }
   }
   const rematesVentaDirecta = new Set<string>();
+  for (const auction of config.upcomingAuctions ?? []) {
+    if (resolveCommercialEventType(auction) === "venta_directa" && isUuid(auction.id)) {
+      rematesVentaDirecta.add(auction.id);
+    }
+  }
   for (const [vehicleKey, remateId] of eventByVehicle.entries()) {
     if (directSaleKeys.has(vehicleKey)) rematesVentaDirecta.add(remateId);
   }
@@ -381,7 +370,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       parseIsoOrNull(auction.startAt) ??
       new Date(new Date(fechaHoraCierre).getTime() - 24 * 60 * 60 * 1000).toISOString();
     const nombre = auction.name.trim();
-    const tipoEvento = getAuctionEventType(auction);
+    const tipoEvento = resolveCommercialEventType(auction);
     const esVentaDirecta = rematesVentaDirecta.has(auction.id) || tipoEvento === "venta_directa";
     remateRows.push({
       id: auction.id,

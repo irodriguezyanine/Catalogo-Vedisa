@@ -1,5 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { clearHiddenBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
+import {
+  DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  ensureDefaultVentaDirectaAuction,
+  ESTADO_RETIRO_VENTA_DIRECTA,
+  isVentaDirectaAuctionActive,
+  resolveCommercialEventType,
+} from "@/lib/catalog-shared-constants";
 import type { EditorConfig, UpcomingAuction } from "@/types/editor";
 
 export type SharedRemateRow = {
@@ -194,6 +201,13 @@ function assignVehicleToAuction(
 function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
   const estado = String(row.estado ?? "").trim().toLowerCase();
   if (estado === "cerrado") return false;
+  if (inferEventType(row) === "venta_directa") {
+    const endAt = row.fecha_hora_cierre ?? row.fecha_hora_remate;
+    if (!endAt?.trim()) return true;
+    const endMs = Date.parse(endAt);
+    if (!Number.isFinite(endMs)) return true;
+    return endMs >= nowMs;
+  }
   const endAt = inferEventEndAt(row);
   if (!endAt) return true;
   const endMs = Date.parse(endAt);
@@ -202,33 +216,46 @@ function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
 }
 
 function resolveEditorAuctionEventType(auction: UpcomingAuction): "remate" | "venta_directa" {
-  if (auction.eventType === "venta_directa" || auction.eventType === "remate") {
-    return auction.eventType;
-  }
-  const text = normalizeText(auction.name ?? "");
-  if (
-    text.includes("ventadirecta") ||
-    text.includes("vtadirecta") ||
-    text.includes("vtdirecta") ||
-    text.includes("ventadir")
-  ) {
-    return "venta_directa";
-  }
-  return "remate";
+  return resolveCommercialEventType(auction);
 }
 
 function isEditorAuctionStillActive(auction: UpcomingAuction, nowMs: number): boolean {
   if (resolveEditorAuctionEventType(auction) === "venta_directa") {
-    if (!auction.endAt?.trim()) return true;
-    const endMs = Date.parse(auction.endAt);
-    if (!Number.isFinite(endMs)) return true;
-    return endMs >= nowMs;
+    return isVentaDirectaAuctionActive(auction, nowMs);
   }
   const endAt = auction.endAt ?? auction.date;
   if (!endAt) return true;
   const endMs = Date.parse(endAt);
   if (!Number.isFinite(endMs)) return true;
   return endMs >= nowMs;
+}
+
+async function fetchVentaDirectaInventoryRawKeys(): Promise<string[]> {
+  const supabase = getServerSupabase();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from(INVENTARIO_TABLE)
+    .select("patente, stock_number, id")
+    .eq("estado_retiro", ESTADO_RETIRO_VENTA_DIRECTA)
+    .limit(10000);
+
+  if (error) {
+    console.warn("No se pudo leer inventario en venta directa:", error);
+    return [];
+  }
+
+  const rawKeys: string[] = [];
+  for (const row of (data ?? []) as Array<{
+    patente?: string | null;
+    stock_number?: string | null;
+    id?: string | null;
+  }>) {
+    if (row.patente) rawKeys.push(String(row.patente));
+    if (row.stock_number) rawKeys.push(String(row.stock_number));
+    if (row.id) rawKeys.push(String(row.id));
+  }
+  return rawKeys;
 }
 
 function isMissingColumnError(error: unknown) {
@@ -328,7 +355,6 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
     rematesSection.delete(soldKey);
     ventaDirectaSection.delete(soldKey);
   }
-  const oldAssignments = config.vehicleUpcomingAuctionIds ?? {};
   const byId = new Map<string, UpcomingAuction>();
 
   for (const auction of config.upcomingAuctions ?? []) {
@@ -356,29 +382,16 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
     });
   }
 
-  const upcomingAuctions = Array.from(byId.values()).filter((auction) =>
-    isEditorAuctionStillActive(auction, nowMs),
-  );
-  const visibleAuctionIds = new Set(upcomingAuctions.map((auction) => auction.id));
-  const nextVehicleUpcomingAuctionIds = Object.fromEntries(
-    Object.entries(oldAssignments).filter(
-      ([vehicleKey, auctionId]) =>
-        visibleAuctionIds.has(auctionId) && !soldVehicleKeys.has(vehicleKey),
-    ),
-  );
-  const staleAssignedKeys = new Set(
-    Object.keys(oldAssignments).filter((vehicleKey) => !(vehicleKey in nextVehicleUpcomingAuctionIds)),
-  );
-  for (const vehicleKey of staleAssignedKeys) {
-    rematesSection.delete(vehicleKey);
-    ventaDirectaSection.delete(vehicleKey);
-  }
+  const inventoryAliases = await fetchInventoryVehicleKeyAliases();
+  const nextVehicleUpcomingAuctionIds: Record<string, string> = {
+    ...(config.vehicleUpcomingAuctionIds ?? {}),
+  };
 
   const hiddenCategoryIds = new Set(
     (config.hiddenCategoryIds ?? []).filter((value) => {
       if (!value.startsWith("auction:")) return true;
       const auctionId = value.slice("auction:".length);
-      return visibleAuctionIds.has(auctionId);
+      return byId.has(auctionId);
     }),
   );
   hiddenCategoryIds.delete("section:proximos-remates");
@@ -386,19 +399,23 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
 
   const sourcesByAuction = new Map<string, Set<string>>();
   const reassignedVehicleKeys = new Set<string>();
+  const visibleAuctionIdsFromRows = new Set(
+    Array.from(byId.values())
+      .filter((auction) => isEditorAuctionStillActive(auction, nowMs))
+      .map((auction) => auction.id),
+  );
+
   if (activeRows.length > 0) {
     const remateIds = activeRows.map((row) => row.id).filter(Boolean);
-    const [sharedItems, inventoryAliases] = await Promise.all([
-      fetchSharedRemateItems(remateIds),
-      fetchInventoryVehicleKeyAliases(),
-    ]);
+    const sharedItems = await fetchSharedRemateItems(remateIds);
 
     for (const item of sharedItems) {
       const remateId = String(item.remate_id ?? "");
       const extra = (item.extra_fields ?? {}) as Record<string, unknown>;
       const linkedId = readExtraString(extra, ["tasaciones_remate_id", "source_remate_id", "portal_remate_id"]);
-      const auctionId = remateId && visibleAuctionIds.has(remateId) ? remateId : linkedId;
-      if (!auctionId || !visibleAuctionIds.has(auctionId)) continue;
+      const auctionId =
+        remateId && visibleAuctionIdsFromRows.has(remateId) ? remateId : linkedId;
+      if (!auctionId || !visibleAuctionIdsFromRows.has(auctionId)) continue;
       const source = readExtraString(extra, ["source_system", "origin_system"]).toLowerCase();
       if (!sourcesByAuction.has(auctionId)) sourcesByAuction.set(auctionId, new Set<string>());
       if (source) sourcesByAuction.get(auctionId)?.add(source);
@@ -419,6 +436,57 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
     }
   }
 
+  const ventaDirectaInventoryRaw = await fetchVentaDirectaInventoryRawKeys();
+  for (const raw of ventaDirectaInventoryRaw) {
+    const vehicleKeys = resolveCatalogVehicleKeys(inventoryAliases, raw).filter(
+      (vehicleKey) => !soldVehicleKeys.has(vehicleKey),
+    );
+    for (const vehicleKey of vehicleKeys) {
+      ventaDirectaSection.add(vehicleKey);
+      reassignedVehicleKeys.add(vehicleKey);
+      const assignedId = nextVehicleUpcomingAuctionIds[vehicleKey];
+      if (!assignedId) {
+        nextVehicleUpcomingAuctionIds[vehicleKey] = DEFAULT_VENTA_DIRECTA_EVENT_ID;
+        continue;
+      }
+      const assignedAuction = byId.get(assignedId);
+      if (assignedAuction && resolveEditorAuctionEventType(assignedAuction) === "venta_directa") {
+        ventaDirectaSection.add(vehicleKey);
+      }
+    }
+  }
+
+  ensureDefaultVentaDirectaAuction(byId, ventaDirectaSection);
+
+  const upcomingAuctions = Array.from(byId.values()).filter((auction) =>
+    isEditorAuctionStillActive(auction, nowMs),
+  );
+  const visibleAuctionIds = new Set(upcomingAuctions.map((auction) => auction.id));
+  const filteredVehicleUpcomingAuctionIds = Object.fromEntries(
+    Object.entries(nextVehicleUpcomingAuctionIds).filter(
+      ([vehicleKey, auctionId]) =>
+        visibleAuctionIds.has(auctionId) && !soldVehicleKeys.has(vehicleKey),
+    ),
+  );
+  const staleAssignedKeys = new Set(
+    Object.keys(config.vehicleUpcomingAuctionIds ?? {}).filter(
+      (vehicleKey) => !(vehicleKey in filteredVehicleUpcomingAuctionIds),
+    ),
+  );
+  for (const vehicleKey of staleAssignedKeys) {
+    rematesSection.delete(vehicleKey);
+    if (!ventaDirectaInventoryRaw.some((raw) => resolveCatalogVehicleKeys(inventoryAliases, raw).includes(vehicleKey))) {
+      ventaDirectaSection.delete(vehicleKey);
+    }
+  }
+
+  const filteredHiddenCategoryIds = new Set(
+    [...hiddenCategoryIds].filter((value) => {
+      if (!value.startsWith("auction:")) return true;
+      return visibleAuctionIds.has(value.slice("auction:".length));
+    }),
+  );
+
   const unblockedPublication = clearHiddenBlocksForVehicleKeys(config, reassignedVehicleKeys);
 
   return {
@@ -437,13 +505,15 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
           auction.eventOrigin ??
           inferOriginFromSources(sourcesByAuction.get(auction.id) ?? new Set<string>()),
       })),
-    vehicleUpcomingAuctionIds: nextVehicleUpcomingAuctionIds,
+    vehicleUpcomingAuctionIds: filteredVehicleUpcomingAuctionIds,
     sectionVehicleIds: {
       ...config.sectionVehicleIds,
       "proximos-remates": Array.from(rematesSection),
       "ventas-directas": Array.from(ventaDirectaSection),
     },
     hiddenCategoryIds:
-      activeRows.length > 0 ? Array.from(hiddenCategoryIds) : preserveCatalogCommercialSections(config),
+      activeRows.length > 0 || ventaDirectaInventoryRaw.length > 0
+        ? Array.from(filteredHiddenCategoryIds)
+        : preserveCatalogCommercialSections(config),
   };
 }
