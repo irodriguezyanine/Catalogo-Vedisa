@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogItem } from "@/types/catalog";
 import { ShareIcon } from "@/components/share-icon";
 import {
@@ -178,6 +178,7 @@ export function CatalogCard({
   const cover = isLikelyImageUrl(coverCandidate) ? (coverCandidate as string) : "/placeholder-car.svg";
   const [coverSrc, setCoverSrc] = useState(cover);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const coverImgRef = useRef<HTMLImageElement>(null);
   const formattedDate = formatDate(item.auctionDate);
   const patent = getPatent(item);
   const brandModel = getBrandModel(item);
@@ -223,6 +224,14 @@ export function CatalogCard({
     setImageLoaded(false);
   }, [cover]);
 
+  useEffect(() => {
+    const img = coverImgRef.current;
+    if (!img?.complete || img.naturalWidth === 0) return;
+    if (img.currentSrc.endsWith(coverSrc) || img.src.endsWith(coverSrc)) {
+      setImageLoaded(true);
+    }
+  }, [coverSrc]);
+
   return (
     <article className="catalog-card group flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white text-left shadow-sm transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg">
       <button type="button" onClick={onOpen} className="ui-focus flex w-full flex-1 flex-col text-left">
@@ -232,6 +241,7 @@ export function CatalogCard({
           ) : null}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
+            ref={coverImgRef}
             src={coverSrc}
             alt={imageAlt}
             className={`h-full w-full object-cover transition duration-500 group-hover:scale-105 ${
@@ -239,10 +249,14 @@ export function CatalogCard({
             }`}
             loading="lazy"
             decoding="async"
-            onLoad={() => setImageLoaded(true)}
+            onLoad={(event) => {
+              if (event.currentTarget.naturalWidth > 0) {
+                setImageLoaded(true);
+              }
+            }}
             onError={() => {
               setCoverSrc("/placeholder-car.svg");
-              setImageLoaded(true);
+              setImageLoaded(false);
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
