@@ -63,9 +63,15 @@ body {
   overflow: hidden;
   border: 1px solid rgba(125, 162, 186, 0.22);
   border-radius: 1.25rem;
-  padding: 2rem;
+  padding: 1.35rem;
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(245, 250, 255, 0.9));
   box-shadow: 0 18px 40px rgba(41, 95, 127, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+@media (min-width: 768px) {
+  .premium-panel {
+    padding: 1.75rem;
+  }
 }
 
 .premium-panel-hero {
@@ -108,9 +114,46 @@ body {
 .section-shell {
   border: 1px solid rgba(143, 183, 209, 0.28);
   border-radius: 1.2rem;
-  padding: 1.3rem;
+  padding: 1.1rem;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 255, 0.9));
   box-shadow: 0 12px 28px rgba(71, 118, 145, 0.08);
+}
+
+@media (min-width: 768px) {
+  .section-shell {
+    padding: 1.25rem;
+  }
+}
+
+.home-section-enter {
+  animation: homeSectionEnter 0.45s ease-out both;
+}
+
+.catalog-card {
+  box-shadow: 0 8px 20px rgba(71, 118, 145, 0.08);
+}
+
+.catalog-card:hover {
+  box-shadow: 0 16px 32px rgba(51, 199, 227, 0.16);
+}
+
+.catalog-rail-nav-btn {
+  display: inline-flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid rgba(51, 199, 227, 0.45);
+  background: rgba(255, 255, 255, 0.96);
+  color: rgb(14 116 144);
+  box-shadow: 0 8px 20px rgba(51, 199, 227, 0.18);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.catalog-rail-nav-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(51, 199, 227, 0.24);
 }
 
 .premium-btn-primary {
@@ -280,10 +323,17 @@ body {
 }
 
 .catalog-rail-item {
-  flex: 0 0 100%;
-  min-width: 100%;
+  flex: 0 0 86%;
+  min-width: 86%;
   scroll-snap-align: start;
   scroll-snap-stop: always;
+}
+
+@media (min-width: 640px) {
+  .catalog-rail-item {
+    flex: 0 0 72%;
+    min-width: 72%;
+  }
 }
 
 .catalog-rail-shell::before,
@@ -357,11 +407,20 @@ body {
 }
 
 @media (max-width: 767px) {
-  .catalog-rail-shell::before,
-  .catalog-rail-shell::after,
   .featured-strip-shell::before,
   .featured-strip-shell::after {
     display: none;
+  }
+}
+
+@keyframes homeSectionEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

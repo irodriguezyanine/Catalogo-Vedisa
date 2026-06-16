@@ -70,6 +70,13 @@ import {
 } from "@/lib/glo3d-client-cooldown";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
+import { CatalogSiteFooter } from "@/components/catalog-site-footer";
+import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
+import { HomeInventorySearch } from "@/components/home-inventory-search";
+import {
+  RematesEmptyHomeState,
+  UpcomingAuctionsSection,
+} from "@/components/home-upcoming-auctions-section";
 import {
   VehicleListThumbnailWithSync,
   VehicleQuickSyncButton,
@@ -2505,6 +2512,7 @@ type HorizontalCardsRailProps = {
   onOpenVehicle: (item: CatalogItem) => void;
   cardDensity: CardDensity;
   showPatents?: boolean;
+  loading?: boolean;
 };
 
 type CatalogSectionCardsProps = HorizontalCardsRailProps;
@@ -2517,11 +2525,13 @@ function HorizontalCardsRail({
   onOpenVehicle,
   cardDensity,
   showPatents = true,
+  loading = false,
 }: HorizontalCardsRailProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const dragStartXRef = useRef(0);
   const dragStartScrollLeftRef = useRef(0);
   const draggedRef = useRef(false);
@@ -2533,7 +2543,12 @@ function HorizontalCardsRail({
     const hasOverflow = maxScrollLeft > 4;
     setCanScrollLeft(hasOverflow && node.scrollLeft > 4);
     setCanScrollRight(hasOverflow && node.scrollLeft < maxScrollLeft - 4);
-  }, []);
+    const firstCard = node.firstElementChild as HTMLElement | null;
+    const cardWidth = firstCard?.getBoundingClientRect().width ?? 1;
+    const gap = 14;
+    const index = cardWidth > 0 ? Math.round(node.scrollLeft / (cardWidth + gap)) : 0;
+    setActiveIndex(Math.min(Math.max(index, 0), Math.max(items.length - 1, 0)));
+  }, [items.length]);
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -2598,32 +2613,46 @@ function HorizontalCardsRail({
 
   return (
     <div className="catalog-rail-shell relative">
-      <button
-        type="button"
-        onClick={() => scrollByAmount("left")}
-        className={`ui-focus absolute left-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-slate-900/25 text-white backdrop-blur-sm transition hover:bg-slate-900/45 md:inline-flex ${
-          canScrollLeft ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-        aria-label="Desplazar tarjetas hacia la izquierda"
-        title="Anterior"
-      >
-        <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
-          <path fillRule="evenodd" d="M12.78 4.22a.75.75 0 0 1 0 1.06L8.06 10l4.72 4.72a.75.75 0 1 1-1.06 1.06l-5.25-5.25a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        onClick={() => scrollByAmount("right")}
-        className={`ui-focus absolute right-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-slate-900/25 text-white backdrop-blur-sm transition hover:bg-slate-900/45 md:inline-flex ${
-          canScrollRight ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-        aria-label="Desplazar tarjetas hacia la derecha"
-        title="Siguiente"
-      >
-        <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
-          <path fillRule="evenodd" d="M7.22 15.78a.75.75 0 0 1 0-1.06L11.94 10 7.22 5.28a.75.75 0 1 1 1.06-1.06l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 0 1-1.06 0Z" clipRule="evenodd" />
-        </svg>
-      </button>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-slate-700" aria-live="polite">
+          {items.length > 0 ? `${activeIndex + 1} de ${items.length}` : "Sin unidades"}
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => scrollByAmount("left")}
+            disabled={!canScrollLeft}
+            className={`catalog-rail-nav-btn ui-focus ${canScrollLeft ? "" : "pointer-events-none opacity-40"}`}
+            aria-label="Desplazar tarjetas hacia la izquierda"
+            title="Anterior"
+          >
+            <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M12.78 4.22a.75.75 0 0 1 0 1.06L8.06 10l4.72 4.72a.75.75 0 1 1-1.06 1.06l-5.25-5.25a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollByAmount("right")}
+            disabled={!canScrollRight}
+            className={`catalog-rail-nav-btn ui-focus ${canScrollRight ? "" : "pointer-events-none opacity-40"}`}
+            aria-label="Desplazar tarjetas hacia la derecha"
+            title="Siguiente"
+          >
+            <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M7.22 15.78a.75.75 0 0 1 0-1.06L11.94 10 7.22 5.28a.75.75 0 1 1 1.06-1.06l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 0 1-1.06 0Z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      {loading ? (
+        <div className="catalog-rail">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={`rail-skeleton-${sectionKey}-${index}`} className="catalog-rail-item">
+              <div className="h-80 animate-pulse rounded-2xl border border-slate-200 bg-slate-100" />
+            </div>
+          ))}
+        </div>
+      ) : (
       <div
         ref={scrollRef}
         className={`catalog-rail select-none ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
@@ -2658,6 +2687,7 @@ function HorizontalCardsRail({
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -2670,91 +2700,27 @@ function CatalogSectionCards({
   onOpenVehicle,
   cardDensity,
   showPatents = true,
-}: CatalogSectionCardsProps) {
-  const [mobileExpanded, setMobileExpanded] = useState(false);
-  useEffect(() => {
-    setMobileExpanded(false);
-  }, [sectionKey, items.length]);
-  const hasMoreOnMobile = items.length > MOBILE_SECTION_PREVIEW_COUNT;
-  const mobileVisibleItems = mobileExpanded
-    ? items
-    : items.slice(0, MOBILE_SECTION_PREVIEW_COUNT);
-  const hiddenMobileCount = Math.max(0, items.length - MOBILE_SECTION_PREVIEW_COUNT);
-
-  const renderCard = (item: CatalogItem) => (
-    <CatalogCard
-      key={`${sectionKey}-${item.id}`}
-      item={item}
-      priceLabel={formatPrice(resolveVehiclePriceRaw(item, priceMap) ?? undefined)}
-      commercialEventBadge={upcomingAuctionByVehicleKey?.[getVehicleKey(item)]}
-      density={cardDensity}
-      showPatents={showPatents}
-      onOpen={() => onOpenVehicle(item)}
-      onWhatsappClick={() =>
-        trackEvent("whatsapp_click_card", {
-          section: sectionKey,
-          itemKey: getVehicleKey(item),
-        })
-      }
-    />
-  );
+  loading = false,
+}: CatalogSectionCardsProps & { loading?: boolean }) {
+  if (items.length === 0 && !loading) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600">
+        No hay unidades visibles en esta sección por ahora.
+      </div>
+    );
+  }
 
   return (
-    <>
-      <div className="md:hidden">
-        <div id={`${sectionKey}-mobile-cards`} className="grid grid-cols-1 gap-3">
-          {mobileVisibleItems.map((item) => renderCard(item))}
-        </div>
-        {hasMoreOnMobile ? (
-          <button
-            type="button"
-            onClick={() => setMobileExpanded((prev) => !prev)}
-            className="ui-focus mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-            aria-expanded={mobileExpanded}
-            aria-controls={`${sectionKey}-mobile-cards`}
-          >
-            {mobileExpanded ? (
-              <>
-                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-                  <path
-                    d="M5 12.5L10 7.5l5 5"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Ver menos publicaciones
-              </>
-            ) : (
-              <>
-                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-                  <path
-                    d="M5 7.5L10 12.5l5-5"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Ver {hiddenMobileCount} publicacion{hiddenMobileCount === 1 ? "" : "es"} más
-              </>
-            )}
-          </button>
-        ) : null}
-      </div>
-      <div className="hidden md:block">
-        <HorizontalCardsRail
-          sectionKey={sectionKey}
-          items={items}
-          priceMap={priceMap}
-          upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-          onOpenVehicle={onOpenVehicle}
-          cardDensity={cardDensity}
-          showPatents={showPatents}
-        />
-      </div>
-    </>
+    <HorizontalCardsRail
+      sectionKey={sectionKey}
+      items={items}
+      priceMap={priceMap}
+      upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+      onOpenVehicle={onOpenVehicle}
+      cardDensity={cardDensity}
+      showPatents={showPatents}
+      loading={loading}
+    />
   );
 }
 
@@ -2769,21 +2735,26 @@ function Section({
   cardDensity,
   showPatents = true,
 }: SectionProps) {
+  const resolvedSubtitle =
+    id === "ventas-directas" && subtitle.includes("Stock disponible")
+      ? "Compra directa, sin esperar remate · Retiro ágil desde nuestra bodega en Pudahuel."
+      : subtitle;
+
   return (
-    <section id={id} className="section-shell scroll-mt-24">
+    <section id={id} className="section-shell home-section-enter scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="premium-kicker">Seccion destacada</p>
-          <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
-          <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
+          <p className="premium-kicker">Sección destacada</p>
+          <h2 className="text-2xl font-bold text-slate-900 md:text-3xl">{title}</h2>
+          <p className="mt-1 text-sm text-slate-700">{resolvedSubtitle}</p>
         </div>
-        <span className="inline-flex w-fit rounded-full bg-cyan-100 px-3 py-1 text-xs font-semibold text-cyan-900">
+        <span className="inline-flex w-fit rounded-full bg-cyan-100 px-3 py-1 text-xs font-semibold text-cyan-950">
           {items.length} publicaciones
         </span>
       </header>
 
       {items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600">
           No encontramos unidades en esta sección. Prueba limpiar filtros o cambiar el tipo de vehículo.
         </div>
       ) : (
@@ -2797,108 +2768,6 @@ function Section({
           showPatents={showPatents}
         />
       )}
-    </section>
-  );
-}
-
-type UpcomingAuctionsSectionVariant = "remate" | "venta_directa";
-
-const UPCOMING_AUCTIONS_SECTION_COPY: Record<
-  UpcomingAuctionsSectionVariant,
-  { sectionId: string; kicker: string; title: string; subtitle: string; headerClass: string; badgeClass: string }
-> = {
-  remate: {
-    sectionId: "proximos-remates",
-    kicker: "Agenda de remates",
-    title: "Próximos remates",
-    subtitle: "Remates sincronizados desde Tasaciones y Subastas Vedisa.",
-    headerClass: "border-indigo-100 bg-indigo-50/50 text-indigo-900",
-    badgeClass: "text-indigo-700",
-  },
-  venta_directa: {
-    sectionId: "ventas-directas",
-    kicker: "Ventas directas",
-    title: "Venta directa",
-    subtitle: "Unidades publicadas en venta directa con precio y disponibilidad.",
-    headerClass: "border-emerald-100 bg-emerald-50/50 text-emerald-900",
-    badgeClass: "text-emerald-700",
-  },
-};
-
-type UpcomingAuctionsSectionProps = {
-  variant: UpcomingAuctionsSectionVariant;
-  groups: Array<{ auction: UpcomingAuction; items: CatalogItem[] }>;
-  priceMap: Record<string, string>;
-  upcomingAuctionByVehicleKey: Record<string, VehicleCommercialEventBadge>;
-  onOpenVehicle: (item: CatalogItem) => void;
-  cardDensity: CardDensity;
-  showPatents?: boolean;
-};
-
-function UpcomingAuctionsSection({
-  variant,
-  groups,
-  priceMap,
-  upcomingAuctionByVehicleKey,
-  onOpenVehicle,
-  cardDensity,
-  showPatents = true,
-}: UpcomingAuctionsSectionProps) {
-  if (groups.length === 0) return null;
-  const copy = UPCOMING_AUCTIONS_SECTION_COPY[variant];
-  const subastasUrl = process.env.NEXT_PUBLIC_SUBASTAS_URL ?? "https://vedisaremates.vercel.app";
-
-  return (
-    <section id={copy.sectionId} className="section-shell scroll-mt-24">
-      <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="premium-kicker">{copy.kicker}</p>
-          <h2 className="text-2xl font-bold text-slate-900">{copy.title}</h2>
-          <p className="mt-1 text-sm text-slate-600">{copy.subtitle}</p>
-        </div>
-      </header>
-      <div className="space-y-8">
-        {groups.map(({ auction, items }) => (
-          <div key={auction.id}>
-            <div
-              className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 ${copy.headerClass}`}
-            >
-              <h3 className="text-base font-semibold">{auction.name}</h3>
-              <span className={`rounded-full bg-white px-3 py-1 text-xs font-semibold ${copy.badgeClass}`}>
-                {formatAuctionWindowLabel(auction)} · {items.length} vehículos
-              </span>
-            </div>
-            {items.length > 0 ? (
-              <CatalogSectionCards
-                sectionKey={`${copy.sectionId}-${auction.id}`}
-                items={items}
-                priceMap={priceMap}
-                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                onOpenVehicle={onOpenVehicle}
-                cardDensity={cardDensity}
-                showPatents={showPatents}
-              />
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-                <p>
-                  Este evento está activo en la base compartida. Los lotes se mostrarán aquí cuando estén
-                  vinculados al inventario del catálogo.
-                </p>
-                {variant === "remate" ? (
-                  <a
-                    href={subastasUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ui-focus mt-3 inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white"
-                  >
-                    Ir a la sala del remate
-                  </a>
-                ) : null}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
     </section>
   );
 }
@@ -3996,6 +3865,15 @@ export function CatalogHomeClient({
       ),
     [visibleUpcomingAuctionGroups],
   );
+  const visibleUpcomingRemateGroupsWithVehicles = useMemo(
+    () => visibleUpcomingRemateGroups.filter((group) => group.items.length > 0),
+    [visibleUpcomingRemateGroups],
+  );
+  const hasScheduledRematesWithoutVehicles = useMemo(
+    () =>
+      visibleUpcomingRemateGroups.length > 0 && visibleUpcomingRemateGroupsWithVehicles.length === 0,
+    [visibleUpcomingRemateGroups, visibleUpcomingRemateGroupsWithVehicles],
+  );
   const visibleUpcomingVentaDirectaGroups = useMemo(
     () =>
       visibleUpcomingAuctionGroups.filter(
@@ -4004,7 +3882,7 @@ export function CatalogHomeClient({
     [visibleUpcomingAuctionGroups],
   );
 
-  const hasUpcomingRemateCategories = visibleUpcomingRemateGroups.length > 0;
+  const hasUpcomingRemateCategories = visibleUpcomingRemateGroupsWithVehicles.length > 0;
   const hasUpcomingVentaDirectaCategories = visibleUpcomingVentaDirectaGroups.length > 0;
 
   const proximosRemates = getSectionItems("proximos-remates");
@@ -7651,6 +7529,7 @@ export function CatalogHomeClient({
   };
 
   const showAdminEditor = isAdmin && adminView === "editor" && !isStandaloneDetailPage;
+  const showAdminHeaderControls = isAdmin && adminView === "editor";
   const showPublicHome = (!isAdmin || adminView === "home") && !isStandaloneDetailPage;
   const hasActiveSearch = homeSearchTerm.trim().length > 0;
   const shouldShowHowToSection =
@@ -8546,7 +8425,7 @@ export function CatalogHomeClient({
                   </button>
                 ))}
               </nav>
-              {isAdmin ? (
+              {showAdminHeaderControls ? (
                 <>
                   {adminView === "editor" ? (
                     <button
@@ -8567,11 +8446,11 @@ export function CatalogHomeClient({
                     Salir editor
                   </button>
                 </>
-              ) : (
+              ) : !isAdmin ? (
                 <button className="ui-focus rounded-full bg-cyan-600 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-cyan-500" onClick={() => { setShowLogin(true); trackEvent("login_modal_open"); }}>
                   Login
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
           {mobileMenuOpen ? (
@@ -8594,7 +8473,7 @@ export function CatalogHomeClient({
                 ))}
               </nav>
               <div className="mt-3 flex flex-wrap gap-2">
-                {isAdmin ? (
+                {showAdminHeaderControls ? (
                   <>
                     {adminView === "editor" ? (
                       <button
@@ -8621,11 +8500,11 @@ export function CatalogHomeClient({
                       Salir editor
                     </button>
                   </>
-                ) : (
+                ) : !isAdmin ? (
                   <button className="ui-focus w-full rounded-full bg-cyan-600 px-3 py-1 text-xs text-white" onClick={() => { setShowLogin(true); setMobileMenuOpen(false); trackEvent("login_modal_open"); }}>
                     Login
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -10839,50 +10718,23 @@ export function CatalogHomeClient({
         <div className="glass-soft overflow-visible rounded-2xl border border-slate-300/80 bg-white/95 p-3 shadow-md md:p-4">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <div className="w-full">
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Búsqueda de inventario
-              </p>
-              <div className="relative">
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                >
-                  <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  <circle cx="8.75" cy="8.75" r="5.75" stroke="currentColor" strokeWidth="1.8" />
-                </svg>
-                <input
-                  value={homeSearchTerm}
-                  onChange={(event) => {
-                    setHomeSearchTerm(event.target.value);
-                    trackEvent("home_search_change", { query: event.target.value });
-                  }}
-                  placeholder={
-                    showPatents
-                      ? "Buscar por patente, marca, modelo o categoría..."
-                      : "Buscar por marca, modelo o categoría..."
-                  }
-                  className="ui-focus w-full rounded-xl border-2 border-slate-300 bg-white py-3 pl-10 pr-28 text-sm font-medium text-slate-800 shadow-sm placeholder:text-slate-500"
-                  aria-label={
-                    showPatents
-                      ? "Buscar vehículos por patente, marca, modelo o categoría"
-                      : "Buscar vehículos por marca, modelo o categoría"
-                  }
-                />
-                {homeSearchTerm ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHomeSearchTerm("");
-                      trackEvent("home_search_clear");
-                    }}
-                    className="ui-focus absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Limpiar
-                  </button>
-                ) : null}
-              </div>
+              <HomeInventorySearch
+                value={homeSearchTerm}
+                onChange={(value) => {
+                  setHomeSearchTerm(value);
+                  trackEvent("home_search_change", { query: value });
+                }}
+                onClear={() => {
+                  setHomeSearchTerm("");
+                  trackEvent("home_search_clear");
+                }}
+                showPatents={showPatents}
+                ariaLabel={
+                  showPatents
+                    ? "Buscar vehículos por patente, marca, modelo o categoría"
+                    : "Buscar vehículos por marca, modelo o categoría"
+                }
+              />
             </div>
             <div className="flex flex-wrap items-center gap-2 lg:justify-end">
               <button
@@ -10987,7 +10839,7 @@ export function CatalogHomeClient({
             : "max-h-[1200px] translate-y-0 opacity-100"
         }`}
       >
-        <section className="relative z-10 mx-auto grid max-w-7xl gap-5 px-4 py-6 sm:px-6 md:py-7 lg:grid-cols-12 lg:px-8">
+        <section className="relative z-10 mx-auto grid max-w-7xl gap-4 px-4 py-5 sm:px-6 md:py-6 lg:grid-cols-12 lg:px-8">
           <div
             className={`${config.homeLayout.showCommercialPanel ? "lg:col-span-8" : "lg:col-span-12"} premium-panel premium-panel-hero ${
               config.homeLayout.heroTheme === "indigo"
@@ -11005,13 +10857,13 @@ export function CatalogHomeClient({
                   : "text-cyan-700"
             }`}>{config.homeLayout.heroKicker}</p>
             <h1
-              className="mt-2 text-3xl font-black leading-tight text-slate-900 md:text-[2.7rem] [&_a]:text-cyan-700 [&_a]:underline [&_b]:font-black [&_strong]:font-black [&_em]:italic [&_i]:italic [&_u]:underline"
+              className="mt-2 text-3xl font-black leading-tight text-slate-900 md:text-4xl [&_a]:text-cyan-700 [&_a]:underline [&_b]:font-black [&_strong]:font-black [&_em]:italic [&_i]:italic [&_u]:underline"
               dangerouslySetInnerHTML={{
                 __html: formatHomeHeroHtml(config.homeLayout.heroTitle) || "Sin título",
               }}
             />
             <div
-              className={`mt-3 text-sm leading-relaxed text-slate-600 md:text-[15px] [&_a]:text-cyan-700 [&_a]:underline [&_b]:font-bold [&_strong]:font-bold [&_em]:italic [&_i]:italic [&_u]:underline [&_li]:ml-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5 [&_p]:mb-2 ${
+              className={`mt-3 text-sm leading-relaxed text-slate-700 md:text-base [&_a]:text-cyan-700 [&_a]:underline [&_b]:font-bold [&_strong]:font-bold [&_em]:italic [&_i]:italic [&_u]:underline [&_li]:ml-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5 [&_p]:mb-2 ${
                 config.homeLayout.heroAlignment === "center"
                   ? config.homeLayout.heroMaxWidth === "xl"
                     ? "mx-auto max-w-xl"
@@ -11083,11 +10935,11 @@ export function CatalogHomeClient({
 
       <div className={`relative z-10 mx-auto flex max-w-7xl flex-col ${
         config.homeLayout.sectionSpacing === "compact"
-          ? "gap-8"
+          ? "gap-7"
           : config.homeLayout.sectionSpacing === "airy"
-            ? "gap-20"
-            : "gap-14"
-      } px-4 pb-14 sm:px-6 lg:px-8`}>
+            ? "gap-16"
+            : "gap-10"
+      } px-4 pb-12 sm:px-6 lg:px-8`}>
         {shouldShowHowToSection ? (
         <section
           id="como-participar"
@@ -11268,21 +11120,38 @@ export function CatalogHomeClient({
             );
           }
           if (sectionId === "proximos-remates") {
-            if (proximosRemates.length === 0 && !hasUpcomingRemateCategories) {
+            if (
+              proximosRemates.length === 0 &&
+              !hasUpcomingRemateCategories &&
+              !hasScheduledRematesWithoutVehicles
+            ) {
               return null;
             }
-            return hasUpcomingRemateCategories ? (
-              <UpcomingAuctionsSection
-                key="public-proximos-auctions"
-                variant="remate"
-                groups={visibleUpcomingRemateGroups}
-                priceMap={config.vehiclePrices}
-                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                onOpenVehicle={openVehicleDetail}
-                cardDensity={cardDensity}
-                showPatents={showPatents}
-              />
-            ) : (
+            if (hasUpcomingRemateCategories) {
+              return (
+                <UpcomingAuctionsSection
+                  key="public-proximos-auctions"
+                  variant="remate"
+                  groups={visibleUpcomingRemateGroupsWithVehicles}
+                  renderCards={(_auction, items, sectionKey) => (
+                    <CatalogSectionCards
+                      sectionKey={sectionKey}
+                      items={items}
+                      priceMap={config.vehiclePrices}
+                      upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                      onOpenVehicle={openVehicleDetail}
+                      cardDensity={cardDensity}
+                      showPatents={showPatents}
+                      loading={isBootstrapping}
+                    />
+                  )}
+                />
+              );
+            }
+            if (hasScheduledRematesWithoutVehicles) {
+              return <RematesEmptyHomeState key="public-proximos-empty" />;
+            }
+            return (
               <Section
                 key="public-proximos-fallback"
                 id="proximos-remates"
@@ -11299,16 +11168,26 @@ export function CatalogHomeClient({
           }
           if (sectionId === "ventas-directas") {
             if (ventasDirectas.length === 0 && !hasUpcomingVentaDirectaCategories) return null;
-            return hasUpcomingVentaDirectaCategories ? (
+            const ventaDirectaGroupsWithVehicles = visibleUpcomingVentaDirectaGroups.filter(
+              (group) => group.items.length > 0,
+            );
+            return hasUpcomingVentaDirectaCategories && ventaDirectaGroupsWithVehicles.length > 0 ? (
               <UpcomingAuctionsSection
                 key="public-ventas-directas-auctions"
                 variant="venta_directa"
-                groups={visibleUpcomingVentaDirectaGroups}
-                priceMap={config.vehiclePrices}
-                upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
-                onOpenVehicle={openVehicleDetail}
-                cardDensity={cardDensity}
-                showPatents={showPatents}
+                groups={ventaDirectaGroupsWithVehicles}
+                renderCards={(_auction, items, sectionKey) => (
+                  <CatalogSectionCards
+                    sectionKey={sectionKey}
+                    items={items}
+                    priceMap={config.vehiclePrices}
+                    upcomingAuctionByVehicleKey={upcomingAuctionByVehicleKey}
+                    onOpenVehicle={openVehicleDetail}
+                    cardDensity={cardDensity}
+                    showPatents={showPatents}
+                    loading={isBootstrapping}
+                  />
+                )}
               />
             ) : (
               <Section
@@ -11435,7 +11314,18 @@ export function CatalogHomeClient({
           {leadMessage ? <p className="mt-2 text-xs font-semibold text-cyan-700">{leadMessage}</p> : null}
         </div>
       </section>
+      {!isStandaloneDetailPage ? <CatalogSiteFooter /> : null}
         </>
+      ) : null}
+
+      {isAdmin && adminView === "home" && initialAdminView === "editor" && !isStandaloneDetailPage ? (
+        <button
+          type="button"
+          onClick={() => setAdminView("editor")}
+          className="ui-focus fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-4 z-[60] inline-flex min-h-11 items-center rounded-full border border-cyan-300 bg-white px-4 text-xs font-semibold text-cyan-800 shadow-lg md:bottom-6"
+        >
+          ← Volver al editor
+        </button>
       ) : null}
 
       {isStandaloneDetailPage && !selectedVehicle && visibleItems.length === 0 ? (
@@ -13093,17 +12983,10 @@ export function CatalogHomeClient({
         onCancel={() => setShowLogin(false)}
         onSubmit={login}
       />
-      {showPublicHome && !selectedVehicle ? (
-        <a
-          href={WHATSAPP_CTA_URL}
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => trackEvent("whatsapp_click_floating")}
-          className="ui-focus fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#25D366] px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden"
-        >
-          <span>WhatsApp</span>
-        </a>
-      ) : null}
+      <FloatingWhatsappButton
+        hidden={!showPublicHome || Boolean(selectedVehicle) || showAdminEditor}
+        onClick={() => trackEvent("whatsapp_click_floating")}
+      />
 
       {systemNotice ? (
         <div

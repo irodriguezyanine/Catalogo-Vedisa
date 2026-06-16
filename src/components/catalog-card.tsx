@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CatalogItem } from "@/types/catalog";
 import { ShareIcon } from "@/components/share-icon";
+import {
+  formatVehicleCardImageAlt,
+  formatVehicleCardSpecsLine,
+  formatVehicleCardSubtitle,
+  formatVehicleCardTitle,
+} from "@/lib/vehicle-card-display";
 
 export type VehicleCommercialEventBadge = {
   kind: "remate" | "venta_directa";
@@ -35,7 +41,7 @@ function formatDate(date?: string): string {
 
 function shortText(value?: string, max = 90): string | undefined {
   if (!value) return undefined;
-  return value.length > max ? `${value.slice(0, max)}...` : value;
+  return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
 function isLikelyImageUrl(url?: string): boolean {
@@ -55,14 +61,7 @@ function getPatent(item: CatalogItem): string {
 }
 
 function getBrandModel(item: CatalogItem): string {
-  const raw = item.raw as Record<string, unknown>;
-  const brand = [raw.marca, raw.brand].find(
-    (entry) => typeof entry === "string" && entry.trim().length > 0,
-  ) as string | undefined;
-  const model = [raw.modelo, raw.model, item.title].find(
-    (entry) => typeof entry === "string" && entry.trim().length > 0,
-  ) as string | undefined;
-  return `${brand ?? ""} ${model ?? ""}`.trim() || item.title;
+  return formatVehicleCardTitle(item);
 }
 
 function getVehicleKey(item: CatalogItem): string {
@@ -92,11 +91,11 @@ function getConditionBadgeClasses(condition?: string | null): string {
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "");
-  if (!sample) return "bg-slate-900/75 text-white";
+  if (!sample) return "bg-slate-900/80 text-white";
   if (/100% operativo|operativo/.test(sample)) return "bg-emerald-600 text-white";
   if (/no arranca|desarme/.test(sample)) return "bg-rose-600 text-white";
   if (/problema|recuperado|robo/.test(sample)) return "bg-amber-500 text-white";
-  return "bg-indigo-600 text-white";
+  return "bg-cyan-700 text-white";
 }
 
 type SiniestradoStatus = "siniestrado" | "no_siniestrado";
@@ -178,9 +177,13 @@ export function CatalogCard({
   const coverCandidate = item.thumbnail ?? item.images[0];
   const cover = isLikelyImageUrl(coverCandidate) ? (coverCandidate as string) : "/placeholder-car.svg";
   const [coverSrc, setCoverSrc] = useState(cover);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const formattedDate = formatDate(item.auctionDate);
   const patent = getPatent(item);
   const brandModel = getBrandModel(item);
+  const displayTitle = formatVehicleCardTitle(item);
+  const specsLine = formatVehicleCardSpecsLine(item);
+  const imageAlt = formatVehicleCardImageAlt(item);
   const itemKey = getVehicleKey(item);
   const conditionLabel = getVehicleCondition(item);
   const siniestradoStatus =
@@ -213,32 +216,53 @@ export function CatalogCard({
     `${whatsappText}${shareUrl ? `. Link: ${shareUrl}` : ""}`,
   )}&type=phone_number&app_absent=0`;
   const isCompact = density === "compact";
+  const subtitle = formatVehicleCardSubtitle(item.subtitle);
 
   useEffect(() => {
     setCoverSrc(cover);
+    setImageLoaded(false);
   }, [cover]);
 
   return (
-    <article className="group glass-soft flex h-full w-full flex-col overflow-hidden rounded-2xl text-left shadow-md transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg">
-      <button type="button" onClick={onOpen} className="ui-focus flex flex-1 flex-col w-full text-left">
-        <div className={`relative w-full bg-slate-100 ${isCompact ? "h-44" : "h-56"}`}>
+    <article className="catalog-card group flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white text-left shadow-sm transition duration-300 hover:-translate-y-1 hover:border-cyan-300 hover:shadow-lg">
+      <button type="button" onClick={onOpen} className="ui-focus flex w-full flex-1 flex-col text-left">
+        <div className={`relative w-full overflow-hidden bg-slate-200 ${isCompact ? "h-44" : "h-56"}`}>
+          {!imageLoaded ? (
+            <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-slate-200 via-slate-100 to-slate-200" />
+          ) : null}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={coverSrc}
-            alt={item.title}
-            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+            alt={imageAlt}
+            className={`h-full w-full object-cover transition duration-500 group-hover:scale-105 ${
+              imageLoaded ? "opacity-100 blur-0" : "opacity-0 blur-sm"
+            }`}
             loading="lazy"
-            onError={() => setCoverSrc("/placeholder-car.svg")}
+            decoding="async"
+            onLoad={() => setImageLoaded(true)}
+            onError={() => {
+              setCoverSrc("/placeholder-car.svg");
+              setImageLoaded(true);
+            }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/5 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
+          {priceLabel ? (
+            <div className="absolute right-3 top-3 text-right">
+              {promoEnabled && originalPriceLabel ? (
+                <span className="block text-xs font-semibold text-white/85 line-through">{originalPriceLabel}</span>
+              ) : null}
+              <span
+                className={`mt-0.5 inline-block rounded-lg px-2.5 py-1 text-base font-bold shadow-md ${
+                  promoEnabled ? "bg-rose-600 text-white" : "bg-cyan-600 text-white"
+                }`}
+              >
+                {priceLabel}
+              </span>
+            </div>
+          ) : null}
           <div className="absolute left-3 top-3 flex flex-wrap gap-1">
             {item.view3dUrl ? (
-              <span className="rounded-full bg-cyan-500 px-2 py-1 text-[10px] font-semibold text-white">3D</span>
-            ) : null}
-            {priceLabel ? (
-              <span className={`rounded-full px-2 py-1 text-[10px] font-semibold text-white ${promoEnabled ? "bg-rose-500" : "bg-amber-500"}`}>
-                {promoEnabled ? "Oferta" : "Precio"}
-              </span>
+              <span className="rounded-full bg-cyan-600 px-2 py-1 text-[10px] font-semibold text-white">360°</span>
             ) : null}
             {conditionLabel ? (
               <span
@@ -250,72 +274,58 @@ export function CatalogCard({
               </span>
             ) : null}
           </div>
-          {item.status ? (
-            <span className="absolute right-3 top-3 max-w-[12rem] truncate rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-white">
-              {shortText(item.status, 30)}
-            </span>
-          ) : null}
         </div>
 
-        <div className={`flex flex-1 flex-col space-y-3 p-4 ${isCompact ? "space-y-2" : ""}`}>
-          <div className={isCompact ? "min-h-[3.2rem]" : "min-h-[5.2rem]"}>
-            <h3 className="line-clamp-2 break-words text-base font-semibold text-slate-900">
-              {item.title}
-            </h3>
-            {!isCompact && item.subtitle ? (
-              <p className="mt-1 break-words text-sm text-slate-600 [overflow-wrap:anywhere]">{shortText(item.subtitle)}</p>
+        <div className={`flex flex-1 flex-col space-y-2 p-4 ${isCompact ? "space-y-1.5" : ""}`}>
+          <div className={isCompact ? "min-h-[3rem]" : "min-h-[4.5rem]"}>
+            <h3 className="line-clamp-2 text-lg font-bold leading-snug text-slate-900">{displayTitle}</h3>
+            {specsLine ? (
+              <p className="mt-1 text-sm font-medium text-slate-700">{specsLine}</p>
+            ) : null}
+            {!isCompact && subtitle ? (
+              <p className="mt-1 line-clamp-2 text-sm text-slate-700 [overflow-wrap:anywhere]">{subtitle}</p>
             ) : null}
           </div>
 
-          <div className="flex min-h-[2.6rem] min-w-0 flex-wrap content-start gap-2 text-xs text-slate-700">
+          <div className="flex min-h-[2rem] min-w-0 flex-wrap content-start gap-2 text-xs text-slate-700">
             {formattedDate && !commercialEventBadge ? (
-              <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1">
+              <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1 font-medium">
                 Remate {formattedDate}
               </span>
             ) : null}
             {item.location ? (
-              <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1">
+              <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1 font-medium">
                 {shortText(item.location, 35)}
               </span>
             ) : null}
             {commercialEventBadge?.kind === "venta_directa" ? (
               <>
-                <span className="max-w-full truncate rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">
+                <span className="max-w-full truncate rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-900">
                   {commercialEventBadge.label}
                 </span>
                 {siniestradoStatus === "siniestrado" ? (
-                  <span className="max-w-full truncate rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">
-                    SINIESTRADO
+                  <span className="max-w-full truncate rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-950">
+                    Siniestrado
                   </span>
                 ) : null}
               </>
             ) : commercialEventBadge ? (
-              <span className="max-w-full truncate rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700">
+              <span className="max-w-full truncate rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-900">
                 {shortText(`Remate: ${commercialEventBadge.label}`, 38)}
               </span>
             ) : null}
           </div>
 
           <div className="mt-auto flex items-center justify-between border-t border-slate-200 pt-3">
-            <div className="flex flex-col">
-              {promoEnabled && originalPriceLabel && priceLabel ? (
-                <span className="text-xs text-slate-400 line-through">{originalPriceLabel}</span>
-              ) : null}
-              {priceLabel ? (
-                <span className={`text-sm font-semibold ${promoEnabled ? "text-rose-600" : "text-cyan-700"}`}>
-                  {priceLabel}
-                </span>
-              ) : null}
-              <span className="text-xs text-slate-500">
-                {item.images.length} foto{item.images.length === 1 ? "" : "s"}
-              </span>
-            </div>
+            <span className="text-xs font-medium text-slate-600">
+              {item.images.length} foto{item.images.length === 1 ? "" : "s"}
+            </span>
             {item.view3dUrl ? (
-              <span className="rounded-md bg-cyan-100 px-3 py-1.5 text-xs font-medium text-cyan-800">
-                Ver detalle 3D
+              <span className="rounded-md bg-cyan-100 px-3 py-1.5 text-xs font-semibold text-cyan-900">
+                Ver detalle 360°
               </span>
             ) : (
-              <span className="text-xs text-slate-400">Ver detalle</span>
+              <span className="text-xs font-semibold text-cyan-700">Ver detalle</span>
             )}
           </div>
         </div>
@@ -329,7 +339,7 @@ export function CatalogCard({
               try {
                 if (navigator.share && shareUrl) {
                   await navigator.share({
-                    title: item.title,
+                    title: displayTitle,
                     text: showPatents ? `Revisa este vehículo: ${patent}` : `Revisa este vehículo: ${brandModel}`,
                     url: shareUrl,
                   });
@@ -344,8 +354,8 @@ export function CatalogCard({
                 // no-op if user cancels share
               }
             }}
-            className="ui-focus inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
-            aria-label={`Compartir ${item.title}`}
+            className="ui-focus inline-flex min-h-11 items-center justify-center rounded-full border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
+            aria-label={`Compartir ${displayTitle}`}
             title={shareCopied ? "Copiado" : "Compartir"}
           >
             <span aria-hidden="true" className="inline-flex items-center justify-center">
@@ -361,8 +371,8 @@ export function CatalogCard({
             target="_blank"
             rel="noreferrer"
             onClick={onWhatsappClick}
-            className="ui-focus inline-flex items-center justify-center rounded-full bg-[#25D366] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-95"
-            aria-label={`Contactar por WhatsApp por ${item.title}`}
+            className="ui-focus inline-flex min-h-11 items-center justify-center rounded-full bg-[#25D366] px-3 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-95"
+            aria-label={`Contactar por WhatsApp por ${displayTitle}`}
             title="WhatsApp"
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">

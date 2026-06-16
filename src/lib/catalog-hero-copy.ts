@@ -1,8 +1,8 @@
 export const CATALOG_HERO_COPY = {
   kicker: "Catálogo oficial de VEDISA REMATES",
-  title: "Encuentra excelentes oportunidades en nuestros remates o ventas directas.",
+  title: "Encuentra tu próximo vehículo en remate o venta directa",
   description:
-    "Nos especializamos en vender vehículos siniestrados, rentacar, o clientes particulares. Nuestra prioridad es ser 100% transparentes con la información de cada unidad para que puedas ofertar con confianza.",
+    "+500 vehículos al año · Exhibición en Pudahuel · Remates 100% online con fotos, historial y recorrido 360° cuando está disponible.",
 } as const;
 
 function normalizeHeroCopyKey(value?: string | null): string {
