@@ -152,12 +152,6 @@ body {
   background: rgb(255 255 255);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .premium-panel-hero--video video {
-    display: none;
-  }
-}
-
 .premium-panel::before {
   content: "";
   position: absolute;
