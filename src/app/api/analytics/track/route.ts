@@ -1,6 +1,13 @@
 import { trackAnalyticsEvent } from "@/lib/analytics";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req);
+  const limited = checkRateLimit(`analytics:${ip}`, 120, 60_000);
+  if (!limited.ok) {
+    return Response.json({ ok: false, error: "rate_limited" }, { status: 429 });
+  }
+
   const body = (await req.json().catch(() => ({}))) as {
     event?: string;
     timestamp?: string;

@@ -1,4 +1,5 @@
 import { createVehicleOffer } from "@/lib/offers";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { OfferSubmissionInput } from "@/types/offers";
 
 type OfferRequestBody = {
@@ -10,6 +11,7 @@ type OfferRequestBody = {
   customerName?: string;
   customerEmail?: string;
   customerPhone?: string;
+  website?: string;
 };
 
 function isValidEmail(value: string): boolean {
@@ -17,7 +19,19 @@ function isValidEmail(value: string): boolean {
 }
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req);
+  const limited = checkRateLimit(`offer:${ip}`, 12, 60 * 60_000);
+  if (!limited.ok) {
+    return Response.json(
+      { ok: false, error: `Demasiadas ofertas desde esta red. Espera ${limited.retryAfterSec}s.` },
+      { status: 429 },
+    );
+  }
+
   const body = (await req.json().catch(() => ({}))) as OfferRequestBody;
+  if (body.website?.trim()) {
+    return Response.json({ ok: true });
+  }
   const payload: OfferSubmissionInput = {
     itemKey: (body.itemKey ?? "").trim(),
     vehicleTitle: (body.vehicleTitle ?? "").trim(),

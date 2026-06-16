@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
-import { revalidatePath } from "next/cache";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
+import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 
 export async function POST() {
   const cookieStore = await cookies();
@@ -11,8 +11,7 @@ export async function POST() {
     return Response.json({ error: "No autorizado" }, { status: 401 });
   }
 
-  revalidatePath("/");
-  revalidatePath("/api/catalogo");
+  revalidateCatalogSurfaces();
 
   return Response.json({ ok: true, revalidatedAt: new Date().toISOString() });
 }

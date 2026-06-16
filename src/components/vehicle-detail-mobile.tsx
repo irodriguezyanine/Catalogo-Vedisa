@@ -11,6 +11,7 @@ import {
   lotDocumentOpenUrl,
   type LotDocumentLink,
 } from "@/lib/lot-documents";
+import { sanitizeCatalogHtml } from "@/lib/sanitize-html";
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
 
@@ -285,7 +286,7 @@ export function VehicleDetailMobile({
           <h2 className="text-sm font-bold text-slate-900">Descripción ampliada</h2>
           <div
             className="prose prose-sm mt-3 max-w-none text-slate-700 [&_a]:text-cyan-700 [&_a]:underline [&_b]:font-bold [&_strong]:font-bold [&_em]:italic [&_li]:ml-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5 [&_p]:mb-2"
-            dangerouslySetInnerHTML={{ __html: descriptionHtml }}
+            dangerouslySetInnerHTML={{ __html: sanitizeCatalogHtml(descriptionHtml) }}
           />
         </section>
 

@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import { CatalogVehiclesListClient } from "@/components/catalog-vehicles-list-client";
-import { getCatalogFeed } from "@/lib/catalog";
+import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getMergedEditorConfig } from "@/lib/editor-config";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+export const revalidate = 120;
 
 export const metadata: Metadata = {
   title: "Vehículos disponibles | Catálogo VEDISA REMATES",
@@ -13,6 +12,6 @@ export const metadata: Metadata = {
 };
 
 export default async function VehiclesPage() {
-  const [feed, editorConfigResult] = await Promise.all([getCatalogFeed(), getMergedEditorConfig()]);
+  const [feed, editorConfigResult] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
   return <CatalogVehiclesListClient feed={feed} initialConfig={editorConfigResult.config} />;
 }

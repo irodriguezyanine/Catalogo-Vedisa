@@ -38,7 +38,11 @@ export function verifyAdminSessionToken(token?: string | null): { valid: boolean
   if (!payloadBase64 || !signature) return { valid: false };
 
   const expectedSignature = signPayload(payloadBase64);
-  if (signature !== expectedSignature) return { valid: false };
+  const sigBuf = Buffer.from(signature);
+  const expBuf = Buffer.from(expectedSignature);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return { valid: false };
+  }
 
   try {
     const payload = JSON.parse(fromBase64Url(payloadBase64)) as { email?: string; exp?: number };

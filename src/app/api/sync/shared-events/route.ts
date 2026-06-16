@@ -1,4 +1,4 @@
-import { revalidatePath } from "next/cache";
+import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 import { getEditorConfig } from "@/lib/editor-config";
@@ -25,9 +25,7 @@ export async function POST(req: Request) {
 
   try {
     const result = await reconcileSharedPlatforms("webhook@shared-sync");
-    revalidatePath("/");
-    revalidatePath("/vehiculos");
-    revalidatePath("/api/catalogo");
+    revalidateCatalogSurfaces();
     return Response.json({
       ok: true,
       persisted: result.persisted,

@@ -1,4 +1,4 @@
-import { revalidatePath } from "next/cache";
+import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { appendGlo3dOnlyCatalogItems, getCatalogFeed, isGlo3dCircuitOpen } from "@/lib/catalog";
@@ -22,8 +22,7 @@ export async function POST() {
       ? feed.items
       : await appendGlo3dOnlyCatalogItems(feed.items);
     const reconcile = await reconcileSharedPlatforms(session.email);
-    revalidatePath("/");
-    revalidatePath("/api/catalogo");
+    revalidateCatalogSurfaces();
 
     return Response.json({
       ok: true,

@@ -1,4 +1,4 @@
-import { revalidatePath } from "next/cache";
+import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { Glo3dRateLimitError } from "@/lib/catalog";
@@ -33,8 +33,7 @@ export async function POST(req: Request) {
       forceRefresh: body.forceRefresh,
       skipGlo3dFetch: body.skipGlo3dFetch,
     });
-    revalidatePath("/");
-    revalidatePath("/api/catalogo");
+    revalidateCatalogSurfaces();
     return Response.json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo importar la patente.";

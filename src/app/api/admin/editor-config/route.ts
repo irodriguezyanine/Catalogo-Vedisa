@@ -3,13 +3,24 @@ import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
 import { getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
+import { toPublicEditorSnapshot } from "@/lib/public-editor-config";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(ADMIN_SESSION_COOKIE_NAME)?.value;
+  const session = verifyAdminSessionToken(token);
   const result = await getMergedEditorConfig();
+  if (!session.valid) {
+    return Response.json({
+      ok: true,
+      config: toPublicEditorSnapshot(result.config),
+      persisted: result.persisted,
+    });
+  }
   return Response.json({ ok: true, config: result.config, persisted: result.persisted });
 }
 

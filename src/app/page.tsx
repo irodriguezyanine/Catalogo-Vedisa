@@ -1,11 +1,10 @@
 import { CatalogHomeClient } from "@/components/catalog-home-client";
-import { getCatalogFeed } from "@/lib/catalog";
+import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getMergedEditorConfig } from "@/lib/editor-config";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+export const revalidate = 120;
 
 export default async function Home() {
-  const [feed, editorConfigResult] = await Promise.all([getCatalogFeed(), getMergedEditorConfig()]);
+  const [feed, editorConfigResult] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
   return <CatalogHomeClient feed={feed} initialConfig={editorConfigResult.config} />;
 }

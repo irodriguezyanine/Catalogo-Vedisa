@@ -630,7 +630,7 @@ function vehicleNeedsQuickSync(
   editorConfig: EditorConfig,
 ): boolean {
   if (vehicleKey.startsWith("manual-")) return false;
-  return !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) && vehicleTitleNeedsSync(item, vehicleKey, editorConfig);
+  return !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) || vehicleTitleNeedsSync(item, vehicleKey, editorConfig);
 }
 
 function vehicleNeedsAssignEnrich(
@@ -3618,7 +3618,7 @@ export function CatalogHomeClient({
         setIsAdmin(loggedIn);
         setAdminView("home");
 
-        const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
+        const configRes = await fetch("/api/public/editor-config", { cache: "no-store" });
         if (configRes.ok) {
           const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
           // Home debe reflejar siempre la configuración sincronizada del servidor.
@@ -5311,13 +5311,16 @@ export function CatalogHomeClient({
     }
   }, [selectedVehicle, selectedVehicleShareUrl, showPatents, showSystemNotice]);
 
+  const catalogSiteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ?? "https://catalogo.vedisaremates.cl";
+
   const organizationSchema = useMemo(
     () => ({
       "@context": "https://schema.org",
       "@type": "Organization",
       name: "VEDISA REMATES",
-      url: "https://vedisaremates.vercel.app",
-      logo: "https://vedisaremates.vercel.app/vedisa-logo.png",
+      url: catalogSiteUrl,
+      logo: `${catalogSiteUrl}/favicon.png`,
       contactPoint: {
         "@type": "ContactPoint",
         telephone: "+56-9-8932-3397",
@@ -5327,7 +5330,7 @@ export function CatalogHomeClient({
       },
       sameAs: ["https://vehiculoschocados.cl/"],
     }),
-    [],
+    [catalogSiteUrl],
   );
 
   const websiteSchema = useMemo(
@@ -5335,14 +5338,14 @@ export function CatalogHomeClient({
       "@context": "https://schema.org",
       "@type": "WebSite",
       name: "Catálogo VEDISA REMATES",
-      url: "https://vedisaremates.vercel.app",
+      url: catalogSiteUrl,
       potentialAction: {
         "@type": "SearchAction",
-        target: "https://vedisaremates.vercel.app/?q={search_term_string}",
+        target: `${catalogSiteUrl}/vehiculos?q={search_term_string}`,
         "query-input": "required name=search_term_string",
       },
     }),
-    [],
+    [catalogSiteUrl],
   );
 
   const filteredEditorItems = useMemo(() => {
@@ -7469,10 +7472,12 @@ export function CatalogHomeClient({
               : " Autored respondió sin marca/modelo útiles para esta patente.";
         const glo3dNote =
           glo3dOnCooldown || payload.glo3dRateLimited || payload.skippedGlo3dFetch
-            ? " Glo3D en pausa: se aplicó Autored y datos locales."
+            ? " Glo3D en pausa: solo Autored (sin fotos ni 3D). Espera y usa Sync Glo3D."
             : payload.hasGlo3dViewer
               ? " Visor 3D actualizado."
-              : "";
+              : !payload.item.thumbnail && !(payload.item.images?.length ?? 0)
+                ? " Sin miniatura Glo3D: revisa la patente en Glo3D o pega fotos en Editar ficha."
+                : "";
         showSystemNotice(
           payload.autoredSynced ? "success" : "info",
           payload.autoredSynced ? "Unidad sincronizada" : "Sincronización parcial",
@@ -8536,6 +8541,7 @@ export function CatalogHomeClient({
 
   return (
     <main
+      id="catalogo-main"
       className={`${isStandaloneDetailPage ? "catalog-bg" : "premium-bg"} min-h-screen overflow-x-hidden text-slate-900`}
     >
       {!isStandaloneDetailPage ? (

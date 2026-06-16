@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const PDF_IMAGE_FETCH_TIMEOUT_MS = 8_000;
 
@@ -85,6 +86,12 @@ function resolveImageContentType(url: string, headerValue: string | null, buffer
 }
 
 export async function GET(request: NextRequest) {
+  const ip = getClientIp(request);
+  const limited = checkRateLimit(`pdf-image:${ip}`, 40, 60_000);
+  if (!limited.ok) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
+
   const rawUrl = request.nextUrl.searchParams.get("url")?.trim();
   if (!rawUrl) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
