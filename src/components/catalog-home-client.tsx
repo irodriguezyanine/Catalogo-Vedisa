@@ -3081,6 +3081,10 @@ type Props = {
   initialConfig: EditorConfig;
   standaloneVehicleKey?: string;
   standaloneBackHref?: string;
+  /** Abre el editor directamente (ruta /admin). */
+  initialAdminView?: "editor" | "home";
+  /** Muestra login si no hay sesión admin (p. ej. en /admin). */
+  openLoginIfGuest?: boolean;
 };
 
 export function CatalogHomeClient({
@@ -3088,6 +3092,8 @@ export function CatalogHomeClient({
   initialConfig,
   standaloneVehicleKey,
   standaloneBackHref: standaloneBackHrefProp = "/vehiculos",
+  initialAdminView = "home",
+  openLoginIfGuest = false,
 }: Props) {
   const router = useRouter();
   const isStandaloneDetailPage = Boolean(standaloneVehicleKey?.trim());
@@ -3616,7 +3622,10 @@ export function CatalogHomeClient({
         const session = (await sessionRes.json()) as { loggedIn?: boolean };
         const loggedIn = Boolean(session.loggedIn);
         setIsAdmin(loggedIn);
-        setAdminView("home");
+        setAdminView(loggedIn && initialAdminView === "editor" ? "editor" : "home");
+        if (!loggedIn && openLoginIfGuest) {
+          setShowLogin(true);
+        }
 
         const configRes = await fetch("/api/public/editor-config", { cache: "no-store" });
         if (configRes.ok) {
@@ -3635,7 +3644,7 @@ export function CatalogHomeClient({
         setIsBootstrapping(false);
       }
     })();
-  }, []);
+  }, [initialAdminView, openLoginIfGuest]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
