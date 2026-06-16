@@ -1,6 +1,10 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
-import { getCloudinaryServerCreds, uploadFileToCloudinary } from "@/lib/cloudinary-upload-server";
+import {
+  getCloudinaryServerCreds,
+  isAcceptedDocumentFile,
+  uploadFileToCloudinary,
+} from "@/lib/cloudinary-upload-server";
 
 function isFile(value: FormDataEntryValue): value is File {
   return typeof value !== "string";
@@ -20,7 +24,7 @@ export async function POST(req: Request) {
       {
         ok: false,
         error:
-          "Falta Cloudinary Cloud Name. Configura CLOUDINARY_CLOUD_NAME o VITE_CLOUDINARY_CLOUD_NAME.",
+          "Cloudinary no está configurado. Define CLOUDINARY_CLOUD_NAME y preset o API key/secret.",
       },
       { status: 400 },
     );
@@ -32,25 +36,36 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "No se enviaron archivos." }, { status: 400 });
   }
 
-  const subfolder = formData.get("subfolder")?.toString().trim() || "fotos";
-  const uploadedUrls: string[] = [];
+  const subfolder = formData.get("subfolder")?.toString().trim() || "vehiculos";
+  const uploaded: Array<{ url: string; label: string; mimeType: string }> = [];
 
   for (const file of fileEntries) {
-    if (!file.type.startsWith("image/")) {
+    if (!isAcceptedDocumentFile(file)) {
       return Response.json(
-        { ok: false, error: `Archivo no válido: ${file.name || "sin nombre"}. Solo imágenes.` },
+        {
+          ok: false,
+          error: `Tipo de archivo no permitido: ${file.name || "sin nombre"}. Usa PDF, imágenes, Excel, Word u otros documentos.`,
+        },
         { status: 400 },
       );
     }
+
     const result = await uploadFileToCloudinary(file, creds, subfolder);
-    if (!result?.url) {
+    if (!result) {
       return Response.json(
-        { ok: false, error: "No se pudo subir imagen a Cloudinary." },
+        {
+          ok: false,
+          error: `No se pudo subir ${file.name || "el archivo"} a Cloudinary (máx. 15 MB).`,
+        },
         { status: 400 },
       );
     }
-    uploadedUrls.push(result.url);
+    uploaded.push({
+      url: result.url,
+      label: result.label,
+      mimeType: result.mimeType,
+    });
   }
 
-  return Response.json({ ok: true, urls: uploadedUrls });
+  return Response.json({ ok: true, documents: uploaded });
 }

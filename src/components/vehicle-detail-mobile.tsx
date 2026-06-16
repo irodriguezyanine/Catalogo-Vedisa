@@ -4,11 +4,15 @@ import Link from "next/link";
 import { useCallback, useRef } from "react";
 import { CatalogVehicleHighlightStrip } from "@/components/catalog-vehicle-highlight-strip";
 import { ShareIcon } from "@/components/share-icon";
-import { cloudinaryRawPdfUrlForInlineDisplay } from "@/lib/cloudinary-delivery";
+import {
+  inferLotDocumentKind,
+  lotDocumentKindBadgeClass,
+  lotDocumentKindLabel,
+  lotDocumentOpenUrl,
+  type LotDocumentLink,
+} from "@/lib/lot-documents";
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
-
-type LotDocumentLink = { url: string; label: string };
 
 type MobileSectionId = "visor" | "precio" | "descripcion" | "info" | "tecnica" | "fotos" | "docs";
 
@@ -347,21 +351,24 @@ export function VehicleDetailMobile({
           >
             <h2 className="mb-3 text-sm font-bold text-slate-900">Documentación</h2>
             <ul className="space-y-2">
-              {documents.map((doc, idx) => (
+              {documents.map((doc, idx) => {
+                const kind = inferLotDocumentKind(doc.url, doc.mimeType);
+                return (
                 <li key={`mobile-doc-${doc.url}-${idx}`}>
                   <a
-                    href={cloudinaryRawPdfUrlForInlineDisplay(doc.url)}
+                    href={lotDocumentOpenUrl(doc.url, kind)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-cyan-700"
                   >
-                    <span className="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
-                      PDF
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${lotDocumentKindBadgeClass(kind)}`}>
+                      {lotDocumentKindLabel(kind)}
                     </span>
                     <span className="break-all">{doc.label}</span>
                   </a>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </section>
         ) : null}

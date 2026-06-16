@@ -49,7 +49,16 @@ import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
 import { isCatalogPublishedVehicle } from "@/lib/catalog-publication-rules";
 import { clearPublicationBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
 import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
-import { cloudinaryRawPdfUrlForInlineDisplay, cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
+import { cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
+import {
+  inferLotDocumentKind,
+  lotDocumentKindBadgeClass,
+  lotDocumentKindLabel,
+  lotDocumentOpenUrl,
+  parseLotDocumentsJson,
+  serializeLotDocumentsJson,
+  type LotDocumentLink,
+} from "@/lib/lot-documents";
 import {
   DEFAULT_EDITOR_CONFIG,
   type CommercialEventOrigin,
@@ -127,7 +136,7 @@ type QuickFilterId =
   | "bus"
   | "semiremolque";
 type CardDensity = "compact" | "detailed";
-type DetailEditorTabId = "descripcion" | "general" | "tecnica" | "publicacion" | "fotos";
+type DetailEditorTabId = "descripcion" | "documentos" | "general" | "tecnica" | "publicacion" | "fotos";
 type ClientLeadForm = {
   name: string;
   phone: string;
@@ -462,6 +471,7 @@ const DETAIL_EDITOR_TABS: Array<[DetailEditorTabId, string]> = [
   ["publicacion", "Publicación"],
   ["fotos", "Fotos"],
   ["descripcion", "Descripción"],
+  ["documentos", "Documentos"],
 ];
 
 function resolveEstadoRetiroForVehicleKey(
@@ -1791,28 +1801,6 @@ function sanitizeRichHtml(value: string): string {
   html = html.replace(/\son\w+\s*=\s*[^\s>]+/gi, "");
   html = html.replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, "");
   return html;
-}
-
-type LotDocumentLink = { url: string; label: string };
-
-function parseLotDocumentsJson(json: string | undefined | null): LotDocumentLink[] {
-  if (!json?.trim()) return [];
-  try {
-    const p = JSON.parse(json) as unknown;
-    if (!Array.isArray(p)) return [];
-    const out: LotDocumentLink[] = [];
-    for (const entry of p) {
-      if (!entry || typeof entry !== "object") continue;
-      const o = entry as Record<string, unknown>;
-      const url = typeof o.url === "string" ? o.url.trim() : "";
-      if (!url.startsWith("http")) continue;
-      const label = typeof o.label === "string" && o.label.trim() ? o.label.trim() : "Documento";
-      out.push({ url, label });
-    }
-    return out;
-  } catch {
-    return [];
-  }
 }
 
 function stripRainworxAttributionHtml(html: string): string {
@@ -3168,8 +3156,11 @@ export function CatalogHomeClient({
   const [manualUploadedImages, setManualUploadedImages] = useState<string[]>([]);
   const [manualUploading, setManualUploading] = useState(false);
   const [manualDropActive, setManualDropActive] = useState(false);
+  const [editorDocumentUploading, setEditorDocumentUploading] = useState(false);
+  const [editorDocumentDropActive, setEditorDocumentDropActive] = useState(false);
   const [draggedImageIndex, setDraggedImageIndex] = useState<number | null>(null);
   const manualFileInputRef = useRef<HTMLInputElement | null>(null);
+  const editorDocumentFileInputRef = useRef<HTMLInputElement | null>(null);
   const [loginEmail, setLoginEmail] = useState("jpmontero@vedisaremates.cl");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -6882,6 +6873,78 @@ export function CatalogHomeClient({
     const dropped = Array.from(event.dataTransfer.files ?? []);
     if (dropped.length === 0) return;
     await uploadManualFiles(dropped);
+  };
+
+  const editingLotDocuments = useMemo(
+    () => parseLotDocumentsJson(editingDetails?.lotDocumentsJson),
+    [editingDetails?.lotDocumentsJson],
+  );
+
+  const setEditingLotDocuments = useCallback((nextDocs: LotDocumentLink[]) => {
+    setEditingDetails((prev) => ({
+      ...(prev ?? {}),
+      lotDocumentsJson: nextDocs.length > 0 ? serializeLotDocumentsJson(nextDocs) : "",
+    }));
+  }, []);
+
+  const uploadEditorDocuments = async (files: File[]) => {
+    if (!editingVehicleKey) return;
+    const validFiles = files.filter((file) => file.size > 0);
+    if (validFiles.length === 0) {
+      showSystemNotice("error", "Sin archivos", "Selecciona al menos un archivo para subir.");
+      return;
+    }
+    setEditorDocumentUploading(true);
+    try {
+      const payload = new FormData();
+      payload.set("subfolder", editingVehicleKey);
+      for (const file of validFiles) {
+        payload.append("files", file);
+      }
+      const response = await fetch("/api/admin/cloudinary-document-upload", {
+        method: "POST",
+        body: payload,
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        documents?: LotDocumentLink[];
+        error?: string;
+      };
+      if (!response.ok || !body.ok) {
+        showSystemNotice(
+          "error",
+          "Error subiendo documentos",
+          body.error ?? "No fue posible subir los archivos a Cloudinary.",
+        );
+        return;
+      }
+      const uploaded = body.documents ?? [];
+      if (uploaded.length === 0) return;
+      setEditingDetails((prev) => {
+        const current = parseLotDocumentsJson(prev?.lotDocumentsJson);
+        const merged = [...current, ...uploaded];
+        return {
+          ...(prev ?? {}),
+          lotDocumentsJson: serializeLotDocumentsJson(merged),
+        };
+      });
+      showSystemNotice(
+        "success",
+        "Documentos cargados",
+        `${uploaded.length} archivo(s) subido(s) a Cloudinary.`,
+      );
+    } finally {
+      setEditorDocumentUploading(false);
+      if (editorDocumentFileInputRef.current) editorDocumentFileInputRef.current.value = "";
+    }
+  };
+
+  const handleEditorDocumentDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setEditorDocumentDropActive(false);
+    const dropped = Array.from(event.dataTransfer.files ?? []);
+    if (dropped.length === 0) return;
+    await uploadEditorDocuments(dropped);
   };
 
   const reorderManualImage = (fromIndex: number, toIndex: number) => {
@@ -11600,21 +11663,24 @@ export function CatalogHomeClient({
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documentación</p>
                   {selectedVehicleLotDocuments.length > 0 ? (
                     <ul className="mt-3 list-none space-y-2.5 p-0">
-                      {selectedVehicleLotDocuments.map((doc, idx) => (
+                      {selectedVehicleLotDocuments.map((doc, idx) => {
+                        const kind = inferLotDocumentKind(doc.url, doc.mimeType);
+                        return (
                         <li key={`lot-doc-footer-${doc.url}-${idx}`}>
                           <a
-                            href={cloudinaryRawPdfUrlForInlineDisplay(doc.url)}
+                            href={lotDocumentOpenUrl(doc.url, kind)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm font-semibold text-cyan-700 transition hover:border-cyan-200 hover:bg-cyan-50/60 hover:text-cyan-800"
                           >
-                            <span className="mt-0.5 inline-block shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
-                              PDF
+                            <span className={`mt-0.5 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${lotDocumentKindBadgeClass(kind)}`}>
+                              {lotDocumentKindLabel(kind)}
                             </span>
                             <span className="break-all">{doc.label}</span>
                           </a>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-sm text-slate-500">
@@ -13257,24 +13323,6 @@ export function CatalogHomeClient({
                         setEditingDetails((prev) => ({ ...(prev ?? {}), subtitle: event.target.value }))
                       }
                     />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const autoTitle = buildAutoVehicleTitle(editingDetails);
-                        if (!autoTitle) {
-                          showSystemNotice(
-                            "info",
-                            "Sin datos para título",
-                            "Completa marca, modelo o año en la pestaña Información.",
-                          );
-                          return;
-                        }
-                        setEditingDetails((prev) => ({ ...(prev ?? {}), title: autoTitle }));
-                      }}
-                      className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700"
-                    >
-                      Auto-título
-                    </button>
                     {!editingVehicleKey.startsWith("manual-") ? (
                       <button
                         type="button"
@@ -13339,6 +13387,111 @@ export function CatalogHomeClient({
                   onInput={(event) => syncManualObservations(event.currentTarget.innerHTML)}
                   aria-label="Editor de descripción ampliada con formato HTML"
                 />
+              </div>
+            ) : null}
+
+            {detailEditorTab === "documentos" ? (
+              <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Documentación del vehículo
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Sube PDF, fotos, Excel, Word y otros archivos. Se almacenan en Cloudinary y se muestran en la ficha pública.
+                  </p>
+                </div>
+
+                <div
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setEditorDocumentDropActive(true);
+                  }}
+                  onDragLeave={() => setEditorDocumentDropActive(false)}
+                  onDrop={(event) => void handleEditorDocumentDrop(event)}
+                  className={`rounded-xl border-2 border-dashed px-4 py-8 text-center transition ${
+                    editorDocumentDropActive
+                      ? "border-cyan-400 bg-cyan-50/70"
+                      : "border-slate-300 bg-slate-50/60"
+                  }`}
+                >
+                  <p className="text-sm font-semibold text-slate-800">
+                    Arrastra archivos aquí
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    PDF, imágenes, Excel, Word, CSV y más · máx. 15 MB por archivo
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => editorDocumentFileInputRef.current?.click()}
+                    disabled={editorDocumentUploading}
+                    className="ui-focus mt-4 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {editorDocumentUploading ? "Subiendo a Cloudinary…" : "Seleccionar archivos"}
+                  </button>
+                  <input
+                    ref={editorDocumentFileInputRef}
+                    type="file"
+                    multiple
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.csv,.txt,image/*,application/pdf"
+                    className="hidden"
+                    onChange={(event) => {
+                      const picked = Array.from(event.target.files ?? []);
+                      if (picked.length > 0) void uploadEditorDocuments(picked);
+                    }}
+                  />
+                </div>
+
+                {editingLotDocuments.length > 0 ? (
+                  <ul className="space-y-2">
+                    {editingLotDocuments.map((doc, index) => {
+                      const kind = inferLotDocumentKind(doc.url, doc.mimeType);
+                      return (
+                        <li
+                          key={`editor-doc-${doc.url}-${index}`}
+                          className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-2.5"
+                        >
+                          <span
+                            className={`inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${lotDocumentKindBadgeClass(kind)}`}
+                          >
+                            {lotDocumentKindLabel(kind)}
+                          </span>
+                          <input
+                            className="min-w-[10rem] flex-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                            value={doc.label}
+                            onChange={(event) => {
+                              const next = [...editingLotDocuments];
+                              next[index] = { ...doc, label: event.target.value };
+                              setEditingLotDocuments(next);
+                            }}
+                            aria-label={`Nombre del documento ${index + 1}`}
+                          />
+                          <a
+                            href={lotDocumentOpenUrl(doc.url, kind)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2.5 py-1.5 text-xs font-semibold text-cyan-800"
+                          >
+                            Ver
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = editingLotDocuments.filter((_, i) => i !== index);
+                              setEditingLotDocuments(next);
+                            }}
+                            className="ui-focus rounded border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700"
+                          >
+                            Quitar
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
+                    Aún no hay documentos para este vehículo.
+                  </p>
+                )}
               </div>
             ) : null}
 
