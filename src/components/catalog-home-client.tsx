@@ -86,6 +86,16 @@ import {
   resolvePruebaMotorSiNo,
 } from "@/lib/prueba-operativa-sino";
 import {
+  DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  DEFAULT_VENTA_DIRECTA_EVENT_NAME,
+} from "@/lib/catalog-shared-constants";
+import {
+  applyExclusiveCommercialAssignment,
+  enforceCommercialExclusivityInConfig,
+  getAuctionCommercialEventType,
+  resolveVehicleCommercialLane,
+} from "@/lib/commercial-category-exclusivity";
+import {
   DEFAULT_EDITOR_CONFIG,
   type CommercialEventOrigin,
   type EditorConfig,
@@ -634,7 +644,7 @@ function normalizeEditorConfigClient(
     !incomingPrimaryHref || incomingPrimaryHref === "#catalogo"
       ? defaults.homeLayout.heroPrimaryCtaHref
       : migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref;
-  return {
+  const baseConfig = {
     sectionVehicleIds: {
       "proximos-remates":
         migrated?.sectionVehicleIds?.["proximos-remates"] ??
@@ -711,6 +721,7 @@ function normalizeEditorConfigClient(
     manualPublications: migrated?.manualPublications ?? defaults.manualPublications,
     managedCategories: migrated?.managedCategories ?? defaults.managedCategories,
   };
+  return enforceCommercialExclusivityInConfig(baseConfig);
 }
 
 type ManualPublicationDraft = {
@@ -2930,30 +2941,9 @@ export function CatalogHomeClient({
   const [topSectionFilter, setTopSectionFilter] = useState<"all" | SectionId>("all");
   const [showHomeFiltersMenu, setShowHomeFiltersMenu] = useState(false);
   const homeFiltersMenuRef = useRef<HTMLDivElement>(null);
-  const [quickFilters, setQuickFilters] = useState<QuickFilterId[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = window.localStorage.getItem(HOME_QUICK_FILTERS_STORAGE_KEY);
-      const parsed = raw ? (JSON.parse(raw) as QuickFilterId[]) : [];
-      return Array.isArray(parsed)
-        ? parsed.filter((id): id is QuickFilterId => isAllowedHomeBodyFilter(id))
-        : [];
-    } catch {
-      return [];
-    }
-  });
-  const [homeSiniestradoFilter, setHomeSiniestradoFilter] = useState<HomeSiniestradoFilter>(() => {
-    if (typeof window === "undefined") return "all";
-    const raw = window.localStorage.getItem(HOME_SINIESTRO_FILTER_STORAGE_KEY);
-    if (raw === "siniestrado" || raw === "no_siniestrado" || raw === "all") return raw;
-    return "all";
-  });
-  const [cardDensity, setCardDensity] = useState<CardDensity>(() => {
-    if (typeof window === "undefined") return "detailed";
-    return window.localStorage.getItem(HOME_CARD_DENSITY_STORAGE_KEY) === "compact"
-      ? "compact"
-      : "detailed";
-  });
+  const [quickFilters, setQuickFilters] = useState<QuickFilterId[]>([]);
+  const [homeSiniestradoFilter, setHomeSiniestradoFilter] = useState<HomeSiniestradoFilter>("all");
+  const [cardDensity, setCardDensity] = useState<CardDensity>("detailed");
   const [leadForm, setLeadForm] = useState<ClientLeadForm>({
     name: "",
     phone: "",
@@ -3081,7 +3071,7 @@ export function CatalogHomeClient({
     unorderedList: false,
     orderedList: false,
   }));
-  const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
+  const [countdownNowMs, setCountdownNowMs] = useState<number | null>(null);
   const manualObservationsEditorRef = useRef<HTMLDivElement | null>(null);
   const heroTitleEditorRef = useRef<HTMLDivElement | null>(null);
   const heroSubtitleEditorRef = useRef<HTMLDivElement | null>(null);
@@ -3461,6 +3451,27 @@ export function CatalogHomeClient({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    try {
+      const rawQuickFilters = window.localStorage.getItem(HOME_QUICK_FILTERS_STORAGE_KEY);
+      const parsedQuickFilters = rawQuickFilters ? (JSON.parse(rawQuickFilters) as QuickFilterId[]) : [];
+      if (Array.isArray(parsedQuickFilters)) {
+        setQuickFilters(parsedQuickFilters.filter((id): id is QuickFilterId => isAllowedHomeBodyFilter(id)));
+      }
+    } catch {
+      // ignore invalid persisted filters
+    }
+    const rawSiniestro = window.localStorage.getItem(HOME_SINIESTRO_FILTER_STORAGE_KEY);
+    if (rawSiniestro === "siniestrado" || rawSiniestro === "no_siniestrado" || rawSiniestro === "all") {
+      setHomeSiniestradoFilter(rawSiniestro);
+    }
+    const rawDensity = window.localStorage.getItem(HOME_CARD_DENSITY_STORAGE_KEY);
+    if (rawDensity === "compact" || rawDensity === "detailed") {
+      setCardDensity(rawDensity);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     window.localStorage.setItem(HOME_QUICK_FILTERS_STORAGE_KEY, JSON.stringify(quickFilters));
   }, [quickFilters]);
 
@@ -3791,12 +3802,13 @@ export function CatalogHomeClient({
     for (const item of items) {
       const key = getVehicleKey(item);
       if (!isCatalogPublishedVehicle(item, config)) continue;
-      const estadoRetiro = extractEstadoRetiroForSection(item);
-      if (!config.vehicleUpcomingAuctionIds[key] && estadoRetiro === "en_bodega_a_remate") {
+      const lane = resolveVehicleCommercialLane(key, config, extractEstadoRetiroForSection(item));
+      if (lane === "proximos-remates") {
         sectionSets["proximos-remates"].add(key);
-      }
-      if (estadoRetiro === "en_bodega_a_venta_directa") {
+        sectionSets["ventas-directas"].delete(key);
+      } else if (lane === "ventas-directas") {
         sectionSets["ventas-directas"].add(key);
+        sectionSets["proximos-remates"].delete(key);
       }
     }
 
@@ -3997,19 +4009,17 @@ export function CatalogHomeClient({
 
   const proximosRemates = getSectionItems("proximos-remates");
   const ventasDirectas = getSectionItems("ventas-directas");
-  const ventaDirectaInventoryOnlyCount = useMemo(() => {
+  const ventaDirectaInventoryOnlyKeys = useMemo(() => {
     const ventaDirectaAuctionIds = new Set(sortedVentaDirectaAuctions.map((auction) => auction.id));
     return (effectiveSectionVehicleIds["ventas-directas"] ?? []).filter((key) => {
-      if (!homeVisibleKeys.has(key)) return false;
       const assignedId = config.vehicleUpcomingAuctionIds[key];
       return !assignedId || !ventaDirectaAuctionIds.has(assignedId);
-    }).length;
-  }, [
-    sortedVentaDirectaAuctions,
-    effectiveSectionVehicleIds,
-    config.vehicleUpcomingAuctionIds,
-    homeVisibleKeys,
-  ]);
+    });
+  }, [sortedVentaDirectaAuctions, effectiveSectionVehicleIds, config.vehicleUpcomingAuctionIds]);
+  const ventaDirectaInventoryOnlyCount = useMemo(
+    () => ventaDirectaInventoryOnlyKeys.filter((key) => homeVisibleKeys.has(key)).length,
+    [ventaDirectaInventoryOnlyKeys, homeVisibleKeys],
+  );
   const managedCategorySections = useMemo(
     () =>
       (config.managedCategories ?? [])
@@ -4231,11 +4241,12 @@ export function CatalogHomeClient({
     const timer = window.setInterval(() => {
       setCountdownNowMs(Date.now());
     }, 1000);
+    setCountdownNowMs(Date.now());
     return () => window.clearInterval(timer);
   }, []);
 
   const heroAuctionCountdown = useMemo(() => {
-    if (!nextAuction?.date) return null;
+    if (countdownNowMs === null || !nextAuction?.date) return null;
     const diffMs = nextAuction.date.getTime() - countdownNowMs;
     if (diffMs <= 0) return null;
     return {
@@ -5362,7 +5373,9 @@ export function CatalogHomeClient({
         ? Object.entries(config.vehicleUpcomingAuctionIds)
             .filter(([, auctionId]) => auctionId === groupManageTarget.auctionId)
             .map(([vehicleKey]) => vehicleKey)
-        : config.sectionVehicleIds[groupManageTarget.sectionId] ?? [],
+        : groupManageTarget.sectionId === "ventas-directas"
+          ? ventaDirectaInventoryOnlyKeys
+          : (effectiveSectionVehicleIds[groupManageTarget.sectionId] ?? []),
     );
     return dedupeCatalogItemsByVehicleKey(
       activeInventoryItems.filter((item) => isAssignedVehicleKey(assignedKeys, item)),
@@ -5371,7 +5384,8 @@ export function CatalogHomeClient({
     groupManageTarget,
     activeInventoryItems,
     config.vehicleUpcomingAuctionIds,
-    config.sectionVehicleIds,
+    effectiveSectionVehicleIds,
+    ventaDirectaInventoryOnlyKeys,
   ]);
 
   const groupManageItems = useMemo(() => {
@@ -5580,8 +5594,23 @@ export function CatalogHomeClient({
   const toggleItemInSection = (sectionId: SectionId, itemKey: string) => {
     setConfig((prev) => {
       const current = new Set(prev.sectionVehicleIds[sectionId] ?? []);
-      if (current.has(itemKey)) current.delete(itemKey);
-      else current.add(itemKey);
+      const adding = !current.has(itemKey);
+      if (adding) current.add(itemKey);
+      else current.delete(itemKey);
+
+      if (adding && (sectionId === "ventas-directas" || sectionId === "proximos-remates")) {
+        const lane = sectionId as "ventas-directas" | "proximos-remates";
+        const exclusive = applyExclusiveCommercialAssignment(prev, [itemKey], { lane }, prev.upcomingAuctions ?? []);
+        return {
+          ...prev,
+          ...exclusive,
+          sectionVehicleIds: {
+            ...exclusive.sectionVehicleIds,
+            [sectionId]: Array.from(current),
+          },
+        };
+      }
+
       return {
         ...prev,
         sectionVehicleIds: { ...prev.sectionVehicleIds, [sectionId]: Array.from(current) },
@@ -6599,28 +6628,39 @@ export function CatalogHomeClient({
         const publicationUnblocked = clearPublicationBlocksForVehicleKeys(prev, keysToAssign);
 
         if (batchAssignTarget.type === "auction") {
-          const nextAuctionMap = { ...prev.vehicleUpcomingAuctionIds };
-          for (const vehicleKey of keysToAssign) {
-            nextAuctionMap[vehicleKey] = batchAssignTarget.auctionId;
-          }
+          const auction = sortedUpcomingAuctions.find((entry) => entry.id === batchAssignTarget.auctionId);
+          const lane =
+            getAuctionCommercialEventType(auction ?? { id: batchAssignTarget.auctionId, name: "", date: "" }) ===
+            "venta_directa"
+              ? "ventas-directas"
+              : "proximos-remates";
+          const exclusive = applyExclusiveCommercialAssignment(
+            prev,
+            keysToAssign,
+            { lane, auctionId: batchAssignTarget.auctionId },
+            sortedUpcomingAuctions,
+          );
           return {
             ...prev,
             ...publicationUnblocked,
             vehicleDetails: nextDetails,
-            vehicleUpcomingAuctionIds: nextAuctionMap,
+            hiddenVehicleIds,
+            ...exclusive,
           };
         }
 
-        const current = new Set(prev.sectionVehicleIds[batchAssignTarget.sectionId] ?? []);
-        for (const vehicleKey of keysToAssign) current.add(vehicleKey);
+        const exclusive = applyExclusiveCommercialAssignment(
+          prev,
+          keysToAssign,
+          { lane: "ventas-directas" },
+          sortedUpcomingAuctions,
+        );
         return {
           ...prev,
           ...publicationUnblocked,
           vehicleDetails: nextDetails,
-          sectionVehicleIds: {
-            ...prev.sectionVehicleIds,
-            [batchAssignTarget.sectionId]: Array.from(current),
-          },
+          hiddenVehicleIds,
+          ...exclusive,
         };
       });
 
@@ -6914,12 +6954,22 @@ export function CatalogHomeClient({
     deletedAuctionIdsRef.current.add(auctionId);
     setConfig((prev) => {
       const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      const removedVehicleKeys = new Set<string>();
       for (const [vehicleKey, value] of Object.entries(nextAssignments)) {
-        if (value === auctionId) delete nextAssignments[vehicleKey];
+        if (value === auctionId) {
+          delete nextAssignments[vehicleKey];
+          removedVehicleKeys.add(vehicleKey);
+        }
       }
-      const assignedVehicleKeys = new Set(Object.keys(nextAssignments));
+      const assignedVehicleKeys = new Set(
+        Object.entries(nextAssignments)
+          .filter(([, value]) => value)
+          .map(([vehicleKey]) => vehicleKey),
+      );
       const hidden = new Set(prev.hiddenCategoryIds ?? []);
       hidden.delete(auctionCategoryKey(auctionId));
+      const removedAuction = (prev.upcomingAuctions ?? []).find((auction) => auction.id === auctionId);
+      const isVentaDirectaAuction = (removedAuction?.eventType ?? "remate") === "venta_directa";
       return {
         ...prev,
         upcomingAuctions: prev.upcomingAuctions.filter((auction) => auction.id !== auctionId),
@@ -6930,24 +6980,68 @@ export function CatalogHomeClient({
           "proximos-remates": (prev.sectionVehicleIds["proximos-remates"] ?? []).filter((key) =>
             assignedVehicleKeys.has(key),
           ),
+          "ventas-directas": isVentaDirectaAuction
+            ? (prev.sectionVehicleIds["ventas-directas"] ?? []).filter((key) => !removedVehicleKeys.has(key))
+            : (prev.sectionVehicleIds["ventas-directas"] ?? []),
         },
       };
     });
   };
 
+  const clearVentaDirectaInventoryGroup = useCallback(() => {
+    setConfig((prev) => {
+      const keysToClear = new Set(ventaDirectaInventoryOnlyKeys);
+      if (keysToClear.size === 0) return prev;
+      const ventaDirectaAuctionIds = new Set(
+        (prev.upcomingAuctions ?? [])
+          .filter((auction) => (auction.eventType ?? "remate") === "venta_directa")
+          .map((auction) => auction.id),
+      );
+      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+      for (const key of keysToClear) {
+        const assignedId = nextAssignments[key];
+        if (!assignedId || !ventaDirectaAuctionIds.has(assignedId)) {
+          delete nextAssignments[key];
+        }
+      }
+      return {
+        ...prev,
+        sectionVehicleIds: {
+          ...prev.sectionVehicleIds,
+          "ventas-directas": (prev.sectionVehicleIds["ventas-directas"] ?? []).filter(
+            (key) => !keysToClear.has(key),
+          ),
+        },
+        vehicleUpcomingAuctionIds: nextAssignments,
+      };
+    });
+    showSystemNotice(
+      "success",
+      "Grupo limpiado",
+      "Se quitaron las asignaciones manuales de venta directa de inventario.",
+    );
+  }, [ventaDirectaInventoryOnlyKeys, showSystemNotice]);
+
   const finalizeUpcomingAuction = useCallback(
     (auctionId: string, soldVehicleKeys: string[]) => {
+      const isDefaultVentaDirectaInventory = auctionId === DEFAULT_VENTA_DIRECTA_EVENT_ID;
       const auction = (config.upcomingAuctions ?? []).find((entry) => entry.id === auctionId);
-      const assignedNow = Object.entries(config.vehicleUpcomingAuctionIds ?? {})
-        .filter(([, value]) => value === auctionId)
-        .map(([vehicleKey]) => vehicleKey);
+      const assignedNow = isDefaultVentaDirectaInventory
+        ? ventaDirectaInventoryOnlyKeys
+        : Object.entries(config.vehicleUpcomingAuctionIds ?? {})
+            .filter(([, value]) => value === auctionId)
+            .map(([vehicleKey]) => vehicleKey);
       const soldNowCount = assignedNow.filter((vehicleKey) => soldVehicleKeys.includes(vehicleKey)).length;
       const unsoldNowCount = Math.max(0, assignedNow.length - soldNowCount);
       const soldSetInput = new Set(soldVehicleKeys);
+      const isVentaDirectaEvent =
+        isDefaultVentaDirectaInventory || (auction?.eventType ?? "remate") === "venta_directa";
       setConfig((prev) => {
-        const assignedVehicleKeys = Object.entries(prev.vehicleUpcomingAuctionIds)
-          .filter(([, value]) => value === auctionId)
-          .map(([vehicleKey]) => vehicleKey);
+        const assignedVehicleKeys = isDefaultVentaDirectaInventory
+          ? ventaDirectaInventoryOnlyKeys
+          : Object.entries(prev.vehicleUpcomingAuctionIds)
+              .filter(([, value]) => value === auctionId)
+              .map(([vehicleKey]) => vehicleKey);
         const assignedSet = new Set(assignedVehicleKeys);
         const validSoldKeys = assignedVehicleKeys.filter((vehicleKey) => soldSetInput.has(vehicleKey));
         const unsoldKeys = assignedVehicleKeys.filter((vehicleKey) => !soldSetInput.has(vehicleKey));
@@ -6956,6 +7050,9 @@ export function CatalogHomeClient({
         const hiddenSet = new Set(prev.hiddenVehicleIds ?? []);
         const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
         const nextHistory = [...(prev.soldVehicleHistory ?? [])];
+        const resolvedAuctionName =
+          auction?.name ??
+          (isDefaultVentaDirectaInventory ? DEFAULT_VENTA_DIRECTA_EVENT_NAME : "Remate finalizado");
 
         for (const vehicleKey of validSoldKeys) {
           soldSet.add(vehicleKey);
@@ -6965,8 +7062,8 @@ export function CatalogHomeClient({
           if (item) {
             const soldRecord = buildSoldVehicleRecord(item, {
               auctionId,
-              auctionName: auction?.name ?? "Remate finalizado",
-              soldCategory: "Remate",
+              auctionName: resolvedAuctionName,
+              soldCategory: isVentaDirectaEvent ? "Venta directa" : "Remate",
             });
             nextHistory.unshift(soldRecord);
           }
@@ -6981,10 +7078,15 @@ export function CatalogHomeClient({
           (entry, index, list) =>
             list.findIndex((candidate) => candidate.vehicleKey === entry.vehicleKey) === index,
         );
+        const shouldRemoveAuction =
+          !isDefaultVentaDirectaInventory &&
+          (prev.upcomingAuctions ?? []).some((entry) => entry.id === auctionId);
 
         return {
           ...prev,
-          upcomingAuctions: prev.upcomingAuctions.filter((entry) => entry.id !== auctionId),
+          upcomingAuctions: shouldRemoveAuction
+            ? prev.upcomingAuctions.filter((entry) => entry.id !== auctionId)
+            : prev.upcomingAuctions,
           soldVehicleIds: Array.from(soldSet),
           soldVehicleHistory: uniqueHistory,
           hiddenVehicleIds: Array.from(hiddenSet),
@@ -6993,7 +7095,9 @@ export function CatalogHomeClient({
             "proximos-remates": (prev.sectionVehicleIds["proximos-remates"] ?? []).filter(
               (key) => !assignedSet.has(key),
             ),
-            "ventas-directas": prev.sectionVehicleIds["ventas-directas"] ?? [],
+            "ventas-directas": (prev.sectionVehicleIds["ventas-directas"] ?? []).filter(
+              (key) => !assignedSet.has(key),
+            ),
             novedades: prev.sectionVehicleIds.novedades ?? [],
             catalogo: prev.sectionVehicleIds.catalogo ?? [],
           },
@@ -7004,30 +7108,51 @@ export function CatalogHomeClient({
       setFinalizeSoldVehicleKeys([]);
       showSystemNotice(
         "success",
-        "Remate finalizado",
+        isVentaDirectaEvent ? "Venta directa finalizada" : "Remate finalizado",
         `${soldNowCount} unidad(es) vendidas y ${unsoldNowCount} unidad(es) ocultas sin venta.`,
       );
     },
-    [buildSoldVehicleRecord, config.upcomingAuctions, config.vehicleUpcomingAuctionIds, itemsByKey, showSystemNotice],
+    [
+      buildSoldVehicleRecord,
+      config.upcomingAuctions,
+      config.vehicleUpcomingAuctionIds,
+      itemsByKey,
+      showSystemNotice,
+      ventaDirectaInventoryOnlyKeys,
+    ],
   );
 
   const assignVehicleToUpcomingAuction = (itemKey: string, auctionId: string) => {
     setConfig((prev) => {
-      const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
-      if (auctionId) nextAssignments[itemKey] = auctionId;
-      else delete nextAssignments[itemKey];
+      if (!auctionId) {
+        const nextAssignments = { ...prev.vehicleUpcomingAuctionIds };
+        delete nextAssignments[itemKey];
+        const sectionSet = new Set(prev.sectionVehicleIds["proximos-remates"] ?? []);
+        sectionSet.delete(itemKey);
+        return {
+          ...prev,
+          vehicleUpcomingAuctionIds: nextAssignments,
+          sectionVehicleIds: {
+            ...prev.sectionVehicleIds,
+            "proximos-remates": Array.from(sectionSet),
+          },
+        };
+      }
 
-      const sectionSet = new Set(prev.sectionVehicleIds["proximos-remates"] ?? []);
-      if (auctionId) sectionSet.add(itemKey);
-      else sectionSet.delete(itemKey);
-
+      const auction = (prev.upcomingAuctions ?? []).find((entry) => entry.id === auctionId);
+      const lane =
+        getAuctionCommercialEventType(auction ?? { id: auctionId, name: "", date: "" }) === "venta_directa"
+          ? "ventas-directas"
+          : "proximos-remates";
+      const exclusive = applyExclusiveCommercialAssignment(
+        prev,
+        [itemKey],
+        { lane, auctionId },
+        prev.upcomingAuctions ?? [],
+      );
       return {
         ...prev,
-        vehicleUpcomingAuctionIds: nextAssignments,
-        sectionVehicleIds: {
-          ...prev.sectionVehicleIds,
-          "proximos-remates": Array.from(sectionSet),
-        },
+        ...exclusive,
       };
     });
   };
@@ -7735,18 +7860,31 @@ export function CatalogHomeClient({
       (promoEnabled ? (config.vehiclePrices[managingVehicleKey] ?? "") : "");
     return { originalPrice, promoPrice, promoEnabled };
   }, [config.vehicleDetails, config.vehiclePrices, managingItem, managingVehicleKey]);
-  const finalizeAuction = useMemo(
-    () =>
-      finalizeAuctionId
-        ? (config.upcomingAuctions ?? []).find((auction) => auction.id === finalizeAuctionId) ?? null
-        : null,
-    [config.upcomingAuctions, finalizeAuctionId],
-  );
+  const finalizeAuction = useMemo(() => {
+    if (!finalizeAuctionId) return null;
+    const found = (config.upcomingAuctions ?? []).find((auction) => auction.id === finalizeAuctionId);
+    if (found) return found;
+    if (finalizeAuctionId === DEFAULT_VENTA_DIRECTA_EVENT_ID) {
+      return {
+        id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
+        name: DEFAULT_VENTA_DIRECTA_EVENT_NAME,
+        date: "",
+        eventType: "venta_directa" as const,
+      } satisfies UpcomingAuction;
+    }
+    return null;
+  }, [config.upcomingAuctions, finalizeAuctionId]);
   const finalizeAuctionItems = useMemo(() => {
     if (!finalizeAuctionId) return [];
-    const baseItems = activeInventoryItems.filter(
-      (item) => (config.vehicleUpcomingAuctionIds[getVehicleKey(item)] ?? "") === finalizeAuctionId,
-    );
+    const assignedKeys =
+      finalizeAuctionId === DEFAULT_VENTA_DIRECTA_EVENT_ID
+        ? new Set(ventaDirectaInventoryOnlyKeys)
+        : new Set(
+            Object.entries(config.vehicleUpcomingAuctionIds)
+              .filter(([, auctionId]) => auctionId === finalizeAuctionId)
+              .map(([vehicleKey]) => vehicleKey),
+          );
+    const baseItems = activeInventoryItems.filter((item) => isAssignedVehicleKey(assignedKeys, item));
     const query = normalizeText(finalizeAuctionSearchTerm);
     if (!query) return baseItems;
     return baseItems.filter((item) => {
@@ -7759,6 +7897,7 @@ export function CatalogHomeClient({
     config.vehicleUpcomingAuctionIds,
     finalizeAuctionId,
     finalizeAuctionSearchTerm,
+    ventaDirectaInventoryOnlyKeys,
   ]);
   const soldHistoryRows = useMemo(
     () =>
@@ -9557,6 +9696,32 @@ export function CatalogHomeClient({
                                 title="Agregar unidades"
                               >
                                 +
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFinalizeAuctionId(DEFAULT_VENTA_DIRECTA_EVENT_ID);
+                                  setFinalizeAuctionSearchTerm("");
+                                  setFinalizeSoldVehicleKeys([]);
+                                }}
+                                className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-amber-300 bg-amber-50 text-amber-700"
+                                aria-label="Finalizar ventas directas de inventario"
+                                title="Finalizar venta directa"
+                              >
+                                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                  <path fillRule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.25a1 1 0 0 1-1.42.001l-3-3.015a1 1 0 1 1 1.418-1.41l2.29 2.3 6.49-6.534a1 1 0 0 1 1.416-.006Z" clipRule="evenodd" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => clearVentaDirectaInventoryGroup()}
+                                className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700"
+                                aria-label="Quitar asignaciones de ventas directas de inventario"
+                                title="Quitar"
+                              >
+                                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                  <path d="M7 2.5A1.5 1.5 0 0 0 5.5 4v.5H3.75a.75.75 0 0 0 0 1.5h.56l.75 9.02A2 2 0 0 0 7.06 17h5.88a2 2 0 0 0 1.99-1.98l.75-9.02h.57a.75.75 0 0 0 0-1.5H14.5V4A1.5 1.5 0 0 0 13 2.5H7Zm6 .5a.5.5 0 0 1 .5.5v.5h-7V3.5a.5.5 0 0 1 .5-.5h6ZM8 8.25a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3 0a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Z" />
+                                </svg>
                               </button>
                             </div>
                           </article>
