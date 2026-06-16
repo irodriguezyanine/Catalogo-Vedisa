@@ -201,7 +201,29 @@ function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
   return endMs >= nowMs;
 }
 
+function resolveEditorAuctionEventType(auction: UpcomingAuction): "remate" | "venta_directa" {
+  if (auction.eventType === "venta_directa" || auction.eventType === "remate") {
+    return auction.eventType;
+  }
+  const text = normalizeText(auction.name ?? "");
+  if (
+    text.includes("ventadirecta") ||
+    text.includes("vtadirecta") ||
+    text.includes("vtdirecta") ||
+    text.includes("ventadir")
+  ) {
+    return "venta_directa";
+  }
+  return "remate";
+}
+
 function isEditorAuctionStillActive(auction: UpcomingAuction, nowMs: number): boolean {
+  if (resolveEditorAuctionEventType(auction) === "venta_directa") {
+    if (!auction.endAt?.trim()) return true;
+    const endMs = Date.parse(auction.endAt);
+    if (!Number.isFinite(endMs)) return true;
+    return endMs >= nowMs;
+  }
   const endAt = auction.endAt ?? auction.date;
   if (!endAt) return true;
   const endMs = Date.parse(endAt);

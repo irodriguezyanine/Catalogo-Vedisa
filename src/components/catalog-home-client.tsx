@@ -3997,6 +3997,19 @@ export function CatalogHomeClient({
 
   const proximosRemates = getSectionItems("proximos-remates");
   const ventasDirectas = getSectionItems("ventas-directas");
+  const ventaDirectaInventoryOnlyCount = useMemo(() => {
+    const ventaDirectaAuctionIds = new Set(sortedVentaDirectaAuctions.map((auction) => auction.id));
+    return (effectiveSectionVehicleIds["ventas-directas"] ?? []).filter((key) => {
+      if (!homeVisibleKeys.has(key)) return false;
+      const assignedId = config.vehicleUpcomingAuctionIds[key];
+      return !assignedId || !ventaDirectaAuctionIds.has(assignedId);
+    }).length;
+  }, [
+    sortedVentaDirectaAuctions,
+    effectiveSectionVehicleIds,
+    config.vehicleUpcomingAuctionIds,
+    homeVisibleKeys,
+  ]);
   const managedCategorySections = useMemo(
     () =>
       (config.managedCategories ?? [])
@@ -9365,12 +9378,14 @@ export function CatalogHomeClient({
                       <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
                         {group.title}
                       </p>
-                      {group.auctions.length === 0 ? (
+                      {group.auctions.length === 0 &&
+                      !(group.title === "Ventas Directas" && ventaDirectaInventoryOnlyCount > 0) ? (
                         <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-500">
                           {group.empty}
                         </div>
                       ) : (
-                        group.auctions.map((auction) => {
+                        <>
+                        {group.auctions.map((auction) => {
                           const count = Object.values(config.vehicleUpcomingAuctionIds).filter(
                             (id) => id === auction.id,
                           ).length;
@@ -9472,7 +9487,81 @@ export function CatalogHomeClient({
                               </div>
                             </article>
                           );
-                        })
+                        })}
+                        {group.title === "Ventas Directas" && ventaDirectaInventoryOnlyCount > 0 ? (
+                          <article className="grid grid-cols-1 gap-2 rounded-lg border border-emerald-200 bg-emerald-50/40 px-2.5 py-2 md:grid-cols-[minmax(170px,1fr)_72px_228px] md:items-center">
+                            <div className="min-h-8 md:flex md:items-center">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                  Ventas directas (inventario)
+                                </p>
+                                <span
+                                  className="shrink-0 rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800"
+                                  title="Unidades con estado en bodega a venta directa o asignadas a la sección sin evento comercial"
+                                >
+                                  Origen: Inventario
+                                </span>
+                              </div>
+                            </div>
+                            <div className="mx-auto flex h-8 w-14 items-center justify-center rounded-md border border-emerald-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                              {ventaDirectaInventoryOnlyCount}
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5 md:w-56">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  toggleCategoryHidden("section:ventas-directas", "Ventas directas")
+                                }
+                                className={`ui-focus inline-flex h-8 w-8 items-center justify-center rounded border transition ${
+                                  hiddenHomeCategoryIds.has("section:ventas-directas")
+                                    ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                                }`}
+                                aria-label="Mostrar u ocultar ventas directas de inventario en home"
+                                title={
+                                  hiddenHomeCategoryIds.has("section:ventas-directas")
+                                    ? "Mostrar en home"
+                                    : "Ocultar del home"
+                                }
+                              >
+                                {hiddenHomeCategoryIds.has("section:ventas-directas") ? (
+                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                    <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16s-6.63-2-8.37-5.42a1.3 1.3 0 0 1 0-1.16C3.37 6 6.62 4 10 4Zm0 2c-2.6 0-5.16 1.5-6.71 4 .01.02.02.04.03.05C4.84 12.5 7.4 14 10 14s5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6Zm0 1.75A2.25 2.25 0 1 1 10 12.25 2.25 2.25 0 0 1 10 7.75Z" />
+                                  </svg>
+                                ) : (
+                                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                    <path d="M10 4c3.38 0 6.63 2 8.37 5.42a1.3 1.3 0 0 1 0 1.16C16.63 14 13.38 16 10 16c-1.72 0-3.42-.52-4.95-1.5l1.5-1.5c1.06.63 2.24.97 3.45.97 2.6 0 5.16-1.5 6.71-4a.63.63 0 0 0-.03-.05C15.16 7.5 12.6 6 10 6c-1.2 0-2.38.34-3.43.96L5.1 5.49A9.85 9.85 0 0 1 10 4Zm7.2 13.6a.75.75 0 0 1-1.06 0l-13-13a.75.75 0 1 1 1.06-1.06l13 13a.75.75 0 0 1 0 1.06ZM10 7.75c.7 0 1.33.32 1.75.83L8.58 11.75A2.25 2.25 0 0 1 10 7.75Z" />
+                                  </svg>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openGroupManageModal({ type: "section", sectionId: "ventas-directas" })
+                                }
+                                className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-700"
+                                aria-label="Ver y gestionar ventas directas de inventario"
+                                title="Ver y gestionar"
+                              >
+                                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                                  <path d="M10 4c4.5 0 7.8 3.16 8.9 5.5.13.28.13.62 0 .9C17.8 12.74 14.5 15.9 10 15.9S2.2 12.74 1.1 10.4a1.06 1.06 0 0 1 0-.9C2.2 7.16 5.5 4 10 4Zm0 2c-3.42 0-6.06 2.31-7.08 4 .99 1.69 3.64 4 7.08 4s6.09-2.31 7.08-4C16.06 8.31 13.42 6 10 6Zm0 1.5A2.5 2.5 0 1 1 7.5 10 2.5 2.5 0 0 1 10 7.5Z" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openBatchAssignModal({ type: "section", sectionId: "ventas-directas" })
+                                }
+                                className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700"
+                                aria-label="Agregar unidades a ventas directas de inventario"
+                                title="Agregar unidades"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </article>
+                        ) : null}
+                        </>
                       )}
                     </div>
                   ))}
