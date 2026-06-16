@@ -1,6 +1,11 @@
 import type { EditorVehicleDetails } from "@/types/editor";
 import type { RainworxLotScraped } from "@/lib/rainworx-scrape";
 import { cloudinaryRawPdfUrlForInlineDisplay } from "@/lib/cloudinary-delivery";
+import {
+  coerceSiNoSpanish,
+  mapPruebaDesplazamientoToSiNo,
+  mapPruebaMotorToSiNo,
+} from "@/lib/prueba-operativa-sino";
 
 /** Igual que `getVehicleKey` del cliente: patente normalizada o vacío si no hay. */
 export function normalizePatenteKey(patente: string | undefined): string {
@@ -22,47 +27,6 @@ function pickDetalle(scraped: RainworxLotScraped, ...labels: string[]): string |
     const v = scraped.detalles[label];
     if (v?.trim()) return v.trim();
   }
-  return undefined;
-}
-
-/** Texto comparable: minúsculas, sin tildes. */
-function normTxt(s: string): string {
-  return s
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "");
-}
-
-/**
- * Rainworx envía frases ("MOTOR ARRANCA") pero el editor solo acepta SI/NO.
- */
-function mapPruebaMotorToSiNo(raw?: string): string | undefined {
-  if (!raw?.trim()) return undefined;
-  const coerced = coerceSiNoSpanish(raw);
-  if (coerced) return coerced;
-  const t = normTxt(raw);
-  if (/no\s*arranca|motor\s*no|no\s*funciona|averia|averia\s*motor|reparaci[oó]n\s*mayor\s*motor/.test(t)) return "NO";
-  if (/motor\s*arranca|\barranca\b|funcionando|operativo|ok\s*motor/.test(t)) return "SI";
-  return undefined;
-}
-
-function mapPruebaDesplazamientoToSiNo(raw?: string): string | undefined {
-  if (!raw?.trim()) return undefined;
-  const coerced = coerceSiNoSpanish(raw);
-  if (coerced) return coerced;
-  const t = normTxt(raw);
-  if (/no\s*se\s*desplaza|no\s*desplaza|no\s*mueve|inmovil|bloquead|en\s*panne/.test(t)) return "NO";
-  if (/se\s*desplaza|\bdesplaza\b|se\s*mueve|rodar|en\s*movimiento/.test(t)) return "SI";
-  return undefined;
-}
-
-/** Campos tipo SI/NO que a veces vienen "Si", "Sí", "true", etc. */
-function coerceSiNoSpanish(raw?: string): string | undefined {
-  if (!raw?.trim()) return undefined;
-  const t = normTxt(raw);
-  if (/^(si|s|yes|true|1)$/.test(t)) return "SI";
-  if (/^(no|n|false|0)$/.test(t)) return "NO";
   return undefined;
 }
 

@@ -19,6 +19,10 @@ import {
   sanitizeMarcaValue,
   sanitizeModeloValue,
 } from "@/lib/vehicle-identity";
+import {
+  mapPruebaDesplazamientoToSiNo,
+  mapPruebaMotorToSiNo,
+} from "@/lib/prueba-operativa-sino";
 import type { CatalogFeed, CatalogItem, CatalogSource } from "@/types/catalog";
 
 export { Glo3dRateLimitError, getGlo3dCircuitRetryAfterMs, isGlo3dCircuitOpen };
@@ -853,12 +857,22 @@ function normalizeGlo3dTechnicalFields(
     "seguro_obligatorio_vencimiento",
     "vso",
   ]);
-  const pruebaMotor = pickString(merged, ["prueba_motor", "prueba_motor_arranca", "pdm"]);
-  const pruebaDesplazamiento = pickString(merged, [
+  const pruebaMotorRaw = pickString(merged, [
+    "prueba_motor",
+    "prueba_motor_arranca",
+    "pdm",
+    "motor_arranca",
+    "motor arranca",
+  ]);
+  const pruebaDesplazamientoRaw = pickString(merged, [
     "prueba_desplazamiento",
     "prueba_desplazamiento_mueve",
     "pdd",
+    "se_desplaza",
+    "se desplaza",
   ]);
+  const pruebaMotor = mapPruebaMotorToSiNo(pruebaMotorRaw);
+  const pruebaDesplazamiento = mapPruebaDesplazamientoToSiNo(pruebaDesplazamientoRaw);
   const estadoAirbags = pickString(merged, ["estado_airbags", "airbags_estado", "eda"]);
   const tipoVehiculo = pickString(merged, [
     "tipo_de_vehiculo",

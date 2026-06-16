@@ -22,6 +22,10 @@ import {
   sanitizeMarcaValue,
   sanitizeModeloValue,
 } from "@/lib/vehicle-identity";
+import {
+  mapPruebaDesplazamientoToSiNo,
+  mapPruebaMotorToSiNo,
+} from "@/lib/prueba-operativa-sino";
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
 
@@ -633,11 +637,27 @@ function buildVehicleDetailsFromSources(
       pickString(row, ["vencimiento_seguro_obligatorio", "vso"]) ??
       pickString(glo3dFields, ["vencimiento_seguro_obligatorio", "vso"]),
     pruebaMotor:
-      pickString(row, ["prueba_motor", "pdm"]) ??
-      pickString(glo3dFields, ["prueba_motor", "prueba_motor_arranca", "pdm"]),
+      mapPruebaMotorToSiNo(
+        pickString(row, ["prueba_motor", "pdm"]) ??
+          pickString(glo3dFields, [
+            "prueba_motor",
+            "prueba_motor_arranca",
+            "pdm",
+            "motor_arranca",
+            "motor arranca",
+          ]),
+      ) ?? undefined,
     pruebaDesplazamiento:
-      pickString(row, ["prueba_desplazamiento", "pdd"]) ??
-      pickString(glo3dFields, ["prueba_desplazamiento", "pdd"]),
+      mapPruebaDesplazamientoToSiNo(
+        pickString(row, ["prueba_desplazamiento", "pdd"]) ??
+          pickString(glo3dFields, [
+            "prueba_desplazamiento",
+            "prueba_desplazamiento_mueve",
+            "pdd",
+            "se_desplaza",
+            "se desplaza",
+          ]),
+      ) ?? undefined,
     estadoAirbags:
       pickString(row, ["estado_airbags", "eda"]) ??
       pickString(glo3dFields, ["estado_airbags", "airbags_estado", "eda"]),
