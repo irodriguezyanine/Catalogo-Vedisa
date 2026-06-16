@@ -44,6 +44,20 @@ function shortText(value?: string, max = 90): string | undefined {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
+function formatConditionBadgeLabel(condition: string): string {
+  const sample = condition
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+  if (/100%?\s*operativo/.test(sample) || /vehiculo.*operativo/.test(sample)) {
+    return "100% operativo";
+  }
+  if (/no arranca/.test(sample)) return "No arranca";
+  if (/desarme/.test(sample)) return "Desarme";
+  if (/recuperado/.test(sample)) return "Recuperado";
+  return shortText(condition, 22) ?? condition;
+}
+
 function isLikelyImageUrl(url?: string): boolean {
   if (!url || !url.startsWith("http")) return false;
   const normalized = url.toLowerCase();
@@ -260,32 +274,38 @@ export function CatalogCard({
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
-          {priceLabel ? (
-            <div className="absolute right-3 top-3 text-right">
-              {promoEnabled && originalPriceLabel ? (
-                <span className="block text-xs font-semibold text-white/85 line-through">{originalPriceLabel}</span>
+          <div className="absolute inset-x-3 top-3 flex items-start justify-between gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-start gap-1">
+              {item.view3dUrl ? (
+                <span className="shrink-0 rounded-full bg-cyan-600 px-2 py-1 text-[10px] font-semibold text-white">
+                  360°
+                </span>
               ) : null}
-              <span
-                className={`mt-0.5 inline-block rounded-lg px-2.5 py-1 text-base font-bold shadow-md ${
-                  promoEnabled ? "bg-rose-600 text-white" : "bg-cyan-600 text-white"
-                }`}
-              >
-                {priceLabel}
-              </span>
+              {conditionLabel ? (
+                <span
+                  className={`inline-block max-w-full truncate rounded-full px-2 py-1 text-[10px] font-semibold ${getConditionBadgeClasses(
+                    conditionLabel,
+                  )}`}
+                  title={conditionLabel}
+                >
+                  {formatConditionBadgeLabel(conditionLabel)}
+                </span>
+              ) : null}
             </div>
-          ) : null}
-          <div className="absolute left-3 top-3 flex flex-wrap gap-1">
-            {item.view3dUrl ? (
-              <span className="rounded-full bg-cyan-600 px-2 py-1 text-[10px] font-semibold text-white">360°</span>
-            ) : null}
-            {conditionLabel ? (
-              <span
-                className={`max-w-[12rem] truncate rounded-full px-2 py-1 text-[10px] font-semibold ${getConditionBadgeClasses(
-                  conditionLabel,
-                )}`}
-              >
-                {shortText(conditionLabel, 32)}
-              </span>
+            {priceLabel ? (
+              <div className="shrink-0 text-right">
+                {promoEnabled && originalPriceLabel ? (
+                  <span className="block text-xs font-semibold text-white/85 line-through">{originalPriceLabel}</span>
+                ) : null}
+                <span
+                  className={`mt-0.5 inline-block whitespace-nowrap rounded-lg px-2.5 py-1 text-sm font-bold shadow-md sm:text-base ${
+                    promoEnabled ? "bg-rose-600 text-white" : "bg-cyan-600 text-white"
+                  }`}
+                  title={priceLabel}
+                >
+                  {priceLabel}
+                </span>
+              </div>
             ) : null}
           </div>
         </div>
