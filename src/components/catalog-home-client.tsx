@@ -3285,12 +3285,6 @@ export function CatalogHomeClient({
   useEffect(() => {
     void (async () => {
       try {
-        const local = localStorage.getItem(EDITOR_STORAGE_KEY);
-        if (local) {
-          const parsed = JSON.parse(local) as Partial<EditorConfig>;
-          setConfig(normalizeEditorConfigClient(parsed));
-        }
-
         const sessionRes = await fetch("/api/admin/session", { cache: "no-store" });
         const session = (await sessionRes.json()) as { loggedIn?: boolean };
         const loggedIn = Boolean(session.loggedIn);
@@ -3300,18 +3294,22 @@ export function CatalogHomeClient({
           setShowLogin(true);
         }
 
-        const configRes = await fetch("/api/public/editor-config", { cache: "no-store" });
+        const configEndpoint = loggedIn ? "/api/admin/editor-config" : "/api/public/editor-config";
+        const configRes = await fetch(configEndpoint, { cache: "no-store" });
         if (configRes.ok) {
           const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
-          // Home debe reflejar siempre la configuración sincronizada del servidor.
-          // Si priorizamos localStorage, podemos dejar eventos desfasados fuera del Home.
-          const shouldUseServerConfig = Boolean(payload.config);
-          if (payload.config && shouldUseServerConfig) {
+          if (payload.config) {
             const normalized = normalizeEditorConfigClient(payload.config);
             setConfig(normalized);
             localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
             return;
           }
+        }
+
+        const local = localStorage.getItem(EDITOR_STORAGE_KEY);
+        if (local) {
+          const parsed = JSON.parse(local) as Partial<EditorConfig>;
+          setConfig(normalizeEditorConfigClient(parsed));
         }
       } finally {
         setIsBootstrapping(false);
@@ -5517,6 +5515,11 @@ export function CatalogHomeClient({
         const willHide = !set.has(categoryKey);
         if (willHide) set.add(categoryKey);
         else set.delete(categoryKey);
+        if (categoryKey === "section:ventas-directas") {
+          const defaultVentaDirectaAuctionKey = `auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`;
+          if (willHide) set.add(defaultVentaDirectaAuctionKey);
+          else set.delete(defaultVentaDirectaAuctionKey);
+        }
         showSystemNotice(
           "success",
           willHide ? "Categoría oculta del home" : "Categoría visible en home",

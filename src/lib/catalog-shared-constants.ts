@@ -95,25 +95,19 @@ export function resolveSharedRemateEstado(
   return "abierto";
 }
 
-/** Alinea `hiddenCategoryIds` con filas compartidas en estado cerrado. */
+/** Alinea `hiddenCategoryIds` con filas compartidas en estado cerrado (solo remates externos). */
 export function applySharedRemateEstadoToHiddenCategories(
   hiddenCategoryIds: Set<string>,
   rows: Array<{ id?: string | null; estado?: string | null }>,
 ): void {
   for (const row of rows) {
     const id = String(row.id ?? "").trim();
-    if (!id) continue;
+    if (!id || id === DEFAULT_VENTA_DIRECTA_EVENT_ID) continue;
     const estado = String(row.estado ?? "").trim().toLowerCase();
     if (estado === "cerrado") {
       hiddenCategoryIds.add(`auction:${id}`);
-      if (id === DEFAULT_VENTA_DIRECTA_EVENT_ID) {
-        hiddenCategoryIds.add("section:ventas-directas");
-      }
     } else if (estado === "abierto") {
       hiddenCategoryIds.delete(`auction:${id}`);
-      if (id === DEFAULT_VENTA_DIRECTA_EVENT_ID) {
-        hiddenCategoryIds.delete("section:ventas-directas");
-      }
     }
   }
 }

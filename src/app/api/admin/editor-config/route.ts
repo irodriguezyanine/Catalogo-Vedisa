@@ -3,6 +3,7 @@ import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
 import { getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
+import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { toPublicEditorSnapshot } from "@/lib/public-editor-config";
 import { assertProductionSecrets, validateEditorConfigPayload } from "@/lib/validate-editor-config";
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from "@/types/editor";
@@ -56,6 +57,7 @@ export async function PUT(req: Request) {
     const sync = await syncEditorConfigToSharedTablesWithOptions(mergedConfig, {
       deletedRemateIds: body.deletedAuctionIds ?? [],
     });
+    revalidateCatalogSurfaces();
     return Response.json({ ok: true, sync, config: mergedConfig, syncOk: true });
   } catch (error) {
     const message =
