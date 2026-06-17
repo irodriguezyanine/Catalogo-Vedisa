@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { clearHiddenBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
 import {
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  applySharedRemateEstadoToHiddenCategories,
   ensureDefaultVentaDirectaAuction,
   ESTADO_RETIRO_VENTA_DIRECTA,
   isVentaDirectaAuctionActive,
@@ -369,6 +370,15 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
   const data = await fetchSharedRematesRows();
   const activeRows = data.filter((row) => isActiveSharedEvent(row, nowMs));
 
+  const hiddenCategoryIds = new Set(
+    (config.hiddenCategoryIds ?? []).filter((value) => {
+      if (!value.startsWith("auction:")) return true;
+      const auctionId = value.slice("auction:".length);
+      return activeRows.some((row) => row.id === auctionId) || data.some((row) => row.id === auctionId);
+    }),
+  );
+  applySharedRemateEstadoToHiddenCategories(hiddenCategoryIds, data);
+
   for (const row of activeRows) {
     const current = byId.get(row.id) ?? (config.upcomingAuctions ?? []).find((event) => event.id === row.id);
     const currentName = sanitizeEventTitle(current?.name ?? row.descripcion ?? row.numero_remate ?? "");
@@ -388,14 +398,6 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
   const nextVehicleUpcomingAuctionIds: Record<string, string> = {
     ...(config.vehicleUpcomingAuctionIds ?? {}),
   };
-
-  const hiddenCategoryIds = new Set(
-    (config.hiddenCategoryIds ?? []).filter((value) => {
-      if (!value.startsWith("auction:")) return true;
-      const auctionId = value.slice("auction:".length);
-      return byId.has(auctionId);
-    }),
-  );
 
   const sourcesByAuction = new Map<string, Set<string>>();
   const reassignedVehicleKeys = new Set<string>();

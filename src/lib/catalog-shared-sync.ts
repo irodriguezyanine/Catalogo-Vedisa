@@ -5,6 +5,7 @@ import {
   DEFAULT_VENTA_DIRECTA_EVENT_NAME,
   ESTADO_RETIRO_VENTA_DIRECTA,
   resolveCommercialEventType,
+  resolveSharedRemateEstado,
 } from "@/lib/catalog-shared-constants";
 import type { EditorConfig, EditorVehicleDetails, ManualPublication } from "@/types/editor";
 
@@ -26,7 +27,7 @@ type RemateSyncRow = {
   fecha_hora_cierre: string;
   fecha_hora_remate: string;
   descripcion: string;
-  estado: "abierto";
+  estado: "abierto" | "cerrado";
   tipo: "remate" | "venta_directa";
 };
 
@@ -355,6 +356,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   }
 
   const remateRows: RemateSyncRow[] = [];
+  const hiddenCategoryIds = config.hiddenCategoryIds ?? [];
   for (const auction of config.upcomingAuctions ?? []) {
     if (!isUuid(auction.id)) {
       result.skipped.push(`Remate omitido (ID legacy no UUID): ${auction.name}`);
@@ -378,7 +380,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       fecha_hora_cierre: fechaHoraCierre,
       fecha_hora_remate: fechaHoraCierre,
       descripcion: nombre,
-      estado: "abierto",
+      estado: resolveSharedRemateEstado(auction.id, hiddenCategoryIds),
       tipo: esVentaDirecta ? "venta_directa" : "remate",
     });
   }
@@ -392,7 +394,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       fecha_hora_cierre: end.toISOString(),
       fecha_hora_remate: end.toISOString(),
       descripcion: DEFAULT_VENTA_DIRECTA_EVENT_NAME,
-      estado: "abierto",
+      estado: resolveSharedRemateEstado(DEFAULT_VENTA_DIRECTA_EVENT_ID, hiddenCategoryIds),
       tipo: "venta_directa",
     });
   }

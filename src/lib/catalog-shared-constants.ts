@@ -81,3 +81,39 @@ export function isVentaDirectaAuctionActive(auction: UpcomingAuction, nowMs: num
   if (!Number.isFinite(endMs)) return true;
   return endMs >= nowMs;
 }
+
+/** Estado compartido en `remates.estado` según visibilidad en el editor del catálogo. */
+export function resolveSharedRemateEstado(
+  auctionId: string,
+  hiddenCategoryIds: Iterable<string> | undefined,
+): "abierto" | "cerrado" {
+  const hidden = new Set(hiddenCategoryIds ?? []);
+  if (hidden.has(`auction:${auctionId}`)) return "cerrado";
+  if (auctionId === DEFAULT_VENTA_DIRECTA_EVENT_ID && hidden.has("section:ventas-directas")) {
+    return "cerrado";
+  }
+  return "abierto";
+}
+
+/** Alinea `hiddenCategoryIds` con filas compartidas en estado cerrado. */
+export function applySharedRemateEstadoToHiddenCategories(
+  hiddenCategoryIds: Set<string>,
+  rows: Array<{ id?: string | null; estado?: string | null }>,
+): void {
+  for (const row of rows) {
+    const id = String(row.id ?? "").trim();
+    if (!id) continue;
+    const estado = String(row.estado ?? "").trim().toLowerCase();
+    if (estado === "cerrado") {
+      hiddenCategoryIds.add(`auction:${id}`);
+      if (id === DEFAULT_VENTA_DIRECTA_EVENT_ID) {
+        hiddenCategoryIds.add("section:ventas-directas");
+      }
+    } else if (estado === "abierto") {
+      hiddenCategoryIds.delete(`auction:${id}`);
+      if (id === DEFAULT_VENTA_DIRECTA_EVENT_ID) {
+        hiddenCategoryIds.delete("section:ventas-directas");
+      }
+    }
+  }
+}
