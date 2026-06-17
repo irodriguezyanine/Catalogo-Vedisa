@@ -3,6 +3,7 @@ import {
   applySharedRemateEstadoToHiddenCategories,
   collectDirectSaleVehicleKeys,
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  preserveEditorBaseSectionVisibility,
   resolveCommercialEventType,
 } from "@/lib/catalog-shared-constants";
 import type { EditorConfig } from "@/types/editor";
@@ -72,13 +73,45 @@ describe("applySharedRemateEstadoToHiddenCategories", () => {
     expect(hidden.has(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`)).toBe(false);
   });
 
-  it("sincroniza visibilidad de remates externos por estado compartido", () => {
-    const hidden = new Set<string>();
+  it("sincroniza visibilidad de remates externos solo cuando estan abiertos", () => {
+    const hidden = new Set([
+      "auction:11111111-1111-4111-8111-111111111111",
+      "auction:22222222-2222-4222-8222-222222222222",
+    ]);
     applySharedRemateEstadoToHiddenCategories(hidden, [
       { id: "11111111-1111-4111-8111-111111111111", estado: "cerrado" },
       { id: "22222222-2222-4222-8222-222222222222", estado: "abierto" },
     ]);
     expect(hidden.has("auction:11111111-1111-4111-8111-111111111111")).toBe(true);
     expect(hidden.has("auction:22222222-2222-4222-8222-222222222222")).toBe(false);
+  });
+
+  it("no oculta remates externos cerrados desde supabase", () => {
+    const hidden = new Set<string>();
+    applySharedRemateEstadoToHiddenCategories(hidden, [
+      { id: "11111111-1111-4111-8111-111111111111", estado: "cerrado" },
+    ]);
+    expect(hidden.size).toBe(0);
+  });
+});
+
+describe("preserveEditorBaseSectionVisibility", () => {
+  it("mantiene ventas directas visibles aunque el merge intente ocultarlas", () => {
+    const editorConfig = { hiddenCategoryIds: [] } as EditorConfig;
+    const mergedConfig = {
+      hiddenCategoryIds: ["section:ventas-directas", `auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`],
+    } as EditorConfig;
+    const result = preserveEditorBaseSectionVisibility(editorConfig, mergedConfig);
+    expect(result.hiddenCategoryIds).toEqual([]);
+  });
+
+  it("mantiene ventas directas ocultas cuando el editor las oculto", () => {
+    const editorConfig = {
+      hiddenCategoryIds: ["section:ventas-directas", `auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`],
+    } as EditorConfig;
+    const mergedConfig = { hiddenCategoryIds: [] } as EditorConfig;
+    const result = preserveEditorBaseSectionVisibility(editorConfig, mergedConfig);
+    expect(result.hiddenCategoryIds).toContain("section:ventas-directas");
+    expect(result.hiddenCategoryIds).toContain(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`);
   });
 });

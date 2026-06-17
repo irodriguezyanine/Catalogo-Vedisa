@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
 import {
+  preserveEditorBaseSectionVisibility,
   resolveCatalogHeroDescription,
   resolveCatalogHeroKicker,
   resolveCatalogHeroTitle,
@@ -166,7 +167,10 @@ export async function getMergedEditorConfig(): Promise<EditorConfigLoadResult> {
   const { mergeSharedEventsIntoConfig } = await import("@/lib/catalog-shared-merge");
   const loaded = await getEditorConfig();
   const merged = await mergeSharedEventsIntoConfig(loaded.config);
-  return { config: merged, persisted: loaded.persisted };
+  return {
+    config: preserveEditorBaseSectionVisibility(loaded.config, merged),
+    persisted: loaded.persisted,
+  };
 }
 
 export async function saveEditorConfig(

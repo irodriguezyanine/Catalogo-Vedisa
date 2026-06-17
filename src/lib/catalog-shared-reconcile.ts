@@ -1,4 +1,5 @@
 import { recordSharedSyncDlqEntries } from "@/lib/catalog-sync-dlq";
+import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
 import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
@@ -20,7 +21,10 @@ export async function reconcileSharedPlatforms(
   updatedBy = "sync@catalogo.vedisa",
 ): Promise<SharedPlatformsReconcileResult> {
   const loaded = await getEditorConfig();
-  const mergedConfig = await mergeSharedEventsIntoConfig(loaded.config);
+  const mergedConfig = preserveEditorBaseSectionVisibility(
+    loaded.config,
+    await mergeSharedEventsIntoConfig(loaded.config),
+  );
   const saved = await saveEditorConfig(mergedConfig, updatedBy);
   if (!saved.ok) {
     throw new Error(saved.error ?? "No se pudo persistir la configuración fusionada.");

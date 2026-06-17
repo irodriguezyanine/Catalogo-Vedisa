@@ -95,7 +95,7 @@ export function resolveSharedRemateEstado(
   return "abierto";
 }
 
-/** Alinea `hiddenCategoryIds` con filas compartidas en estado cerrado (solo remates externos). */
+/** Alinea `hiddenCategoryIds` con filas compartidas en estado abierto (solo desoculta). */
 export function applySharedRemateEstadoToHiddenCategories(
   hiddenCategoryIds: Set<string>,
   rows: Array<{ id?: string | null; estado?: string | null }>,
@@ -104,21 +104,36 @@ export function applySharedRemateEstadoToHiddenCategories(
     const id = String(row.id ?? "").trim();
     if (!id) continue;
     const estado = String(row.estado ?? "").trim().toLowerCase();
+    if (estado !== "abierto") continue;
 
+    hiddenCategoryIds.delete(`auction:${id}`);
     if (id === DEFAULT_VENTA_DIRECTA_EVENT_ID) {
-      // Si Tasaciones activa venta directa, reflejarlo en el catálogo.
-      // No forzar ocultamiento desde Supabase: el editor del catálogo manda al cerrar.
-      if (estado === "abierto") {
-        hiddenCategoryIds.delete("section:ventas-directas");
-        hiddenCategoryIds.delete(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`);
-      }
-      continue;
-    }
-
-    if (estado === "cerrado") {
-      hiddenCategoryIds.add(`auction:${id}`);
-    } else if (estado === "abierto") {
-      hiddenCategoryIds.delete(`auction:${id}`);
+      hiddenCategoryIds.delete("section:ventas-directas");
     }
   }
+}
+
+const BASE_HOME_SECTION_HIDDEN_KEYS = ["section:proximos-remates", "section:ventas-directas"] as const;
+
+/** El editor manda la visibilidad de secciones base; el merge no puede revertirla. */
+export function preserveEditorBaseSectionVisibility(
+  editorConfig: EditorConfig,
+  mergedConfig: EditorConfig,
+): EditorConfig {
+  const hidden = new Set(mergedConfig.hiddenCategoryIds ?? []);
+  const editorHidden = new Set(editorConfig.hiddenCategoryIds ?? []);
+
+  for (const sectionKey of BASE_HOME_SECTION_HIDDEN_KEYS) {
+    if (editorHidden.has(sectionKey)) hidden.add(sectionKey);
+    else hidden.delete(sectionKey);
+  }
+
+  const ventaDirectaAuctionKey = `auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`;
+  if (editorHidden.has("section:ventas-directas")) hidden.add(ventaDirectaAuctionKey);
+  else hidden.delete(ventaDirectaAuctionKey);
+
+  return {
+    ...mergedConfig,
+    hiddenCategoryIds: Array.from(hidden),
+  };
 }

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
+import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
 import { getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { toPublicEditorSnapshot } from "@/lib/public-editor-config";
@@ -50,7 +51,10 @@ export async function PUT(req: Request) {
     return Response.json({ ok: false, error: result.error }, { status: 400 });
   }
   const normalizedConfig = result.normalizedConfig ?? config;
-  const mergedConfig = await mergeSharedEventsIntoConfig(normalizedConfig);
+  const mergedConfig = preserveEditorBaseSectionVisibility(
+    normalizedConfig,
+    await mergeSharedEventsIntoConfig(normalizedConfig),
+  );
 
   try {
     await saveEditorConfig(mergedConfig, session.email);

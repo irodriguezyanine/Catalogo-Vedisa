@@ -71,6 +71,7 @@ import {
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
 import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background-video";
+import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
 import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
 import { HomeInventorySearch } from "@/components/home-inventory-search";
@@ -7118,7 +7119,12 @@ export function CatalogHomeClient({
     setAutoSaveState("saved");
     deletedAuctionIdsRef.current.clear();
     setLastAutoSaveAt(new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }));
-    const configPersistida = payload.config ? normalizeEditorConfigClient(payload.config) : nextConfig;
+    const configPersistida = payload.config
+      ? preserveEditorBaseSectionVisibility(
+          nextConfig,
+          normalizeEditorConfigClient(payload.config),
+        )
+      : nextConfig;
     lastPersistedConfigRef.current = JSON.stringify(configPersistida);
     setConfig(configPersistida);
     localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(configPersistida));
