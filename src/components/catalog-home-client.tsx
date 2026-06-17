@@ -7117,6 +7117,8 @@ export function CatalogHomeClient({
     setLastAutoSaveAt(new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }));
     const configPersistida = payload.config ? normalizeEditorConfigClient(payload.config) : nextConfig;
     lastPersistedConfigRef.current = JSON.stringify(configPersistida);
+    setConfig(configPersistida);
+    localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(configPersistida));
     if (payload.syncOk === false) {
       showSystemNotice(
         "info",

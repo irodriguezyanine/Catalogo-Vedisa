@@ -333,12 +333,14 @@ export async function fetchSharedRemateItems(remateIds: string[]): Promise<Share
   });
 }
 
-function preserveCatalogCommercialSections(config: EditorConfig) {
-  const hiddenCategoryIds = (config.hiddenCategoryIds ?? []).filter(
-    (value) => !value.startsWith("auction:"),
-  );
-  hiddenCategoryIds.push("section:proximos-remates", "section:ventas-directas");
-  return hiddenCategoryIds;
+export function finalizeMergedHiddenCategoryIds(
+  hiddenCategoryIds: Set<string>,
+  visibleAuctionIds: Set<string>,
+): string[] {
+  return [...hiddenCategoryIds].filter((value) => {
+    if (!value.startsWith("auction:")) return true;
+    return visibleAuctionIds.has(value.slice("auction:".length));
+  });
 }
 
 /**
@@ -394,8 +396,6 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
       return byId.has(auctionId);
     }),
   );
-  hiddenCategoryIds.delete("section:proximos-remates");
-  hiddenCategoryIds.delete("section:ventas-directas");
 
   const sourcesByAuction = new Map<string, Set<string>>();
   const reassignedVehicleKeys = new Set<string>();
@@ -480,12 +480,7 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
     }
   }
 
-  const filteredHiddenCategoryIds = new Set(
-    [...hiddenCategoryIds].filter((value) => {
-      if (!value.startsWith("auction:")) return true;
-      return visibleAuctionIds.has(value.slice("auction:".length));
-    }),
-  );
+  const filteredHiddenCategoryIds = finalizeMergedHiddenCategoryIds(hiddenCategoryIds, visibleAuctionIds);
 
   const unblockedPublication = clearHiddenBlocksForVehicleKeys(config, reassignedVehicleKeys);
 
@@ -511,9 +506,6 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
       "proximos-remates": Array.from(rematesSection),
       "ventas-directas": Array.from(ventaDirectaSection),
     },
-    hiddenCategoryIds:
-      activeRows.length > 0 || ventaDirectaInventoryRaw.length > 0
-        ? Array.from(filteredHiddenCategoryIds)
-        : preserveCatalogCommercialSections(config),
+    hiddenCategoryIds: filteredHiddenCategoryIds,
   };
 }
