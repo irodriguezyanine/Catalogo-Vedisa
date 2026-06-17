@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import dynamic from "next/dynamic";
+import nextDynamic from "next/dynamic";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getMergedEditorConfig } from "@/lib/editor-config";
 
-const CatalogHomeClient = dynamic(
+const CatalogHomeClient = nextDynamic(
   () => import("@/components/catalog-home-client").then((module) => module.CatalogHomeClient),
   {
     loading: () => (

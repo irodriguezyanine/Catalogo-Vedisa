@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
+import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
 import {
-  preserveEditorBaseSectionVisibility,
   resolveCatalogHeroDescription,
   resolveCatalogHeroKicker,
   resolveCatalogHeroTitle,
