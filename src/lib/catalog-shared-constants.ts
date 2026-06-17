@@ -102,8 +102,19 @@ export function applySharedRemateEstadoToHiddenCategories(
 ): void {
   for (const row of rows) {
     const id = String(row.id ?? "").trim();
-    if (!id || id === DEFAULT_VENTA_DIRECTA_EVENT_ID) continue;
+    if (!id) continue;
     const estado = String(row.estado ?? "").trim().toLowerCase();
+
+    if (id === DEFAULT_VENTA_DIRECTA_EVENT_ID) {
+      // Si Tasaciones activa venta directa, reflejarlo en el catálogo.
+      // No forzar ocultamiento desde Supabase: el editor del catálogo manda al cerrar.
+      if (estado === "abierto") {
+        hiddenCategoryIds.delete("section:ventas-directas");
+        hiddenCategoryIds.delete(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`);
+      }
+      continue;
+    }
+
     if (estado === "cerrado") {
       hiddenCategoryIds.add(`auction:${id}`);
     } else if (estado === "abierto") {

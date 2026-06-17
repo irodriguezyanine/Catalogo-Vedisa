@@ -55,9 +55,18 @@ describe("resolveCommercialEventType", () => {
 
 describe("applySharedRemateEstadoToHiddenCategories", () => {
   it("no fuerza ocultar ventas directas del catalogo desde remates compartidos", () => {
-    const hidden = new Set<string>();
+    const hidden = new Set(["section:ventas-directas", `auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`]);
     applySharedRemateEstadoToHiddenCategories(hidden, [
       { id: DEFAULT_VENTA_DIRECTA_EVENT_ID, estado: "cerrado" },
+    ]);
+    expect(hidden.has("section:ventas-directas")).toBe(true);
+    expect(hidden.has(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`)).toBe(true);
+  });
+
+  it("activa ventas directas en el catalogo cuando Tasaciones marca abierto", () => {
+    const hidden = new Set(["section:ventas-directas", `auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`]);
+    applySharedRemateEstadoToHiddenCategories(hidden, [
+      { id: DEFAULT_VENTA_DIRECTA_EVENT_ID, estado: "abierto" },
     ]);
     expect(hidden.has("section:ventas-directas")).toBe(false);
     expect(hidden.has(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`)).toBe(false);
