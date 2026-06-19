@@ -70,6 +70,8 @@ import {
 } from "@/lib/glo3d-client-cooldown";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
+import { AnalyticsDashboard } from "@/components/admin/analytics-dashboard";
+import { getSessionAttribution, mergeAnalyticsPayload } from "@/lib/analytics-context";
 import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background-video";
 import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
@@ -1591,12 +1593,13 @@ function trackEvent(eventName: string, payload?: Record<string, unknown>) {
     window.sessionStorage.setItem(ANALYTICS_SESSION_PAGEVIEW_KEY, "1");
   }
   const { visitorId, sessionId } = getOrCreateAnalyticsIds();
+  const enrichedPayload = mergeAnalyticsPayload(payload);
   const eventPayload = {
     event: eventName,
     timestamp: new Date().toISOString(),
     visitorId,
     sessionId,
-    ...(payload ?? {}),
+    ...enrichedPayload,
   };
   try {
     const gtag = (window as Window & { gtag?: (...args: unknown[]) => void }).gtag;
@@ -1621,7 +1624,7 @@ function trackEvent(eventName: string, payload?: Record<string, unknown>) {
         section:
           typeof payload?.section === "string" ? payload.section : undefined,
         payload: {
-          ...(payload ?? {}),
+          ...enrichedPayload,
           visitorId: eventPayload.visitorId,
           sessionId: eventPayload.sessionId,
         },
@@ -2691,6 +2694,10 @@ function HorizontalCardsRail({
                 trackEvent("whatsapp_click_card", {
                   section: sectionKey,
                   itemKey: getVehicleKey(item),
+                  patent: getPatent(item),
+                  vehicleTitle: getModel(item),
+                  commercialLane:
+                    upcomingAuctionByVehicleKey?.[getVehicleKey(item)]?.kind ?? undefined,
                 })
               }
             />
@@ -2896,23 +2903,9 @@ export function CatalogHomeClient({
   const [detailRainworxUrl, setDetailRainworxUrl] = useState("");
   const [detailRainworxImporting, setDetailRainworxImporting] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
-  const [analyticsRangeDays, setAnalyticsRangeDays] = useState<7 | 30 | 90>(30);
-  const [analyticsEvents, setAnalyticsEvents] = useState<AnalyticsEventPayload[]>([]);
-  const [serverAnalyticsEvents, setServerAnalyticsEvents] = useState<AnalyticsEventPayload[]>([]);
-  const [analyticsSource, setAnalyticsSource] = useState<"local" | "server">("local");
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [analyticsViewMode, setAnalyticsViewMode] = useState<"simple" | "advanced">("simple");
-  const [analyticsEventFilter, setAnalyticsEventFilter] = useState("all");
-  const [analyticsSectionFilter, setAnalyticsSectionFilter] = useState("all");
-  const [analyticsVehicleQuery, setAnalyticsVehicleQuery] = useState("");
-  const [analyticsChartType, setAnalyticsChartType] = useState<AnalyticsChartType>("bar");
-  const [analyticsTimelineMetric, setAnalyticsTimelineMetric] =
-    useState<AnalyticsTimelineMetric>("eventos");
-  const [analyticsDateFrom, setAnalyticsDateFrom] = useState("");
-  const [analyticsDateTo, setAnalyticsDateTo] = useState("");
-  const [showAnalyticsScopeMenu, setShowAnalyticsScopeMenu] = useState(false);
-  const [showAnalyticsChartMenu, setShowAnalyticsChartMenu] = useState(false);
-  const [analyticsChartZoom, setAnalyticsChartZoom] = useState(1);
+  const buildVehicleAnalyticsContextRef = useRef<
+    (item: CatalogItem, section?: string) => Record<string, unknown>
+  >(() => ({}));
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [offerForm, setOfferForm] = useState<OfferFormState>(buildEmptyOfferForm);
   const [offerSending, setOfferSending] = useState(false);
@@ -3214,8 +3207,7 @@ export function CatalogHomeClient({
       setSelectedVehicle(item);
       updateVehicleUrlParam(getVehicleKey(item));
       trackEvent("vehicle_detail_open", {
-        itemKey: getVehicleKey(item),
-        section: topSectionFilter,
+        ...buildVehicleAnalyticsContextRef.current(item, topSectionFilter),
       });
     },
     [updateVehicleUrlParam, topSectionFilter],
@@ -3393,73 +3385,6 @@ export function CatalogHomeClient({
     window.localStorage.setItem(HOME_CARD_DENSITY_STORAGE_KEY, cardDensity);
   }, [cardDensity]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const loadEvents = () => {
-      try {
-        const raw = window.localStorage.getItem(ANALYTICS_STORAGE_KEY);
-        const parsed = raw ? (JSON.parse(raw) as AnalyticsEventPayload[]) : [];
-        setAnalyticsEvents(Array.isArray(parsed) ? parsed : []);
-      } catch {
-        setAnalyticsEvents([]);
-      }
-    };
-    loadEvents();
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === ANALYTICS_STORAGE_KEY) loadEvents();
-    };
-    const onAnalyticsUpdated = () => loadEvents();
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("vedisa-analytics-updated", onAnalyticsUpdated);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("vedisa-analytics-updated", onAnalyticsUpdated);
-    };
-  }, []);
-
-  useEffect(() => {
-    const shouldLoadServerAnalytics = isAdmin && adminView === "editor" && adminTab === "analytics";
-    if (!shouldLoadServerAnalytics) return;
-    let cancelled = false;
-    const fetchServerAnalytics = async () => {
-      setAnalyticsLoading(true);
-      try {
-        const response = await fetch(
-          `/api/admin/analytics?days=${analyticsRangeDays}&limit=5000`,
-          { cache: "no-store" },
-        );
-        if (!response.ok) {
-          if (!cancelled) {
-            setAnalyticsSource("local");
-            setServerAnalyticsEvents([]);
-          }
-          return;
-        }
-        const payload = (await response.json()) as {
-          ok?: boolean;
-          events?: AnalyticsEventPayload[];
-        };
-        if (!cancelled && payload.ok && Array.isArray(payload.events)) {
-          setServerAnalyticsEvents(payload.events);
-          setAnalyticsSource("server");
-        } else if (!cancelled) {
-          setAnalyticsSource("local");
-          setServerAnalyticsEvents([]);
-        }
-      } catch {
-        if (!cancelled) {
-          setAnalyticsSource("local");
-          setServerAnalyticsEvents([]);
-        }
-      } finally {
-        if (!cancelled) setAnalyticsLoading(false);
-      }
-    };
-    void fetchServerAnalytics();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAdmin, adminView, adminTab, analyticsRangeDays]);
 
   useEffect(() => {
     const shouldLoadOffers = isAdmin && adminView === "editor" && adminTab === "ofertas";
@@ -3508,13 +3433,6 @@ export function CatalogHomeClient({
   }, [adminTab, inventorySubtab]);
 
   useEffect(() => {
-    if (adminTab !== "analytics") {
-      setShowAnalyticsScopeMenu(false);
-      setShowAnalyticsChartMenu(false);
-    }
-  }, [adminTab]);
-
-  useEffect(() => {
     if (typeof window === "undefined") return;
     const hasPersistedDensity = window.localStorage.getItem(HOME_CARD_DENSITY_STORAGE_KEY);
     if (hasPersistedDensity) return;
@@ -3523,6 +3441,10 @@ export function CatalogHomeClient({
 
   useEffect(() => {
     trackEvent("page_view_home", { mode: "catalogo" });
+    const attribution = getSessionAttribution();
+    if (attribution.referrerHost) {
+      trackEvent("catalog_external_referral", { referrerHost: attribution.referrerHost });
+    }
   }, []);
 
   useEffect(() => {
@@ -3814,6 +3736,62 @@ export function CatalogHomeClient({
     }
     return labels;
   }, [config.upcomingAuctions, config.vehicleUpcomingAuctionIds]);
+
+  const buildVehicleAnalyticsContext = useCallback(
+    (item: CatalogItem, section?: string) => {
+      const key = getVehicleKey(item);
+      const auctionId = config.vehicleUpcomingAuctionIds?.[key];
+      const auction = (config.upcomingAuctions ?? []).find((entry) => entry.id === auctionId);
+      const badge = upcomingAuctionByVehicleKey[key];
+      const priceRaw = resolveVehiclePriceRaw(item, config.vehiclePrices ?? {});
+      const priceAmount = getPriceAmount(priceRaw ?? undefined);
+      const lane =
+        badge?.kind ??
+        (section === "ventas-directas"
+          ? "venta_directa"
+          : section === "proximos-remates"
+            ? "remate"
+            : undefined);
+
+      return {
+        itemKey: key,
+        patent: getPatent(item),
+        vehicleTitle: getModel(item),
+        section: section && section !== "all" ? section : topSectionFilter !== "all" ? topSectionFilter : undefined,
+        auctionId,
+        auctionName: auction?.name,
+        commercialLane: lane,
+        vehicleType: inferVehicleType(item),
+        priceAmount:
+          Number.isFinite(priceAmount) && priceAmount !== Number.POSITIVE_INFINITY
+            ? priceAmount
+            : undefined,
+        has3d: Boolean(item.view3dUrl),
+        hasPrice: Boolean(priceRaw),
+      };
+    },
+    [config.upcomingAuctions, config.vehiclePrices, config.vehicleUpcomingAuctionIds, upcomingAuctionByVehicleKey, topSectionFilter],
+  );
+  buildVehicleAnalyticsContextRef.current = buildVehicleAnalyticsContext;
+
+  const lastSearchNoResultsRef = useRef("");
+  const lastViewer3dKeyRef = useRef("");
+
+  useEffect(() => {
+    const term = homeSearchTerm.trim();
+    if (!term || homeVisibleItems.length > 0) return;
+    if (lastSearchNoResultsRef.current === term) return;
+    lastSearchNoResultsRef.current = term;
+    trackEvent("search_no_results", { query: term });
+  }, [homeSearchTerm, homeVisibleItems.length]);
+
+  useEffect(() => {
+    if (!selectedVehicle?.view3dUrl) return;
+    const key = getVehicleKey(selectedVehicle);
+    if (lastViewer3dKeyRef.current === key) return;
+    lastViewer3dKeyRef.current = key;
+    trackEvent("viewer_3d_open", buildVehicleAnalyticsContextRef.current(selectedVehicle));
+  }, [selectedVehicle]);
 
   const sortedUpcomingAuctions = useMemo(
     () =>
@@ -4937,7 +4915,11 @@ export function CatalogHomeClient({
       return;
     }
     setShowOfferModal(true);
-    trackEvent("offer_modal_open", { itemKey: selectedVehicleKey });
+    trackEvent("offer_modal_open", {
+      ...(selectedVehicle
+        ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
+        : { itemKey: selectedVehicleKey }),
+    });
   }, [selectedVehicle, selectedVehicleKey, selectedVehicleReferencePriceAmount, showSystemNotice]);
 
   const closeOfferModal = useCallback(() => {
@@ -4998,7 +4980,12 @@ export function CatalogHomeClient({
         trackEvent("offer_submit_error", { itemKey: selectedVehicleKey });
         return;
       }
-      trackEvent("offer_submit_success", { itemKey: selectedVehicleKey, offerAmount });
+      trackEvent("offer_submit_success", {
+        ...(selectedVehicle
+          ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
+          : { itemKey: selectedVehicleKey }),
+        offerAmount,
+      });
       showSystemNotice(
         "success",
         "Oferta recibida",
@@ -5041,7 +5028,7 @@ export function CatalogHomeClient({
       } else {
         window.open(shareUrl, "_blank", "noreferrer");
       }
-      trackEvent("vehicle_share", { itemKey: getVehicleKey(selectedVehicle) });
+      trackEvent("vehicle_share", buildVehicleAnalyticsContextRef.current(selectedVehicle));
       showSystemNotice(
         "success",
         "Enlace listo",
@@ -7642,7 +7629,7 @@ export function CatalogHomeClient({
                   aria-pressed={active}
                   onClick={() => {
                     setHomeSiniestradoFilter(option.id);
-                    trackEvent("home_siniestro_filter_change", { value: option.id });
+                    trackEvent("home_siniestro_filter_change", { filterId: option.id });
                   }}
                   className={siniestroChipClass(active)}
                 >
@@ -7910,7 +7897,6 @@ export function CatalogHomeClient({
     },
     [getSoldCategoryLabel, showSystemNotice],
   );
-  const analyticsBaseEvents = analyticsSource === "server" ? serverAnalyticsEvents : analyticsEvents;
 
   const offersVehicleOptions = useMemo(
     () =>
@@ -8020,364 +8006,6 @@ export function CatalogHomeClient({
       }
     },
     [deletingOfferId, showSystemNotice],
-  );
-
-  const analyticsFilteredEvents = useMemo(() => {
-    if (analyticsSource === "server") return analyticsBaseEvents;
-    const now = Date.now();
-    const cutoff = now - analyticsRangeDays * 24 * 60 * 60 * 1000;
-    return analyticsBaseEvents.filter((event) => {
-      const timestamp = parseAnalyticsTimestamp(event.timestamp);
-      return timestamp ? timestamp.getTime() >= cutoff : false;
-    });
-  }, [analyticsBaseEvents, analyticsRangeDays, analyticsSource]);
-
-  const analyticsScopedEvents = useMemo(() => {
-    const query = normalizeText(analyticsVehicleQuery);
-    return analyticsFilteredEvents.filter((event) => {
-      const eventName = typeof event.event === "string" ? event.event : "";
-      if (analyticsEventFilter !== "all" && eventName !== analyticsEventFilter) return false;
-      const section = typeof event.section === "string" ? event.section : "sin-seccion";
-      if (analyticsSectionFilter !== "all" && section !== analyticsSectionFilter) return false;
-      if (!query) return true;
-      const itemKey = typeof event.itemKey === "string" ? event.itemKey : "";
-      const item = itemKey ? itemsByKey.get(itemKey) : undefined;
-      const sample = normalizeText(
-        `${itemKey} ${item ? getPatent(item) : ""} ${item ? getModel(item) : ""}`,
-      );
-      return sample.includes(query);
-    });
-  }, [
-    analyticsFilteredEvents,
-    analyticsEventFilter,
-    analyticsSectionFilter,
-    analyticsVehicleQuery,
-    itemsByKey,
-  ]);
-
-  const analyticsOverview = useMemo(() => {
-    const eventCount = analyticsScopedEvents.length;
-    const visitSessionIds = new Set(
-      analyticsScopedEvents
-        .filter((event) => event.event === "page_view_home")
-        .map((event) => (typeof event.sessionId === "string" ? event.sessionId : ""))
-        .filter(Boolean),
-    );
-    const visits =
-      visitSessionIds.size > 0
-        ? visitSessionIds.size
-        : analyticsScopedEvents.filter((event) => event.event === "page_view_home").length;
-    const uniqueVisitors = new Set(
-      analyticsScopedEvents
-        .map((event) => (typeof event.visitorId === "string" ? event.visitorId : ""))
-        .filter(Boolean),
-    ).size;
-    const detailOpens = analyticsScopedEvents.filter((event) => event.event === "vehicle_detail_open").length;
-    const whatsappClicks = analyticsScopedEvents.filter((event) =>
-      String(event.event).startsWith("whatsapp_click"),
-    ).length;
-    const shares = analyticsScopedEvents.filter((event) => event.event === "vehicle_share").length;
-    const leads = analyticsScopedEvents.filter((event) => event.event === "lead_form_submit").length;
-    const uniqueVehicles = new Set(
-      analyticsScopedEvents
-        .map((event) => event.itemKey)
-        .filter((value): value is string => typeof value === "string" && value.trim().length > 0),
-    ).size;
-
-    return {
-      eventCount,
-      visits,
-      detailOpens,
-      whatsappClicks,
-      shares,
-      leads,
-      uniqueVehicles,
-      uniqueVisitors,
-      whatsappRate: detailOpens > 0 ? Math.round((whatsappClicks / detailOpens) * 100) : 0,
-      leadRate: detailOpens > 0 ? Math.round((leads / detailOpens) * 100) : 0,
-    };
-  }, [analyticsScopedEvents]);
-
-  const analyticsTopVehicles = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const event of analyticsScopedEvents) {
-      const key = typeof event.itemKey === "string" ? event.itemKey : "";
-      if (!key) continue;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .map(([itemKey, total]) => {
-        const item = itemsByKey.get(itemKey);
-        return {
-          itemKey,
-          total,
-          patent: item ? getPatent(item) : itemKey,
-          model: item ? getModel(item) : "Vehículo no disponible",
-        };
-      })
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 10);
-  }, [analyticsScopedEvents, itemsByKey]);
-
-  const analyticsTopEvents = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const event of analyticsScopedEvents) {
-      const name = typeof event.event === "string" ? event.event : "sin_evento";
-      counts.set(name, (counts.get(name) ?? 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .map(([eventName, total]) => ({ eventName, total }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 12);
-  }, [analyticsScopedEvents]);
-
-  const analyticsTopSections = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const event of analyticsScopedEvents) {
-      const section = typeof event.section === "string" ? event.section : "sin-seccion";
-      counts.set(section, (counts.get(section) ?? 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .map(([section, total]) => ({ section, total }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 8);
-  }, [analyticsScopedEvents]);
-
-  const analyticsTimeline = useMemo<AnalyticsTimelineRow[]>(() => {
-    const buckets = new Map<
-      string,
-      {
-        total: number;
-        pageViews: number;
-        detailOpens: number;
-        whatsappClicks: number;
-        leads: number;
-        sessionIds: Set<string>;
-      }
-    >();
-    for (const event of analyticsScopedEvents) {
-      const timestamp = parseAnalyticsTimestamp(event.timestamp);
-      if (!timestamp) continue;
-      const key = timestamp.toISOString().slice(0, 10);
-      const current = buckets.get(key) ?? {
-        total: 0,
-        pageViews: 0,
-        detailOpens: 0,
-        whatsappClicks: 0,
-        leads: 0,
-        sessionIds: new Set<string>(),
-      };
-      current.total += 1;
-      if (event.event === "page_view_home") {
-        current.pageViews += 1;
-        if (typeof event.sessionId === "string" && event.sessionId.trim().length > 0) {
-          current.sessionIds.add(event.sessionId.trim());
-        }
-      }
-      if (event.event === "vehicle_detail_open") current.detailOpens += 1;
-      if (String(event.event).startsWith("whatsapp_click")) current.whatsappClicks += 1;
-      if (event.event === "lead_form_submit") current.leads += 1;
-      buckets.set(key, current);
-    }
-    return Array.from(buckets.entries())
-      .map(([date, entry]) => ({
-        date,
-        total: entry.total,
-        visits: entry.sessionIds.size > 0 ? entry.sessionIds.size : entry.pageViews,
-        detailOpens: entry.detailOpens,
-        whatsappClicks: entry.whatsappClicks,
-        leads: entry.leads,
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  }, [analyticsScopedEvents]);
-
-  const analyticsTimelineFiltered = useMemo(
-    () =>
-      analyticsTimeline.filter((row) => {
-        if (analyticsDateFrom && row.date < analyticsDateFrom) return false;
-        if (analyticsDateTo && row.date > analyticsDateTo) return false;
-        return true;
-      }),
-    [analyticsTimeline, analyticsDateFrom, analyticsDateTo],
-  );
-
-  const analyticsChartRows = useMemo(() => {
-    const addDaysIso = (iso: string, days: number): string => {
-      const date = new Date(`${iso}T00:00:00Z`);
-      if (Number.isNaN(date.getTime())) return iso;
-      date.setUTCDate(date.getUTCDate() + days);
-      return date.toISOString().slice(0, 10);
-    };
-    const diffDaysInclusive = (startIso: string, endIso: string): number => {
-      const start = new Date(`${startIso}T00:00:00Z`);
-      const end = new Date(`${endIso}T00:00:00Z`);
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 1;
-      const diff = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-      return Math.max(1, diff + 1);
-    };
-
-    const sourceMap = new Map(analyticsTimelineFiltered.map((row) => [row.date, row]));
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const lastKnownIso =
-      analyticsTimelineFiltered.length > 0
-        ? analyticsTimelineFiltered[analyticsTimelineFiltered.length - 1]?.date ?? todayIso
-        : analyticsDateTo || todayIso;
-    const firstKnownIso =
-      analyticsTimelineFiltered.length > 0
-        ? analyticsTimelineFiltered[0]?.date ?? addDaysIso(lastKnownIso, -6)
-        : analyticsDateFrom || addDaysIso(lastKnownIso, -6);
-
-    let startIso = analyticsDateFrom || firstKnownIso;
-    let endIso = analyticsDateTo || lastKnownIso;
-    if (startIso > endIso) {
-      const tmp = startIso;
-      startIso = endIso;
-      endIso = tmp;
-    }
-    const rangeDays = diffDaysInclusive(startIso, endIso);
-    if (rangeDays < 7) {
-      startIso = addDaysIso(endIso, -6);
-    }
-
-    const horizonRows: AnalyticsTimelineRow[] = [];
-    let cursorIso = startIso;
-    let safety = 0;
-    while (cursorIso <= endIso && safety < 400) {
-      const existing = sourceMap.get(cursorIso);
-      horizonRows.push(
-        existing ?? {
-          date: cursorIso,
-          total: 0,
-          visits: 0,
-          detailOpens: 0,
-          whatsappClicks: 0,
-          leads: 0,
-        },
-      );
-      cursorIso = addDaysIso(cursorIso, 1);
-      safety += 1;
-    }
-
-    return horizonRows.map((row) => {
-      let value = row.total;
-      if (analyticsTimelineMetric === "visitas") value = row.visits;
-      else if (analyticsTimelineMetric === "detalle") value = row.detailOpens;
-      else if (analyticsTimelineMetric === "whatsapp") value = row.whatsappClicks;
-      else if (analyticsTimelineMetric === "leads") value = row.leads;
-      return { ...row, value };
-    });
-  }, [analyticsTimelineFiltered, analyticsTimelineMetric, analyticsDateFrom, analyticsDateTo]);
-
-  const analyticsChartMax = useMemo(
-    () => analyticsChartRows.reduce((max, row) => Math.max(max, row.value), 0),
-    [analyticsChartRows],
-  );
-
-  const analyticsEventOptions = useMemo(() => {
-    const names = Array.from(
-      new Set(
-        analyticsFilteredEvents
-          .map((event) => (typeof event.event === "string" ? event.event : ""))
-          .filter(Boolean),
-      ),
-    ).sort((a, b) => a.localeCompare(b));
-    return names;
-  }, [analyticsFilteredEvents]);
-
-  const analyticsSectionOptions = useMemo(() => {
-    const names = Array.from(
-      new Set(
-        analyticsFilteredEvents
-          .map((event) => (typeof event.section === "string" ? event.section : "sin-seccion"))
-          .filter(Boolean),
-      ),
-    ).sort((a, b) => a.localeCompare(b));
-    return names;
-  }, [analyticsFilteredEvents]);
-
-  const analyticsChartMetricLabel = useMemo(() => {
-    if (analyticsTimelineMetric === "visitas") return "Visitas";
-    if (analyticsTimelineMetric === "detalle") return "Detalle abierto";
-    if (analyticsTimelineMetric === "whatsapp") return "Clicks WhatsApp";
-    if (analyticsTimelineMetric === "leads") return "Leads";
-    return "Eventos";
-  }, [analyticsTimelineMetric]);
-
-  const downloadAnalyticsTimelineExcel = useCallback(
-    (rows: Array<AnalyticsTimelineRow & { value: number }>) => {
-      if (rows.length === 0) {
-        showSystemNotice(
-          "info",
-          "Sin datos para exportar",
-          "No hay actividad diaria para los filtros seleccionados.",
-        );
-        return;
-      }
-      const header = [
-        "Fecha",
-        "Eventos",
-        "Visitas",
-        "Detalle abierto",
-        "Clicks WhatsApp",
-        "Leads",
-        analyticsChartMetricLabel,
-      ];
-      const lines = rows.map((row) => [
-        toCsvCell(formatAuctionDateLabel(row.date)),
-        toCsvCell(row.total),
-        toCsvCell(row.visits),
-        toCsvCell(row.detailOpens),
-        toCsvCell(row.whatsappClicks),
-        toCsvCell(row.leads),
-        toCsvCell(row.value),
-      ]);
-      const csv = `\uFEFF${header.map(toCsvCell).join(",")}\n${lines.map((line) => line.join(",")).join("\n")}`;
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      const dateTag = new Date().toISOString().slice(0, 10);
-      link.href = url;
-      link.download = `analytics-actividad-diaria-${dateTag}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      showSystemNotice(
-        "success",
-        "Exportación lista",
-        `Se descargó el archivo para Excel con ${rows.length} registro(s).`,
-      );
-    },
-    [analyticsChartMetricLabel, showSystemNotice],
-  );
-
-  const analyticsChartPoints = useMemo(() => {
-    const total = analyticsChartRows.length;
-    const zoomFactor = Math.max(1, analyticsChartZoom);
-    const compressedWidth = total <= 1 ? 0 : 920 / zoomFactor;
-    const xStart = total <= 1 ? 500 : 40 + (920 - compressedWidth) / 2;
-    return analyticsChartRows.map((row, index) => {
-      const x = total <= 1 ? 500 : xStart + (index * compressedWidth) / (total - 1);
-      const y = 220 - (analyticsChartMax > 0 ? (row.value / analyticsChartMax) * 170 : 0);
-      return { ...row, x, y };
-    });
-  }, [analyticsChartRows, analyticsChartMax, analyticsChartZoom]);
-
-  const analyticsChartLabelStep = useMemo(
-    () => Math.max(1, Math.ceil(analyticsChartPoints.length / 12)),
-    [analyticsChartPoints.length],
-  );
-
-  const handleAnalyticsChartWheel = useCallback(
-    (event: ReactWheelEvent<HTMLDivElement>) => {
-      if (analyticsChartPoints.length === 0) return;
-      event.preventDefault();
-      const direction = event.deltaY < 0 ? 1 : -1;
-      setAnalyticsChartZoom((prev) =>
-        Math.min(6, Math.max(1, Number((prev + direction * 0.2).toFixed(2)))),
-      );
-    },
-    [analyticsChartPoints.length],
   );
 
   return (
@@ -9957,541 +9585,8 @@ export function CatalogHomeClient({
             ) : null}
 
             {adminTab === "analytics" ? (
-              <div className="space-y-4">
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Analytics
-                      </p>
-                      <p className="text-sm text-slate-600">
-                        Analiza visitas, interacciones, ranking de vehículos y efectividad comercial.
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {([7, 30, 90] as const).map((days) => (
-                        <button
-                          key={`analytics-range-${days}`}
-                          type="button"
-                          onClick={() => setAnalyticsRangeDays(days)}
-                          className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold ${
-                            analyticsRangeDays === days
-                              ? "bg-cyan-600 text-white"
-                              : "border border-slate-300 bg-white text-slate-700"
-                          }`}
-                        >
-                          {days} días
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="mt-3 inline-flex rounded-full border border-slate-300 bg-white p-1">
-                    <button
-                      type="button"
-                      onClick={() => setAnalyticsViewMode("simple")}
-                      className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold ${
-                        analyticsViewMode === "simple" ? "bg-cyan-600 text-white" : "text-slate-700"
-                      }`}
-                    >
-                      Vista simple
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAnalyticsViewMode("advanced")}
-                      className={`ui-focus rounded-full px-3 py-1 text-xs font-semibold ${
-                        analyticsViewMode === "advanced" ? "bg-cyan-600 text-white" : "text-slate-700"
-                      }`}
-                    >
-                      Vista avanzada
-                    </button>
-                  </div>
-                  {analyticsLoading ? (
-                    <p className="mt-2 text-xs text-slate-500">Actualizando datos...</p>
-                  ) : null}
-                  <div className="relative mt-3 flex flex-wrap items-center gap-2">
-                    <input
-                      value={analyticsVehicleQuery}
-                      onChange={(event) => setAnalyticsVehicleQuery(event.target.value)}
-                      placeholder="Filtrar por patente o key"
-                      className="ui-focus min-w-[16rem] flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowAnalyticsScopeMenu((prev) => !prev)}
-                      className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-50"
-                      aria-label="Abrir filtros de analytics"
-                      title="Filtros"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="h-4 w-4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        aria-hidden="true"
-                      >
-                        <path d="M3 5h18M6 12h12M10 19h4" strokeLinecap="round" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAnalyticsEventFilter("all");
-                        setAnalyticsSectionFilter("all");
-                        setAnalyticsVehicleQuery("");
-                        setShowAnalyticsScopeMenu(false);
-                      }}
-                      className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
-                      aria-label="Limpiar filtros de analytics"
-                      title="Limpiar filtros"
-                    >
-                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                        <path d="M10 3a7 7 0 1 1-6.2 10.25.75.75 0 1 1 1.32-.72A5.5 5.5 0 1 0 4.5 10H6a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10.75V7.5a.75.75 0 0 1 1.5 0v1.3A7 7 0 0 1 10 3Z" />
-                      </svg>
-                    </button>
-                    {showAnalyticsScopeMenu ? (
-                      <div className="absolute right-0 top-full z-20 mt-2 w-full max-w-lg rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Filtros de analytics
-                        </p>
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <select
-                            value={analyticsEventFilter}
-                            onChange={(event) => setAnalyticsEventFilter(event.target.value)}
-                            className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-xs"
-                          >
-                            <option value="all">Todos los eventos</option>
-                            {analyticsEventOptions.map((eventName) => (
-                              <option key={`event-filter-${eventName}`} value={eventName}>
-                                {eventName}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            value={analyticsSectionFilter}
-                            onChange={(event) => setAnalyticsSectionFilter(event.target.value)}
-                            className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-xs"
-                          >
-                            <option value="all">Todas las secciones</option>
-                            {analyticsSectionOptions.map((sectionName) => (
-                              <option key={`section-filter-${sectionName}`} value={sectionName}>
-                                {sectionName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  {[
-                    ["Visitas", formatCompactNumber(analyticsOverview.visits)],
-                    ["Visitantes únicos", formatCompactNumber(analyticsOverview.uniqueVisitors)],
-                    ["Clicks WhatsApp", formatCompactNumber(analyticsOverview.whatsappClicks)],
-                    ["Leads", formatCompactNumber(analyticsOverview.leads)],
-                  ].map(([label, value]) => (
-                    <div key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-                      <p className="mt-1 text-2xl font-black text-slate-900">{value}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <div className="grid gap-2 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-4">
-                    <p><span className="font-semibold text-slate-900">WhatsApp / detalle:</span> {analyticsOverview.whatsappRate}%</p>
-                    <p><span className="font-semibold text-slate-900">Lead / detalle:</span> {analyticsOverview.leadRate}%</p>
-                    <p><span className="font-semibold text-slate-900">Eventos:</span> {formatCompactNumber(analyticsOverview.eventCount)}</p>
-                    <p><span className="font-semibold text-slate-900">Eventos por visita:</span> {analyticsOverview.visits > 0 ? (analyticsOverview.eventCount / analyticsOverview.visits).toFixed(1) : "0.0"}</p>
-                  </div>
-                </div>
-
-                <div className={`grid gap-4 ${analyticsViewMode === "advanced" ? "xl:grid-cols-3" : "xl:grid-cols-2"}`}>
-                  <div className="rounded-xl border border-slate-200 bg-white p-3 xl:col-span-1">
-                    <div className="mb-2 grid grid-cols-[1fr_112px] items-center gap-2 px-1">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Top vehículos
-                      </p>
-                      <p className="text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Interacciones
-                      </p>
-                    </div>
-                    {analyticsTopVehicles.length === 0 ? (
-                      <p className="text-sm text-slate-500">Aún no hay datos de vehículos para este rango.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {analyticsTopVehicles.slice(0, analyticsViewMode === "simple" ? 5 : 10).map((row, index) => (
-                          <div
-                            key={`top-vehicle-${row.itemKey}`}
-                            className="grid grid-cols-[1fr_112px] items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="text-xs font-semibold text-slate-500">#{index + 1} · {row.patent}</p>
-                              <p className="line-clamp-1 text-sm font-semibold text-slate-900">{row.model}</p>
-                            </div>
-                            <span className="text-right text-base font-black text-slate-900">
-                              {formatCompactNumber(row.total)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="mb-2 flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Actividad diaria
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Horizonte mínimo de 7 días siempre visible. Usa rueda del mouse para ajustar zoom temporal.
-                        </p>
-                      </div>
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={() => setShowAnalyticsChartMenu((prev) => !prev)}
-                          className={`ui-focus inline-flex h-9 w-9 items-center justify-center rounded-md border transition ${
-                            showAnalyticsChartMenu
-                              ? "border-cyan-400 bg-cyan-50 text-cyan-700"
-                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                          }`}
-                          aria-label="Opciones del gráfico de actividad diaria"
-                          title="Opciones del gráfico"
-                        >
-                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                            <path d="M4 7h9M4 17h5M14 17h6M17 7h3" strokeLinecap="round" />
-                            <circle cx="15" cy="7" r="2.5" />
-                            <circle cx="11" cy="17" r="2.5" />
-                          </svg>
-                        </button>
-                        {showAnalyticsChartMenu ? (
-                          <div className="absolute right-0 z-20 mt-2 w-[19rem] rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-                            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                              Opciones del gráfico
-                            </p>
-                            <div className="space-y-2">
-                              <select
-                                value={analyticsChartType}
-                                onChange={(event) =>
-                                  setAnalyticsChartType(event.target.value as AnalyticsChartType)
-                                }
-                                className="ui-focus w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs"
-                              >
-                                <option value="bar">Gráfico de barras</option>
-                                <option value="line">Gráfico de línea</option>
-                                <option value="area">Gráfico de área</option>
-                              </select>
-                              <select
-                                value={analyticsTimelineMetric}
-                                onChange={(event) =>
-                                  setAnalyticsTimelineMetric(event.target.value as AnalyticsTimelineMetric)
-                                }
-                                className="ui-focus w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs"
-                              >
-                                <option value="eventos">Métrica: Eventos</option>
-                                <option value="visitas">Métrica: Visitas</option>
-                                <option value="detalle">Métrica: Detalle abierto</option>
-                                <option value="whatsapp">Métrica: Clicks WhatsApp</option>
-                                <option value="leads">Métrica: Leads</option>
-                              </select>
-                              <div className="grid grid-cols-2 gap-2">
-                                <input
-                                  type="date"
-                                  value={analyticsDateFrom}
-                                  onChange={(event) => setAnalyticsDateFrom(event.target.value)}
-                                  className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-xs"
-                                  title="Fecha desde"
-                                />
-                                <input
-                                  type="date"
-                                  value={analyticsDateTo}
-                                  onChange={(event) => setAnalyticsDateTo(event.target.value)}
-                                  className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-xs"
-                                  title="Fecha hasta"
-                                />
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setAnalyticsChartZoom((prev) => Math.max(1, Number((prev - 0.25).toFixed(2))))
-                                  }
-                                  className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                                  title="Alejar"
-                                >
-                                  −
-                                </button>
-                                <span className="min-w-16 text-center text-xs font-semibold text-slate-700">
-                                  Zoom {Math.round(analyticsChartZoom * 100)}%
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setAnalyticsChartZoom((prev) => Math.min(6, Number((prev + 0.25).toFixed(2))))
-                                  }
-                                  className="ui-focus inline-flex h-8 w-8 items-center justify-center rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                                  title="Acercar"
-                                >
-                                  +
-                                </button>
-                              </div>
-                              <div className="flex items-center gap-2 pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => downloadAnalyticsTimelineExcel(analyticsChartRows)}
-                                  className="ui-focus inline-flex h-9 flex-1 items-center justify-center rounded-md border border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
-                                >
-                                  Descargar Excel
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAnalyticsDateFrom("");
-                                    setAnalyticsDateTo("");
-                                    setAnalyticsTimelineMetric("eventos");
-                                    setAnalyticsChartType("bar");
-                                    setAnalyticsChartZoom(1);
-                                  }}
-                                  className="ui-focus inline-flex h-9 items-center justify-center rounded-md border border-slate-300 bg-slate-50 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
-                                >
-                                  Limpiar
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    {analyticsChartRows.length === 0 ? (
-                      <p className="text-sm text-slate-500">Sin actividad en el rango seleccionado.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        <p className="text-xs text-slate-500">
-                          Mostrando <span className="font-semibold text-slate-700">{analyticsChartMetricLabel}</span> por día
-                          ({analyticsChartRows.length} registros).
-                        </p>
-                        <div
-                          className="rounded-md border border-slate-200 bg-slate-50 p-2"
-                          onWheel={handleAnalyticsChartWheel}
-                          onDoubleClick={() => setAnalyticsChartZoom(1)}
-                        >
-                          <svg
-                            viewBox="0 0 1000 260"
-                            className="h-72 w-full"
-                            aria-label={`${analyticsChartType === "line" ? "Línea" : analyticsChartType === "area" ? "Área" : "Barras"} de ${analyticsChartMetricLabel}`}
-                          >
-                            <line x1="40" y1="220" x2="960" y2="220" stroke="#cbd5e1" strokeWidth="1" />
-                            {analyticsChartType === "bar"
-                              ? analyticsChartPoints.map((row, index) => {
-                                  const barWidth =
-                                    analyticsChartPoints.length <= 1
-                                      ? 50
-                                      : Math.max(8, 260 / analyticsChartPoints.length);
-                                  return (
-                                    <g key={`analytics-bar-${row.date}`}>
-                                      <rect
-                                        x={row.x - barWidth / 2}
-                                        y={row.y}
-                                        width={barWidth}
-                                        height={Math.max(3, 220 - row.y)}
-                                        rx="2"
-                                        fill="#0891b2"
-                                      >
-                                        <title>{`${formatAuctionDateLabel(row.date)} · ${analyticsChartMetricLabel}: ${row.value}`}</title>
-                                      </rect>
-                                      {(analyticsChartPoints.length <= 16 ||
-                                        index === analyticsChartPoints.length - 1 ||
-                                        index % analyticsChartLabelStep === 0) && (
-                                        <text
-                                          x={row.x}
-                                          y="238"
-                                          textAnchor="middle"
-                                          fontSize="11"
-                                          fill="#475569"
-                                        >
-                                          {new Date(row.date).toLocaleDateString("es-CL", {
-                                            day: "2-digit",
-                                            month: "2-digit",
-                                          })}
-                                        </text>
-                                      )}
-                                    </g>
-                                  );
-                                })
-                              : null}
-                            {analyticsChartType !== "bar" && analyticsChartPoints.length > 0 ? (
-                              <>
-                                {analyticsChartType === "area" ? (
-                                  <path
-                                    d={`${analyticsChartPoints
-                                      .map(
-                                        (point, index) =>
-                                          `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`,
-                                      )
-                                      .join(" ")} L ${analyticsChartPoints[analyticsChartPoints.length - 1]?.x ?? 960} 220 L ${analyticsChartPoints[0]?.x ?? 40} 220 Z`}
-                                    fill="rgba(34,211,238,0.24)"
-                                  />
-                                ) : null}
-                                <path
-                                  d={analyticsChartPoints
-                                    .map(
-                                      (point, index) =>
-                                        `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`,
-                                    )
-                                    .join(" ")}
-                                  fill="none"
-                                  stroke="#0891b2"
-                                  strokeWidth="3"
-                                  strokeLinejoin="round"
-                                  strokeLinecap="round"
-                                />
-                                {analyticsChartPoints.map((point, index) => (
-                                  <g key={`analytics-point-${point.date}`}>
-                                    <circle cx={point.x} cy={point.y} r="4" fill="#0e7490">
-                                      <title>{`${formatAuctionDateLabel(point.date)} · ${analyticsChartMetricLabel}: ${point.value}`}</title>
-                                    </circle>
-                                    {(analyticsChartPoints.length <= 16 ||
-                                      index === 0 ||
-                                      index === analyticsChartPoints.length - 1 ||
-                                      index % analyticsChartLabelStep === 0) && (
-                                      <text
-                                        x={point.x}
-                                        y="238"
-                                        textAnchor="middle"
-                                        fontSize="11"
-                                        fill="#475569"
-                                      >
-                                        {new Date(point.date).toLocaleDateString("es-CL", {
-                                          day: "2-digit",
-                                          month: "2-digit",
-                                        })}
-                                      </text>
-                                    )}
-                                  </g>
-                                ))}
-                              </>
-                            ) : null}
-                          </svg>
-                        </div>
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600">
-                          <span>
-                            Zoom: <span className="font-semibold text-slate-800">{Math.round(analyticsChartZoom * 100)}%</span>
-                          </span>
-                          <span>
-                            Horizonte: <span className="font-semibold text-slate-800">{analyticsChartRows.length} día(s)</span>
-                          </span>
-                          <span className="text-slate-500">
-                            Doble clic para resetear zoom
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {analyticsViewMode === "advanced" ? (
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Eventos más frecuentes
-                    </p>
-                    {analyticsTopEvents.length === 0 ? (
-                      <p className="text-sm text-slate-500">Sin eventos para este rango.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {analyticsTopEvents.map((row) => (
-                          <div key={`top-event-${row.eventName}`} className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
-                            <span className="line-clamp-1 text-xs font-semibold text-slate-700">
-                              {getAnalyticsEventLabel(row.eventName)}
-                            </span>
-                            <span className="text-xs font-bold text-slate-900">{row.total}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  ) : null}
-                </div>
-
-                {analyticsViewMode === "advanced" ? (
-                  <div className="grid gap-4 xl:grid-cols-2">
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Actividad por sección
-                      </p>
-                      {analyticsTopSections.length === 0 ? (
-                        <p className="text-sm text-slate-500">Sin datos por sección.</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {analyticsTopSections.map((row) => (
-                            <div key={`top-section-${row.section}`} className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                              <span className="text-sm font-semibold text-slate-700">
-                                {getAnalyticsSectionLabel(row.section)}
-                              </span>
-                              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white">
-                                {row.total}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Línea completa de tiempo
-                      </p>
-                      {analyticsTimelineFiltered.length === 0 ? (
-                        <p className="text-sm text-slate-500">Sin actividad en el rango seleccionado.</p>
-                      ) : (
-                        <div className="max-h-64 space-y-2 overflow-auto pr-1">
-                          {analyticsTimelineFiltered.map((row) => (
-                            <div key={`timeline-${row.date}`} className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                              <span className="text-sm font-semibold text-slate-700">{formatAuctionDateLabel(row.date)}</span>
-                              <span className="text-sm font-bold text-slate-900">{row.total}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-
-                <details className="rounded-xl border border-slate-200 bg-white p-3" open={analyticsViewMode === "advanced"}>
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Últimos eventos ({analyticsScopedEvents.length}) {analyticsViewMode === "simple" ? "· expandible" : ""}
-                    </p>
-                  </div>
-                  {analyticsScopedEvents.length === 0 ? (
-                    <p className="text-sm text-slate-500">Sin eventos con los filtros actuales.</p>
-                  ) : (
-                    <div className="max-h-64 space-y-1 overflow-auto pr-1">
-                      {analyticsScopedEvents.slice(0, analyticsViewMode === "simple" ? 12 : 40).map((event, index) => (
-                        <div key={`analytics-event-row-${index}`} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs">
-                          <span className="line-clamp-1 font-semibold text-slate-800">
-                            {getAnalyticsEventLabel(
-                              typeof event.event === "string" ? event.event : "sin_evento",
-                            )}
-                          </span>
-                          <span className="line-clamp-1 text-slate-600">
-                            {getAnalyticsSectionLabel(
-                              typeof event.section === "string" ? event.section : "sin-seccion",
-                            )}
-                          </span>
-                          <span className="line-clamp-1 text-slate-600">{event.itemKey ?? "—"}</span>
-                          <span className="line-clamp-1 text-slate-500">
-                            {event.timestamp ? new Date(event.timestamp).toLocaleString("es-CL") : "sin fecha"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </details>
-              </div>
+              <AnalyticsDashboard />
             ) : null}
-
             {adminTab === "ofertas" ? (
               <div className="space-y-4">
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
@@ -10908,10 +10003,18 @@ export function CatalogHomeClient({
             ) : null}
             {config.homeLayout.showHeroCtas ? (
             <div className={`hero-video-cta-divider mt-4 flex flex-wrap gap-3 border-t pt-4 ${config.homeLayout.heroAlignment === "center" ? "justify-center" : ""}`}>
-              <a href={config.homeLayout.heroPrimaryCtaHref || "/vehiculos"} className="premium-btn-primary ui-focus">
+              <a
+                href={config.homeLayout.heroPrimaryCtaHref || "/vehiculos"}
+                className="premium-btn-primary ui-focus"
+                onClick={() => trackEvent("hero_cta_click", { cta: "primary" })}
+              >
                 {config.homeLayout.heroPrimaryCtaLabel || "Ver catálogo completo"}
               </a>
-              <a href={config.homeLayout.heroSecondaryCtaHref || "#como-participar"} className="premium-btn-secondary ui-focus">
+              <a
+                href={config.homeLayout.heroSecondaryCtaHref || "#como-participar"}
+                className="premium-btn-secondary ui-focus"
+                onClick={() => trackEvent("hero_cta_click", { cta: "secondary" })}
+              >
                 {config.homeLayout.heroSecondaryCtaLabel || "Explorar secciones"}
               </a>
             </div>
@@ -11107,6 +10210,10 @@ export function CatalogHomeClient({
                       trackEvent("whatsapp_click_card", {
                         section: "busqueda-inventario",
                         itemKey: getVehicleKey(item),
+                        patent: getPatent(item),
+                        vehicleTitle: getModel(item),
+                        commercialLane:
+                          upcomingAuctionByVehicleKey[getVehicleKey(item)]?.kind ?? undefined,
                       })
                     }
                   />
@@ -11413,7 +10520,13 @@ export function CatalogHomeClient({
             onShare={() => {
               void shareSelectedVehicle();
             }}
-            onWhatsappTrack={() => trackEvent("whatsapp_click_modal_mobile", { itemKey: selectedVehicleKey })}
+            onWhatsappTrack={() =>
+              trackEvent("whatsapp_click_modal_mobile", {
+                ...(selectedVehicle
+                  ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
+                  : { itemKey: selectedVehicleKey }),
+              })
+            }
             backHref={isStandaloneDetailPage ? standaloneBackHrefProp : undefined}
           />
         <div
@@ -11772,7 +10885,13 @@ export function CatalogHomeClient({
                 href={selectedVehicleWhatsappUrl}
                 target="_blank"
                 rel="noreferrer"
-                onClick={() => trackEvent("whatsapp_click_modal", { itemKey: selectedVehicleKey })}
+                onClick={() =>
+                  trackEvent("whatsapp_click_modal", {
+                    ...(selectedVehicle
+                      ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
+                      : { itemKey: selectedVehicleKey }),
+                  })
+                }
                 className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white shadow-md transition hover:brightness-95"
                 aria-label={selectedVehiclePrimaryCtaLabel}
                 title={selectedVehiclePrimaryCtaLabel}

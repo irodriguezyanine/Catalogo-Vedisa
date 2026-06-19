@@ -14,6 +14,7 @@ import {
   resolveCommercialEventBadge,
   resolveVehiclePriceRaw,
 } from "@/lib/catalog-public-inventory";
+import { mergeAnalyticsPayload } from "@/lib/analytics-context";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { EditorConfig } from "@/types/editor";
 import type { VehicleCommercialEventBadge } from "@/components/catalog-card";
@@ -167,6 +168,19 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    void fetch("/api/analytics/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "page_view_vehiculos",
+        timestamp: new Date().toISOString(),
+        payload: mergeAnalyticsPayload({ mode: "listado" }),
+      }),
+      keepalive: true,
+    }).catch(() => undefined);
   }, []);
 
   const showPatents = shouldShowPatentsToViewer(isAdmin);

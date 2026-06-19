@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/reconcile-shared",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/aggregate-analytics",
+      "schedule": "15 4 * * *"
     }
   ]
 }

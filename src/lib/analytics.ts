@@ -55,8 +55,8 @@ export async function readAnalyticsEvents(options: {
   const supabase = getAnalyticsSupabase();
   if (!supabase) return { ok: false, events: [], error: "Analytics no configurado." };
 
-  const days = Math.max(1, Math.min(options.days ?? 30, 365));
-  const limit = Math.max(50, Math.min(options.limit ?? 5000, 10000));
+  const days = Math.max(1, Math.min(options.days ?? 30, 730));
+  const limit = Math.max(50, Math.min(options.limit ?? 5000, 20000));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await supabase
