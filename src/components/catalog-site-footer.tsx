@@ -1,5 +1,11 @@
-const MAPS_URL =
-  "https://www.google.com/maps/search/?api=1&query=Arturo+Prat+6457,+Noviciado,+Pudahuel,+Chile";
+/** Coordenadas verificadas de Vedisa Remates Limitada (Arturo Prat 6457, El Noviciado). */
+const WAREHOUSE_COORDINATES = {
+  lat: -33.3914817,
+  lng: -70.8818958,
+} as const;
+
+const MAPS_URL = `https://www.google.com/maps/dir/?api=1&destination=${WAREHOUSE_COORDINATES.lat},${WAREHOUSE_COORDINATES.lng}`;
+const MAPS_EMBED_URL = `https://maps.google.com/maps?q=${WAREHOUSE_COORDINATES.lat},${WAREHOUSE_COORDINATES.lng}&hl=es&z=16&output=embed`;
 
 export function CatalogSiteFooter() {
   return (
@@ -26,7 +32,7 @@ export function CatalogSiteFooter() {
         <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-md">
           <iframe
             title="Mapa de exhibición Vedisa Remates en Arturo Prat 6457, Pudahuel"
-            src="https://maps.google.com/maps?q=Arturo+Prat+6457,+Noviciado,+Pudahuel,+Chile&z=15&output=embed"
+            src={MAPS_EMBED_URL}
             className="h-56 w-full border-0 md:h-full md:min-h-[220px]"
             loading="lazy"
             referrerPolicy="no-referrer-when-downgrade"
