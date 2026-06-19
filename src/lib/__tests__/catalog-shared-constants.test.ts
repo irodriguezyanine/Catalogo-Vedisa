@@ -4,6 +4,7 @@ import {
   collectDirectSaleVehicleKeys,
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
   preserveEditorBaseSectionVisibility,
+  reconcileVisibleRemateAuctionsSectionVisibility,
   resolveCommercialEventType,
 } from "@/lib/catalog-shared-constants";
 import type { EditorConfig } from "@/types/editor";
@@ -113,5 +114,16 @@ describe("preserveEditorBaseSectionVisibility", () => {
     const result = preserveEditorBaseSectionVisibility(editorConfig, mergedConfig);
     expect(result.hiddenCategoryIds).toContain("section:ventas-directas");
     expect(result.hiddenCategoryIds).toContain(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`);
+  });
+});
+
+describe("reconcileVisibleRemateAuctionsSectionVisibility", () => {
+  it("desoculta proximos-remates cuando hay un remate visible por subgrupo", () => {
+    const hidden = reconcileVisibleRemateAuctionsSectionVisibility(
+      ["section:proximos-remates", "section:novedades"],
+      [{ id: "ad1430b8-9327-42d0-8233-28ce5f93a724", name: "REMATE 1085", date: "2026-06-23", eventType: "remate" }],
+    );
+    expect(hidden).not.toContain("section:proximos-remates");
+    expect(hidden).toContain("section:novedades");
   });
 });

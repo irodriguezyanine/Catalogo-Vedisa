@@ -1,6 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
-import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
+import {
+  preserveEditorBaseSectionVisibility,
+  reconcileVisibleRemateAuctionsSectionVisibility,
+} from "@/lib/catalog-shared-constants";
 import {
   resolveCatalogHeroDescription,
   resolveCatalogHeroKicker,
@@ -63,6 +66,14 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
     !incomingPrimaryHref || incomingPrimaryHref === "#catalogo"
       ? defaults.homeLayout.heroPrimaryCtaHref
       : migrated?.homeLayout?.heroPrimaryCtaHref ?? defaults.homeLayout.heroPrimaryCtaHref;
+  const upcomingAuctions = (migrated?.upcomingAuctions ?? defaults.upcomingAuctions).map((auction) => ({
+    ...auction,
+    eventType:
+      auction.eventType === "venta_directa" || auction.eventType === "remate"
+        ? auction.eventType
+        : normalizeEventTypeFromName(auction.name),
+  }));
+
   return {
     sectionVehicleIds: {
       "proximos-remates":
@@ -75,18 +86,15 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       catalogo: migrated?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
     },
     hiddenVehicleIds: migrated?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
-    hiddenCategoryIds: migrated?.hiddenCategoryIds ?? defaults.hiddenCategoryIds,
+    hiddenCategoryIds: reconcileVisibleRemateAuctionsSectionVisibility(
+      migrated?.hiddenCategoryIds ?? defaults.hiddenCategoryIds,
+      upcomingAuctions,
+    ),
     soldVehicleIds: migrated?.soldVehicleIds ?? defaults.soldVehicleIds,
     soldVehicleHistory: migrated?.soldVehicleHistory ?? defaults.soldVehicleHistory,
     vehiclePrices: migrated?.vehiclePrices ?? defaults.vehiclePrices,
     vehicleDetails: migrated?.vehicleDetails ?? defaults.vehicleDetails,
-    upcomingAuctions: (migrated?.upcomingAuctions ?? defaults.upcomingAuctions).map((auction) => ({
-      ...auction,
-      eventType:
-        auction.eventType === "venta_directa" || auction.eventType === "remate"
-          ? auction.eventType
-          : normalizeEventTypeFromName(auction.name),
-    })),
+    upcomingAuctions,
     vehicleUpcomingAuctionIds:
       migrated?.vehicleUpcomingAuctionIds ?? defaults.vehicleUpcomingAuctionIds,
     sectionTexts: {
@@ -167,8 +175,15 @@ export async function getMergedEditorConfig(): Promise<EditorConfigLoadResult> {
   const { mergeSharedEventsIntoConfig } = await import("@/lib/catalog-shared-merge");
   const loaded = await getEditorConfig();
   const merged = await mergeSharedEventsIntoConfig(loaded.config);
+  const preserved = preserveEditorBaseSectionVisibility(loaded.config, merged);
   return {
-    config: preserveEditorBaseSectionVisibility(loaded.config, merged),
+    config: {
+      ...preserved,
+      hiddenCategoryIds: reconcileVisibleRemateAuctionsSectionVisibility(
+        preserved.hiddenCategoryIds,
+        preserved.upcomingAuctions,
+      ),
+    },
     persisted: loaded.persisted,
   };
 }

@@ -115,6 +115,29 @@ export function applySharedRemateEstadoToHiddenCategories(
 
 const BASE_HOME_SECTION_HIDDEN_KEYS = ["section:proximos-remates", "section:ventas-directas"] as const;
 
+function isRemateAuctionVisible(
+  auction: UpcomingAuction,
+  hiddenCategoryIds: Set<string>,
+): boolean {
+  if (resolveCommercialEventType(auction) !== "remate") return false;
+  return !hiddenCategoryIds.has(`auction:${auction.id}`);
+}
+
+/** Si hay al menos un remate visible por subgrupo, la sección base no puede quedar oculta. */
+export function reconcileVisibleRemateAuctionsSectionVisibility(
+  hiddenCategoryIds: Iterable<string> | undefined,
+  upcomingAuctions: UpcomingAuction[] | undefined,
+): string[] {
+  const hidden = new Set(hiddenCategoryIds ?? []);
+  const hasVisibleRemateAuction = (upcomingAuctions ?? []).some((auction) =>
+    isRemateAuctionVisible(auction, hidden),
+  );
+  if (hasVisibleRemateAuction) {
+    hidden.delete("section:proximos-remates");
+  }
+  return Array.from(hidden);
+}
+
 /** El editor manda la visibilidad de secciones base; el merge no puede revertirla. */
 export function preserveEditorBaseSectionVisibility(
   editorConfig: EditorConfig,

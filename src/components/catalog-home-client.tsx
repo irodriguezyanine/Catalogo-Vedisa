@@ -71,7 +71,6 @@ import {
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
 import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background-video";
-import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
 import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
 import { HomeInventorySearch } from "@/components/home-inventory-search";
@@ -97,6 +96,8 @@ import {
 import {
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
   DEFAULT_VENTA_DIRECTA_EVENT_NAME,
+  preserveEditorBaseSectionVisibility,
+  reconcileVisibleRemateAuctionsSectionVisibility,
 } from "@/lib/catalog-shared-constants";
 import {
   applyExclusiveCommercialAssignment,
@@ -730,7 +731,14 @@ function normalizeEditorConfigClient(
     manualPublications: migrated?.manualPublications ?? defaults.manualPublications,
     managedCategories: migrated?.managedCategories ?? defaults.managedCategories,
   };
-  return enforceCommercialExclusivityInConfig(baseConfig);
+  const exclusive = enforceCommercialExclusivityInConfig(baseConfig);
+  return {
+    ...exclusive,
+    hiddenCategoryIds: reconcileVisibleRemateAuctionsSectionVisibility(
+      exclusive.hiddenCategoryIds,
+      exclusive.upcomingAuctions,
+    ),
+  };
 }
 
 type ManualPublicationDraft = {
@@ -5520,6 +5528,13 @@ export function CatalogHomeClient({
           const defaultVentaDirectaAuctionKey = `auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`;
           if (willHide) set.add(defaultVentaDirectaAuctionKey);
           else set.delete(defaultVentaDirectaAuctionKey);
+        }
+        if (categoryKey.startsWith("auction:") && !willHide) {
+          const auctionId = categoryKey.slice("auction:".length);
+          const auction = (prev.upcomingAuctions ?? []).find((entry) => entry.id === auctionId);
+          if (auction && getAuctionEventType(auction) === "remate") {
+            set.delete("section:proximos-remates");
+          }
         }
         showSystemNotice(
           "success",
@@ -11103,7 +11118,16 @@ export function CatalogHomeClient({
         {resolvedHomeSectionOrder.map((sectionId) => {
           if (hasActiveSearch) return null;
           if (isBaseHomeSectionOrderId(sectionId) && hiddenHomeCategoryIds.has(sectionCategoryKey(sectionId))) {
-            return null;
+            if (
+              sectionId === "proximos-remates" &&
+              sortedRemateAuctions.some(
+                (auction) => !hiddenHomeCategoryIds.has(auctionCategoryKey(auction.id)),
+              )
+            ) {
+              // Un remate visible por subgrupo debe poder mostrarse aunque la sección base quedó oculta.
+            } else {
+              return null;
+            }
           }
           if (sectionId.startsWith("managed:")) {
             const managedCategoryId = sectionId.replace("managed:", "");
