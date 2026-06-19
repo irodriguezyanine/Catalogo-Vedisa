@@ -15,8 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://catalogo.vedisaremates.cl"),
   title: "Catálogo Oficial VEDISA REMATES | Subastas de Vehículos",
-  description:
-    "Catálogo Vedisa: revisa nuestro stock de autos disponibles para remate y venta directa, y cuéntanos cuáles te interesan para ayudarte con la mejor alternativa.",
+  description: "Información transparente de las mejores oportunidades del mercado.",
   alternates: {
     canonical: "https://catalogo.vedisaremates.cl",
   },
@@ -34,23 +33,12 @@ export const metadata: Metadata = {
     url: "https://catalogo.vedisaremates.cl",
     siteName: "VEDISA REMATES",
     title: "Catálogo Oficial VEDISA REMATES | Remates y Venta Directa",
-    description:
-      "Revisa nuestro stock de autos en Catálogo Vedisa y dinos qué unidades te interesan para asesorarte en tu compra.",
-    images: [
-      {
-        url: "/favicon.png",
-        width: 128,
-        height: 128,
-        alt: "Catálogo Vedisa",
-      },
-    ],
+    description: "Información transparente de las mejores oportunidades del mercado.",
   },
   twitter: {
     card: "summary_large_image",
     title: "Catálogo Oficial VEDISA REMATES",
-    description:
-      "Revisa nuestro stock de autos y dinos cuáles te interesan en Catálogo Vedisa.",
-    images: ["/favicon.png"],
+    description: "Información transparente de las mejores oportunidades del mercado.",
   },
 };
 
