@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { CatalogVehiclesListClient } from "@/components/catalog-vehicles-list-client";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
-import { getMergedEditorConfig } from "@/lib/editor-config";
+import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 
 export const revalidate = 120;
 
@@ -12,6 +12,6 @@ export const metadata: Metadata = {
 };
 
 export default async function VehiclesPage() {
-  const [feed, editorConfigResult] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
+  const [feed, editorConfigResult] = await Promise.all([getCachedCatalogFeed(), getCachedMergedEditorConfig()]);
   return <CatalogVehiclesListClient feed={feed} initialConfig={editorConfigResult.config} />;
 }

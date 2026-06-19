@@ -21,7 +21,7 @@ import {
   getVehicleKey,
   getVisibleCatalogItems,
 } from "@/lib/catalog-public-inventory";
-import { getMergedEditorConfig } from "@/lib/editor-config";
+import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 
 export async function assertAdminAnalytics(): Promise<
   { ok: true; email: string } | { ok: false; error: string }
@@ -55,7 +55,7 @@ export async function loadCommercialAnalytics(days: number) {
 }
 
 export async function loadPublishedInventoryContext() {
-  const [feed, editorResult] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
+  const [feed, editorResult] = await Promise.all([getCachedCatalogFeed(), getCachedMergedEditorConfig()]);
   const config = editorResult.config;
   const items = getVisibleCatalogItems(feed, config);
   const badges = buildCommercialEventByVehicleKey(config);

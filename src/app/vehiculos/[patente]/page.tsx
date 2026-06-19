@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import { CatalogHomeClient } from "@/components/catalog-home-client";
+import { CatalogHomeClientLazy } from "@/components/catalog-home-client-lazy";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getPatentFromItem } from "@/lib/catalog-keys";
 import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
-import { getMergedEditorConfig } from "@/lib/editor-config";
+import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 import { formatClpPrice } from "@/lib/format";
 
 export const revalidate = 120;
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const canonical = `${base}/vehiculos/${encodeURIComponent(decoded)}`;
 
   try {
-    const [feed, editor] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
+    const [feed, editor] = await Promise.all([getCachedCatalogFeed(), getCachedMergedEditorConfig()]);
     const item = getVisibleCatalogItems(feed, editor.config).find(
       (entry) => getPatentFromItem(entry) === decoded.replace(/\s+/g, "").replace(/-/g, ""),
     );
@@ -66,10 +66,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function VehicleDetailPage({ params }: PageProps) {
   const { patente } = await params;
   const vehicleKey = decodeURIComponent(patente);
-  const [feed, editorConfigResult] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
+  const [feed, editorConfigResult] = await Promise.all([getCachedCatalogFeed(), getCachedMergedEditorConfig()]);
 
   return (
-    <CatalogHomeClient
+    <CatalogHomeClientLazy
       feed={feed}
       initialConfig={editorConfigResult.config}
       standaloneVehicleKey={vehicleKey}

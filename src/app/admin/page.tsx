@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import nextDynamic from "next/dynamic";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
-import { getMergedEditorConfig } from "@/lib/editor-config";
+import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 
 const CatalogHomeClient = nextDynamic(
   () => import("@/components/catalog-home-client").then((module) => module.CatalogHomeClient),
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
 export default async function AdminPage() {
   const [feed, editorConfigResult] = await Promise.all([
     getCachedCatalogFeed(),
-    getMergedEditorConfig(),
+    getCachedMergedEditorConfig(),
   ]);
 
   return (

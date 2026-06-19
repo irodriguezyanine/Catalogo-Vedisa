@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getPatentFromItem } from "@/lib/catalog-keys";
 import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
-import { getMergedEditorConfig } from "@/lib/editor-config";
+import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 
 export const runtime = "edge";
 
@@ -14,7 +14,7 @@ export default async function Image({ params }: { params: Promise<{ patente: str
   let subtitle = "Catálogo VEDISA REMATES";
 
   try {
-    const [feed, editor] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
+    const [feed, editor] = await Promise.all([getCachedCatalogFeed(), getCachedMergedEditorConfig()]);
     const item = getVisibleCatalogItems(feed, editor.config).find(
       (entry) => getPatentFromItem(entry) === decoded,
     );

@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getPatentFromItem } from "@/lib/catalog-keys";
 import { isCatalogPublishedVehicle } from "@/lib/catalog-publication-rules";
-import { getMergedEditorConfig } from "@/lib/editor-config";
+import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://catalogo.vedisaremates.cl";
@@ -15,7 +15,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const [feed, editor] = await Promise.all([getCachedCatalogFeed(), getMergedEditorConfig()]);
+    const [feed, editor] = await Promise.all([getCachedCatalogFeed(), getCachedMergedEditorConfig()]);
     const visible = getVisibleCatalogItems(feed, editor.config);
     const vehicleRoutes = visible
       .map((item) => {
