@@ -602,6 +602,20 @@ function vehicleNeedsAssignEnrich(
   );
 }
 
+/** Misma regla que la etiqueta "· ficha OK" en el modal de agregar desde inventario. */
+function vehicleHasCompleteAssignFicha(
+  item: CatalogItem,
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+): boolean {
+  if (vehicleKey.startsWith("manual-")) return true;
+  return (
+    !vehicleNeedsQuickSync(item, vehicleKey, editorConfig, isStaleEditorDraftValue) &&
+    !vehicleNeedsAssignEnrich(item, vehicleKey, editorConfig) &&
+    !vehicleNeedsSourceSync(item, vehicleKey, editorConfig)
+  );
+}
+
 function getAuctionEventOrigin(auction: UpcomingAuction): CommercialEventOrigin {
   if (
     auction.eventOrigin === "subastas" ||
@@ -5261,6 +5275,23 @@ export function CatalogHomeClient({
     );
   }, [batchAssignSearchTerm, batchAssignPatentTokens, batchAssignTarget, items]);
 
+  const batchAssignSelectedNeedsImport = useMemo(
+    () =>
+      batchAssignSelectedKeys.some((vehicleKey) => {
+        const item =
+          itemsByKey.get(vehicleKey) ??
+          items.find(
+            (entry) =>
+              normalizePatentToken(getPatent(entry)) === normalizePatentToken(vehicleKey) ||
+              normalizePatentToken(getVehicleKey(entry)) === normalizePatentToken(vehicleKey),
+          );
+        if (!item) return false;
+        const key = getVehicleKey(item);
+        return !vehicleHasCompleteAssignFicha(item, key, config);
+      }),
+    [batchAssignSelectedKeys, config, items, itemsByKey],
+  );
+
   useEffect(() => {
     if (!batchAssignTarget) return;
     const visible = new Set(batchAssignCandidates.map((item) => getVehicleKey(item)));
@@ -6261,7 +6292,9 @@ export function CatalogHomeClient({
           normalizePatentToken(getPatent(item)) === patente ||
           normalizePatentToken(getVehicleKey(item)) === patente,
       );
-      return local ? !vehicleNeedsSourceSync(local, getVehicleKey(local), config) : false;
+      return local
+        ? vehicleHasCompleteAssignFicha(local, getVehicleKey(local), config)
+        : false;
     });
     if (alreadyComplete.length === patentTokens.length) {
       const keys = patentTokens
@@ -6462,27 +6495,73 @@ export function CatalogHomeClient({
       sortedUpcomingAuctions,
     );
 
+    const resolveBatchAssignItem = (vehicleKey: string): CatalogItem | undefined =>
+      itemsByKey.get(vehicleKey) ??
+      items.find(
+        (item) =>
+          normalizePatentToken(getPatent(item)) === normalizePatentToken(vehicleKey) ||
+          normalizePatentToken(getVehicleKey(item)) === normalizePatentToken(vehicleKey),
+      );
+
+    const isVehicleAlreadyInBatchTarget = (vehicleKey: string): boolean => {
+      if (batchAssignTarget.type === "auction") {
+        return (configRef.current.vehicleUpcomingAuctionIds?.[vehicleKey] ?? "") === batchAssignTarget.auctionId;
+      }
+      return (configRef.current.sectionVehicleIds?.[batchAssignTarget.sectionId] ?? []).includes(
+        vehicleKey,
+      );
+    };
+
+    const persistAndNotifyBatchAssign = async (
+      nextConfig: EditorConfig,
+      successTitle: string,
+      successBody: string,
+    ) => {
+      closeBatchAssignModal();
+      if (groupManageTarget) {
+        setGroupManageSearchTerm("");
+      }
+      setConfig(nextConfig);
+      lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+      const persistResult = await persistEditorConfigRef.current(nextConfig);
+      if (!persistResult.ok) {
+        showSystemNotice(
+          "error",
+          "No se guardó en servidor",
+          "Las unidades quedaron asignadas en este navegador, pero no se pudieron persistir ni sincronizar con Tasaciones.",
+        );
+        return;
+      }
+      const syncWarning =
+        persistResult.syncOk === false || (persistResult.syncSkipped?.length ?? 0) > 0
+          ? ` ${persistResult.syncSkipped?.slice(0, 2).join("; ") ?? "Revisa la sincronización con Tasaciones."}`
+          : "";
+      showSystemNotice("success", successTitle, `${successBody}${syncWarning}`);
+    };
+
     setBatchAssignImporting(true);
     try {
+      if (uniqueKeys.length > 0 && uniqueKeys.every(isVehicleAlreadyInBatchTarget)) {
+        await persistAndNotifyBatchAssign(
+          configRef.current,
+          "Ya asignados",
+          `Las unidades ya estaban en ${batchAssignTargetLabel}. Se re-sincronizó con Tasaciones/Subastas.`,
+        );
+        return;
+      }
+
       const enrichedItems = new Map<string, CatalogItem>();
       const enrichedDetails: Record<string, EditorVehicleDetails> = {};
       const patentsToEnrich: string[] = [];
 
       for (const vehicleKey of uniqueKeys) {
-        const direct = itemsByKey.get(vehicleKey);
-        const patentSource =
-          direct ??
-          items.find(
-            (item) =>
-              normalizePatentToken(getPatent(item)) === normalizePatentToken(vehicleKey) ||
-              normalizePatentToken(getVehicleKey(item)) === normalizePatentToken(vehicleKey),
-          );
-        if (patentSource && !vehicleNeedsAssignEnrich(patentSource, vehicleKey, config)) {
+        const patentSource = resolveBatchAssignItem(vehicleKey);
+        if (!patentSource) continue;
+        const resolvedKey = getVehicleKey(patentSource);
+        if (vehicleHasCompleteAssignFicha(patentSource, resolvedKey, configRef.current)) {
           continue;
         }
-        const patente = normalizePatentToken(
-          patentSource ? getPatent(patentSource) : vehicleKey,
-        );
+        const patente = normalizePatentToken(getPatent(patentSource));
         if (patente && patente !== "—") patentsToEnrich.push(patente);
       }
 
@@ -6502,13 +6581,13 @@ export function CatalogHomeClient({
                 ? {
                     patentes: patentsToEnrich,
                     estadoRetiro,
-                    forceRefresh: !glo3dOnCooldown,
+                    forceRefresh: false,
                     skipGlo3dFetch: glo3dOnCooldown,
                   }
                 : {
                     patente: patentsToEnrich[0],
                     estadoRetiro,
-                    forceRefresh: !glo3dOnCooldown,
+                    forceRefresh: false,
                     skipGlo3dFetch: glo3dOnCooldown,
                   },
             ),
@@ -6551,38 +6630,6 @@ export function CatalogHomeClient({
         new Set([...uniqueKeys, ...Array.from(enrichedItems.keys())]),
       );
 
-      const isVehicleAlreadyInBatchTarget = (vehicleKey: string): boolean => {
-        if (batchAssignTarget.type === "auction") {
-          return (configRef.current.vehicleUpcomingAuctionIds?.[vehicleKey] ?? "") === batchAssignTarget.auctionId;
-        }
-        return (configRef.current.sectionVehicleIds?.[batchAssignTarget.sectionId] ?? []).includes(
-          vehicleKey,
-        );
-      };
-
-      if (keysToAssign.length > 0 && keysToAssign.every(isVehicleAlreadyInBatchTarget)) {
-        const persistResult = await persistEditorConfigRef.current(configRef.current);
-        if (!persistResult.ok) {
-          showSystemNotice(
-            "error",
-            "No se guardó en servidor",
-            "Las unidades ya están asignadas aquí, pero no se pudo re-sincronizar con Tasaciones.",
-          );
-          return;
-        }
-        const syncWarning =
-          persistResult.syncOk === false || (persistResult.syncSkipped?.length ?? 0) > 0
-            ? ` ${persistResult.syncSkipped?.slice(0, 2).join("; ") ?? "Revisa la sincronización con Tasaciones."}`
-            : "";
-        showSystemNotice(
-          "success",
-          "Ya asignados",
-          `Las unidades ya estaban en ${batchAssignTargetLabel}. Se re-sincronizó con Tasaciones/Subastas.${syncWarning}`,
-        );
-        closeBatchAssignModal();
-        return;
-      }
-
       const prev = configRef.current;
       const nextDetails = { ...prev.vehicleDetails };
       for (const [key, details] of Object.entries(enrichedDetails)) {
@@ -6624,35 +6671,14 @@ export function CatalogHomeClient({
         nextConfig = { ...base, ...exclusive };
       }
 
-      setConfig(nextConfig);
-
-      lastPersistedConfigRef.current = JSON.stringify(nextConfig);
-      const persistResult = await persistEditorConfigRef.current(nextConfig);
-      if (!persistResult.ok) {
-        showSystemNotice(
-          "error",
-          "No se guardó en servidor",
-          "Las unidades quedaron seleccionadas en este navegador, pero no se pudieron persistir ni sincronizar con Tasaciones.",
-        );
-        return;
-      }
-
       const enrichedCount = enrichedItems.size;
-      const syncWarning =
-        persistResult.syncOk === false || (persistResult.syncSkipped?.length ?? 0) > 0
-          ? ` Revisa la sincronización: ${persistResult.syncSkipped?.slice(0, 2).join("; ") ?? "algunas unidades no se replicaron en Tasaciones."}`
-          : "";
-      showSystemNotice(
-        "success",
+      await persistAndNotifyBatchAssign(
+        nextConfig,
         "Unidades agregadas",
         enrichedCount > 0
-          ? `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} (${enrichedCount} actualizado(s) desde Autored/Glo3D) y sincronizados con Tasaciones/Subastas.${syncWarning}`
-          : `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} y sincronizados con Tasaciones/Subastas.${syncWarning}`,
+          ? `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} (${enrichedCount} actualizado(s) desde Autored/Glo3D) y sincronizados con Tasaciones/Subastas.`
+          : `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} y sincronizados con Tasaciones/Subastas.`,
       );
-      closeBatchAssignModal();
-      if (groupManageTarget) {
-        setGroupManageSearchTerm("");
-      }
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === "TimeoutError"
@@ -11998,8 +12024,14 @@ export function CatalogHomeClient({
 
             {batchAssignImporting ? (
               <p className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
-                Consultando Glo3D y Autored (una patente a la vez para no saturar la API). Usa la
-                patente exacta, por ejemplo <strong>TJSX32</strong>.
+                {batchAssignSelectedNeedsImport
+                  ? "Consultando Glo3D y Autored (solo unidades con ficha incompleta). Usa la patente exacta, por ejemplo "
+                  : "Guardando asignación y sincronizando con Tasaciones…"}
+                {batchAssignSelectedNeedsImport ? (
+                  <>
+                    <strong>TJSX32</strong>.
+                  </>
+                ) : null}
               </p>
             ) : null}
 
@@ -12165,7 +12197,11 @@ export function CatalogHomeClient({
                 disabled={batchAssignImporting || batchAssignSelectedKeys.length === 0}
                 className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {batchAssignImporting ? "Importando y agregando…" : "Agregar seleccionados"}
+                {batchAssignImporting
+                  ? batchAssignSelectedNeedsImport
+                    ? "Importando y agregando…"
+                    : "Agregando…"
+                  : "Agregar seleccionados"}
               </button>
             </div>
           </div>
