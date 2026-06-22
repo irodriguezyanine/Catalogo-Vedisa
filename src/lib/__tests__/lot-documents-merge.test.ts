@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest";
 import { mergeLotDocumentLinks, type LotDocumentLink } from "@/lib/lot-documents";
 
 describe("mergeLotDocumentLinks", () => {
