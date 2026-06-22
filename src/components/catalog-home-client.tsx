@@ -2939,7 +2939,9 @@ export function CatalogHomeClient({
   );
   const autoSaveReadyRef = useRef(false);
   const lastPersistedConfigRef = useRef("");
-  const persistEditorConfigRef = useRef<(config: EditorConfig) => Promise<void>>(async () => {});
+  const persistEditorConfigRef = useRef<
+    (config: EditorConfig) => Promise<{ ok: boolean; syncOk?: boolean; syncSkipped?: string[] }>
+  >(async () => ({ ok: false }));
 
   const editingValidationErrors = useMemo(() => {
     const errors: Partial<Record<keyof EditorVehicleDetails, string>> = {};
@@ -6546,6 +6548,7 @@ export function CatalogHomeClient({
         new Set([...uniqueKeys, ...Array.from(enrichedItems.keys())]),
       );
 
+      let nextConfig: EditorConfig | null = null;
       setConfig((prev) => {
         const nextDetails = { ...prev.vehicleDetails };
         for (const [key, details] of Object.entries(enrichedDetails)) {
@@ -6556,6 +6559,12 @@ export function CatalogHomeClient({
           (id) => !keysToAssign.includes(id),
         );
         const publicationUnblocked = clearPublicationBlocksForVehicleKeys(prev, keysToAssign);
+        const base = {
+          ...prev,
+          ...publicationUnblocked,
+          vehicleDetails: nextDetails,
+          hiddenVehicleIds,
+        };
 
         if (batchAssignTarget.type === "auction") {
           const auction = sortedUpcomingAuctions.find((entry) => entry.id === batchAssignTarget.auctionId);
@@ -6565,42 +6574,51 @@ export function CatalogHomeClient({
               ? "ventas-directas"
               : "proximos-remates";
           const exclusive = applyExclusiveCommercialAssignment(
-            prev,
+            base,
             keysToAssign,
             { lane, auctionId: batchAssignTarget.auctionId },
             sortedUpcomingAuctions,
           );
-          return {
-            ...prev,
-            ...publicationUnblocked,
-            vehicleDetails: nextDetails,
-            hiddenVehicleIds,
-            ...exclusive,
-          };
+          nextConfig = { ...base, ...exclusive };
+          return nextConfig;
         }
 
         const exclusive = applyExclusiveCommercialAssignment(
-          prev,
+          base,
           keysToAssign,
           { lane: "ventas-directas" },
           sortedUpcomingAuctions,
         );
-        return {
-          ...prev,
-          ...publicationUnblocked,
-          vehicleDetails: nextDetails,
-          hiddenVehicleIds,
-          ...exclusive,
-        };
+        nextConfig = { ...base, ...exclusive };
+        return nextConfig;
       });
 
+      if (!nextConfig) {
+        throw new Error("No se pudo preparar la asignación de vehículos.");
+      }
+
+      lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+      const persistResult = await persistEditorConfigRef.current(nextConfig);
+      if (!persistResult.ok) {
+        showSystemNotice(
+          "error",
+          "No se guardó en servidor",
+          "Las unidades quedaron seleccionadas en este navegador, pero no se pudieron persistir ni sincronizar con Tasaciones.",
+        );
+        return;
+      }
+
       const enrichedCount = enrichedItems.size;
+      const syncWarning =
+        persistResult.syncOk === false || (persistResult.syncSkipped?.length ?? 0) > 0
+          ? ` Revisa la sincronización: ${persistResult.syncSkipped?.slice(0, 2).join("; ") ?? "algunas unidades no se replicaron en Tasaciones."}`
+          : "";
       showSystemNotice(
         "success",
         "Unidades agregadas",
         enrichedCount > 0
-          ? `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} (${enrichedCount} actualizado(s) desde Autored/Glo3D).`
-          : `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel}.`,
+          ? `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} (${enrichedCount} actualizado(s) desde Autored/Glo3D) y sincronizados con Tasaciones/Subastas.${syncWarning}`
+          : `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} y sincronizados con Tasaciones/Subastas.${syncWarning}`,
       );
       closeBatchAssignModal();
     } catch (error) {
@@ -7144,6 +7162,7 @@ export function CatalogHomeClient({
     const payload = (await response.json().catch(() => ({}))) as {
       config?: EditorConfig;
       syncOk?: boolean;
+      sync?: { remateItemsUpserted?: number; skipped?: string[] };
       error?: string;
     };
     setSaving(false);
@@ -7161,7 +7180,7 @@ export function CatalogHomeClient({
           payload.error ?? "La configuración se guardó, pero la sincronización compartida falló.",
         );
       }
-      return;
+      return { ok: false, syncOk: payload.syncOk };
     }
     setAutoSaveState("saved");
     deletedAuctionIdsRef.current.clear();
@@ -7175,6 +7194,7 @@ export function CatalogHomeClient({
     lastPersistedConfigRef.current = JSON.stringify(configPersistida);
     setConfig(configPersistida);
     localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(configPersistida));
+    const syncSkipped = payload.sync?.skipped ?? [];
     if (payload.syncOk === false) {
       showSystemNotice(
         "info",
@@ -7182,6 +7202,7 @@ export function CatalogHomeClient({
         payload.error ?? "La configuración se guardó, pero la sincronización compartida quedó pendiente.",
       );
     }
+    return { ok: true, syncOk: payload.syncOk !== false, syncSkipped };
   }, [showSystemNotice]);
 
   persistEditorConfigRef.current = persistEditorConfig;
@@ -11975,6 +11996,9 @@ export function CatalogHomeClient({
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-slate-600">
                 {batchAssignCandidates.length} resultados · {batchAssignSelectedKeys.length} seleccionados
+                {batchAssignCandidates.length > 0 ? (
+                  <span className="text-slate-500"> · clic en cada fila para seleccionar</span>
+                ) : null}
               </p>
               <button
                 type="button"
@@ -11987,7 +12011,7 @@ export function CatalogHomeClient({
                 }
                 className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700"
               >
-                Seleccionar resultados
+                Seleccionar todos los resultados
               </button>
             </div>
 
@@ -12002,25 +12026,43 @@ export function CatalogHomeClient({
                 return (
                   <div
                     key={`assign-batch-${key}`}
-                    className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${
-                      checked ? "border-cyan-300 bg-cyan-50" : "border-slate-200 bg-white"
+                    role="checkbox"
+                    aria-checked={checked}
+                    aria-label={`${resolveVehicleListTitle(item, config.vehicleDetails)} · ${getPatent(item)}`}
+                    tabIndex={0}
+                    onClick={() => toggleBatchAssignVehicle(key)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        toggleBatchAssignVehicle(key);
+                      }
+                    }}
+                    className={`ui-focus flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition ${
+                      checked
+                        ? "border-cyan-300 bg-cyan-50 ring-1 ring-cyan-200"
+                        : "border-slate-200 bg-white hover:border-cyan-200 hover:bg-slate-50"
                     }`}
                   >
-                    <VehicleListThumbnailWithSync
-                      item={item}
-                      vehicleKey={key}
-                      editorConfig={config}
-                      onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
-                      syncingVehicleKey={syncingVehicleKey}
-                      glo3dCooldownLabel={cooldownLabel}
-                      isStaleTitle={isStaleEditorDraftValue}
-                      className="relative h-11 w-16 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => toggleBatchAssignVehicle(key)}
-                      className="ui-focus min-w-0 flex-1 text-left"
+                    <div
+                      className="shrink-0"
+                      onClick={(event) => {
+                        if ((event.target as HTMLElement).closest("button")) {
+                          event.stopPropagation();
+                        }
+                      }}
                     >
+                      <VehicleListThumbnailWithSync
+                        item={item}
+                        vehicleKey={key}
+                        editorConfig={config}
+                        onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                        syncingVehicleKey={syncingVehicleKey}
+                        glo3dCooldownLabel={cooldownLabel}
+                        isStaleTitle={isStaleEditorDraftValue}
+                        className="relative h-11 w-16 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
                       <p className="font-semibold text-slate-900">
                         {resolveVehicleListTitle(item, config.vehicleDetails)}
                       </p>
@@ -12035,17 +12077,19 @@ export function CatalogHomeClient({
                               : "· ficha OK"}
                         {alreadyInTarget ? " · ya agregado" : ""}
                       </p>
-                    </button>
-                    <VehicleQuickSyncButton
-                      item={item}
-                      vehicleKey={key}
-                      editorConfig={config}
-                      onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
-                      syncingVehicleKey={syncingVehicleKey}
-                      glo3dCooldownLabel={cooldownLabel}
-                      isStaleTitle={isStaleEditorDraftValue}
-                      variant="icon"
-                    />
+                    </div>
+                    <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
+                      <VehicleQuickSyncButton
+                        item={item}
+                        vehicleKey={key}
+                        editorConfig={config}
+                        onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
+                        syncingVehicleKey={syncingVehicleKey}
+                        glo3dCooldownLabel={cooldownLabel}
+                        isStaleTitle={isStaleEditorDraftValue}
+                        variant="icon"
+                      />
+                    </div>
                     <span
                       className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
                         checked

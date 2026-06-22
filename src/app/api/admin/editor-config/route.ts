@@ -22,15 +22,21 @@ export async function GET() {
   const cookieStore = await cookies();
   const token = cookieStore.get(ADMIN_SESSION_COOKIE_NAME)?.value;
   const session = verifyAdminSessionToken(token);
-  const result = await getMergedEditorConfig();
   if (!session.valid) {
+    const result = await getMergedEditorConfig();
     return Response.json({
       ok: true,
       config: toPublicEditorSnapshot(result.config),
       persisted: result.persisted,
     });
   }
-  return Response.json({ ok: true, config: result.config, persisted: result.persisted });
+
+  const loaded = await getEditorConfig();
+  const merged = await mergeSharedEventsIntoConfig(loaded.config, {
+    pruneOrphanCatalogAssignments: false,
+  });
+  const adminConfig = preserveEditorBaseSectionVisibility(loaded.config, merged);
+  return Response.json({ ok: true, config: adminConfig, persisted: loaded.persisted });
 }
 
 export async function PUT(req: Request) {
@@ -61,22 +67,23 @@ export async function PUT(req: Request) {
   const removedAssignments = findRemovedVehicleAssignments(previousLoaded.config, normalizedConfig);
   const removalResult = await deleteRemateItemsForRemovedAssignments(removedAssignments, normalizedConfig);
 
-  const mergedConfig = preserveEditorBaseSectionVisibility(
-    normalizedConfig,
-    await mergeSharedEventsIntoConfig(normalizedConfig),
-  );
-
   try {
-    await saveEditorConfig(mergedConfig, session.email);
-    const sync = await syncEditorConfigToSharedTablesWithOptions(mergedConfig, {
+    const sync = await syncEditorConfigToSharedTablesWithOptions(normalizedConfig, {
       deletedRemateIds: body.deletedAuctionIds ?? [],
     });
+
+    const mergedConfig = preserveEditorBaseSectionVisibility(
+      normalizedConfig,
+      await mergeSharedEventsIntoConfig(normalizedConfig),
+    );
+
+    await saveEditorConfig(mergedConfig, session.email);
     revalidateCatalogSurfaces();
     return Response.json({
       ok: true,
       sync,
       config: mergedConfig,
-      syncOk: true,
+      syncOk: sync.skipped.length === 0,
       removedFromRemate: removalResult.deleted,
     });
   } catch (error) {
@@ -84,6 +91,6 @@ export async function PUT(req: Request) {
       error instanceof Error
         ? error.message
         : "Se guardó la configuración, pero falló la sincronización compartida.";
-    return Response.json({ ok: false, error: message, config: mergedConfig, syncOk: false }, { status: 500 });
+    return Response.json({ ok: false, error: message, config: normalizedConfig, syncOk: false }, { status: 500 });
   }
 }

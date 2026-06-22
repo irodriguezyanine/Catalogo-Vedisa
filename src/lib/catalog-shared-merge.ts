@@ -373,7 +373,19 @@ async function fetchExcludedPatentesByRemate(): Promise<Map<string, Set<string>>
   return map;
 }
 
-export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
+export type MergeSharedEventsOptions = {
+  /**
+   * Si es false, no elimina asignaciones del catálogo solo porque aún no aparecen en
+   * remates_items compartidos (p. ej. lectura admin o guardado antes del push).
+   */
+  pruneOrphanCatalogAssignments?: boolean;
+};
+
+export async function mergeSharedEventsIntoConfig(
+  config: EditorConfig,
+  options: MergeSharedEventsOptions = {},
+): Promise<EditorConfig> {
+  const pruneOrphanCatalogAssignments = options.pruneOrphanCatalogAssignments !== false;
   const nowMs = Date.now();
   const soldVehicleKeys = new Set(config.soldVehicleIds ?? []);
   const rematesSection = new Set(config.sectionVehicleIds["proximos-remates"] ?? []);
@@ -472,54 +484,56 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
       for (const vehicleKey of vehicleKeys) reassignedVehicleKeys.add(vehicleKey);
     }
 
-    // Quita asignaciones huérfanas que ya no existen en remates_items compartidos.
-    for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
-      const auctionId = nextVehicleUpcomingAuctionIds[vehicleKey];
-      if (!auctionId || !visibleAuctionIdsFromRows.has(auctionId)) continue;
-      const auction = byId.get(auctionId);
-      if (!auction || resolveEditorAuctionEventType(auction) === "venta_directa") continue;
-      const allowed = patentesByRemate.get(auctionId);
-      if (!allowed || allowed.size === 0) continue;
-
-      const candidatePatentes = new Set<string>();
-      for (const alias of resolveCatalogVehicleKeys(inventoryAliases, vehicleKey)) {
-        const norm = normalizePatentKey(alias);
-        if (norm) candidatePatentes.add(norm);
-      }
-      const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
-      if (detailPatente) candidatePatentes.add(detailPatente);
-
-      const stillInRemate = [...candidatePatentes].some((patente) => allowed.has(patente));
-      if (!stillInRemate) {
-        delete nextVehicleUpcomingAuctionIds[vehicleKey];
-        rematesSection.delete(vehicleKey);
-      }
-    }
-
-    for (const remateId of remateIds) {
-      const allowed = patentesByRemate.get(remateId) ?? new Set<string>();
-      if (allowed.size > 0) continue;
+    if (pruneOrphanCatalogAssignments) {
+      // Quita asignaciones huérfanas que ya no existen en remates_items compartidos.
       for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
-        if (nextVehicleUpcomingAuctionIds[vehicleKey] !== remateId) continue;
-        delete nextVehicleUpcomingAuctionIds[vehicleKey];
-        rematesSection.delete(vehicleKey);
-      }
-    }
+        const auctionId = nextVehicleUpcomingAuctionIds[vehicleKey];
+        if (!auctionId || !visibleAuctionIdsFromRows.has(auctionId)) continue;
+        const auction = byId.get(auctionId);
+        if (!auction || resolveEditorAuctionEventType(auction) === "venta_directa") continue;
+        const allowed = patentesByRemate.get(auctionId);
+        if (!allowed || allowed.size === 0) continue;
 
-    for (const [vehicleKey, auctionId] of Object.entries(nextVehicleUpcomingAuctionIds)) {
-      const excluded = excludedPatentesByRemate.get(auctionId);
-      if (!excluded?.size) continue;
-      const candidatePatentes = new Set<string>();
-      for (const alias of resolveCatalogVehicleKeys(inventoryAliases, vehicleKey)) {
-        const norm = normalizePatentKey(alias);
-        if (norm) candidatePatentes.add(norm);
+        const candidatePatentes = new Set<string>();
+        for (const alias of resolveCatalogVehicleKeys(inventoryAliases, vehicleKey)) {
+          const norm = normalizePatentKey(alias);
+          if (norm) candidatePatentes.add(norm);
+        }
+        const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+        if (detailPatente) candidatePatentes.add(detailPatente);
+
+        const stillInRemate = [...candidatePatentes].some((patente) => allowed.has(patente));
+        if (!stillInRemate) {
+          delete nextVehicleUpcomingAuctionIds[vehicleKey];
+          rematesSection.delete(vehicleKey);
+        }
       }
-      const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
-      if (detailPatente) candidatePatentes.add(detailPatente);
-      const isExcluded = [...candidatePatentes].some((patente) => excluded.has(patente));
-      if (isExcluded) {
-        delete nextVehicleUpcomingAuctionIds[vehicleKey];
-        rematesSection.delete(vehicleKey);
+
+      for (const remateId of remateIds) {
+        const allowed = patentesByRemate.get(remateId) ?? new Set<string>();
+        if (allowed.size > 0) continue;
+        for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
+          if (nextVehicleUpcomingAuctionIds[vehicleKey] !== remateId) continue;
+          delete nextVehicleUpcomingAuctionIds[vehicleKey];
+          rematesSection.delete(vehicleKey);
+        }
+      }
+
+      for (const [vehicleKey, auctionId] of Object.entries(nextVehicleUpcomingAuctionIds)) {
+        const excluded = excludedPatentesByRemate.get(auctionId);
+        if (!excluded?.size) continue;
+        const candidatePatentes = new Set<string>();
+        for (const alias of resolveCatalogVehicleKeys(inventoryAliases, vehicleKey)) {
+          const norm = normalizePatentKey(alias);
+          if (norm) candidatePatentes.add(norm);
+        }
+        const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+        if (detailPatente) candidatePatentes.add(detailPatente);
+        const isExcluded = [...candidatePatentes].some((patente) => excluded.has(patente));
+        if (isExcluded) {
+          delete nextVehicleUpcomingAuctionIds[vehicleKey];
+          rematesSection.delete(vehicleKey);
+        }
       }
     }
   }
@@ -554,21 +568,23 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
       if (norm) ventaDirectaPoolKeys.add(norm);
     }
   }
-  for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
-    if (nextVehicleUpcomingAuctionIds[vehicleKey] !== DEFAULT_VENTA_DIRECTA_EVENT_ID) continue;
-    const candidateKeys = resolveCatalogVehicleKeys(inventoryAliases, vehicleKey);
-    const inPool = candidateKeys.some((key) => ventaDirectaPoolKeys.has(key));
-    const allowed = patentesByRemate.get(DEFAULT_VENTA_DIRECTA_EVENT_ID);
-    const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
-    const inItems =
-      Boolean(allowed?.size) &&
-      [...candidateKeys, detailPatente]
-        .map((value) => normalizePatentKey(value))
-        .filter(Boolean)
-        .some((patente) => allowed?.has(patente));
-    if (!inPool && !inItems) {
-      delete nextVehicleUpcomingAuctionIds[vehicleKey];
-      ventaDirectaSection.delete(vehicleKey);
+  if (pruneOrphanCatalogAssignments) {
+    for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
+      if (nextVehicleUpcomingAuctionIds[vehicleKey] !== DEFAULT_VENTA_DIRECTA_EVENT_ID) continue;
+      const candidateKeys = resolveCatalogVehicleKeys(inventoryAliases, vehicleKey);
+      const inPool = candidateKeys.some((key) => ventaDirectaPoolKeys.has(key));
+      const allowed = patentesByRemate.get(DEFAULT_VENTA_DIRECTA_EVENT_ID);
+      const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+      const inItems =
+        Boolean(allowed?.size) &&
+        [...candidateKeys, detailPatente]
+          .map((value) => normalizePatentKey(value))
+          .filter(Boolean)
+          .some((patente) => allowed?.has(patente));
+      if (!inPool && !inItems) {
+        delete nextVehicleUpcomingAuctionIds[vehicleKey];
+        ventaDirectaSection.delete(vehicleKey);
+      }
     }
   }
 
