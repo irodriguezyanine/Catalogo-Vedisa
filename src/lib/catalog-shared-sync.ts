@@ -494,8 +494,6 @@ export async function syncEditorConfigToSharedTablesWithOptions(
         tipo_documento: string;
         extra_fields?: Record<string, unknown> | null;
       }>) {
-        const source = String((row.extra_fields?.source_system as string | undefined) ?? "");
-        if (source !== "catalogo") continue;
         const key = `${row.remate_id}|${String(row.patente ?? "").trim().toUpperCase()}|${row.tipo_documento}`;
         if (!desiredRemateItemKeys.has(key)) {
           toDeleteIds.push(row.id);
