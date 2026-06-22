@@ -10,6 +10,7 @@ import {
   preserveEditorBaseSectionVisibility,
   mergeEditorConfigAfterServerPersist,
 } from "@/lib/catalog-shared-constants";
+import { applyRemateIdMappingsToEditorConfig } from "@/lib/catalog-shared-remate-id";
 import { getEditorConfig, getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { notifySharedSyncPeers } from "@/lib/catalog-shared-sync-peer-notify";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
@@ -76,12 +77,16 @@ export async function PUT(req: Request) {
       deletedRemateIds: body.deletedAuctionIds ?? [],
     });
 
-    const mergedFromShared = await mergeSharedEventsIntoConfig(normalizedConfig, {
+    const configAfterRemateMap = sync.remateIdMappings
+      ? applyRemateIdMappingsToEditorConfig(normalizedConfig, sync.remateIdMappings)
+      : normalizedConfig;
+
+    const mergedFromShared = await mergeSharedEventsIntoConfig(configAfterRemateMap, {
       pruneOrphanCatalogAssignments: false,
     });
     const mergedConfig = mergeEditorConfigAfterServerPersist(
-      normalizedConfig,
-      preserveEditorBaseSectionVisibility(normalizedConfig, mergedFromShared),
+      configAfterRemateMap,
+      preserveEditorBaseSectionVisibility(configAfterRemateMap, mergedFromShared),
     );
 
     await saveEditorConfig(mergedConfig, session.email);

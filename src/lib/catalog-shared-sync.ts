@@ -8,21 +8,20 @@ import {
   resolveCommercialEventType,
   resolveSharedRemateEstado,
 } from "@/lib/catalog-shared-constants";
+import {
+  resolveCanonicalRemateIdForSync,
+  type SharedRemateLookupRow,
+} from "@/lib/catalog-shared-remate-id";
 import type { EditorConfig, EditorVehicleDetails, ManualPublication } from "@/types/editor";
 
 type SyncResult = {
   rematesUpserted: number;
   remateItemsUpserted: number;
+  remateItemsMigrated: number;
   inventoryCreated: number;
   inventoryUpdated: number;
   skipped: string[];
   remateIdMappings?: Record<string, string>;
-};
-
-type SharedRemateLookupRow = {
-  id: string;
-  numero_remate?: string | null;
-  descripcion?: string | null;
 };
 
 type SyncOptions = {
@@ -315,42 +314,56 @@ async function fetchRematesForSyncLookup(
   return (data ?? []) as SharedRemateLookupRow[];
 }
 
-function extractRemateNumberFromLabel(label: string): string | null {
-  const match = label.match(/REMATE\s*(\d+)/i);
-  return match?.[1] ?? null;
-}
+async function migrateRemateItemsToCanonicalRemates(
+  supabase: NonNullable<ReturnType<typeof getServerSupabase>>,
+  remateIdAlias: Map<string, string>,
+): Promise<number> {
+  let migrated = 0;
 
-/** Usa el UUID del remate que Tasaciones ya tiene (p. ej. REMATE 1085), no uno duplicado del catálogo. */
-function resolveCanonicalRemateIdForSync(
-  configAuctionId: string,
-  auctionName: string,
-  remates: SharedRemateLookupRow[],
-): string {
-  if (remates.some((row) => row.id === configAuctionId)) return configAuctionId;
+  for (const [catalogId, canonicalId] of remateIdAlias) {
+    if (catalogId === canonicalId) continue;
 
-  const numero = extractRemateNumberFromLabel(auctionName);
-  if (numero) {
-    const byNumero = remates.find((row) => {
-      const rowNumero = String(row.numero_remate ?? "").trim();
-      const descripcion = String(row.descripcion ?? "").toUpperCase();
-      return (
-        rowNumero === numero ||
-        descripcion.includes(`REMATE ${numero}`) ||
-        descripcion.includes(`REMATE${numero}`)
-      );
-    });
-    if (byNumero?.id) return byNumero.id;
+    const { data: items, error } = await supabase
+      .from(REMATES_ITEMS_TABLE)
+      .select(
+        "id, patente, marca, modelo, ano, version, kilometraje, valor_minimo, precio_minimo_remate, valor_esperado, tipo_documento, extra_fields",
+      )
+      .eq("remate_id", catalogId);
+    if (error || !items?.length) continue;
+
+    for (const row of items as Array<RemateItemSyncRow & { id: string }>) {
+      const extraFields = {
+        ...((row.extra_fields ?? {}) as Record<string, unknown>),
+        catalog_auction_id: catalogId,
+        tasaciones_remate_id: canonicalId,
+        migrated_from_remate_id: catalogId,
+        migrated_at: new Date().toISOString(),
+      };
+      const payload: RemateItemSyncRow = {
+        remate_id: canonicalId,
+        patente: row.patente,
+        marca: row.marca,
+        modelo: row.modelo,
+        ano: row.ano,
+        version: row.version,
+        kilometraje: row.kilometraje,
+        valor_minimo: row.valor_minimo,
+        precio_minimo_remate: row.precio_minimo_remate,
+        valor_esperado: row.valor_esperado,
+        tipo_documento: row.tipo_documento,
+        extra_fields: extraFields,
+      };
+      const { error: upsertError } = await supabase
+        .from(REMATES_ITEMS_TABLE)
+        .upsert(payload, { onConflict: "remate_id,patente,tipo_documento" });
+      if (upsertError) continue;
+
+      const { error: deleteError } = await supabase.from(REMATES_ITEMS_TABLE).delete().eq("id", row.id);
+      if (!deleteError) migrated += 1;
+    }
   }
 
-  const label = auctionName.trim().toLowerCase();
-  if (label) {
-    const byDescription = remates.find((row) =>
-      String(row.descripcion ?? "").trim().toLowerCase().includes(label),
-    );
-    if (byDescription?.id) return byDescription.id;
-  }
-
-  return configAuctionId;
+  return migrated;
 }
 
 export async function syncEditorConfigToSharedTables(config: EditorConfig): Promise<SyncResult> {
@@ -366,6 +379,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
     return {
       rematesUpserted: 0,
       remateItemsUpserted: 0,
+      remateItemsMigrated: 0,
       inventoryCreated: 0,
       inventoryUpdated: 0,
       skipped: ["Falta SUPABASE_SERVICE_ROLE_KEY o URL de Supabase para sincronizar."],
@@ -375,6 +389,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   const result: SyncResult = {
     rematesUpserted: 0,
     remateItemsUpserted: 0,
+    remateItemsMigrated: 0,
     inventoryCreated: 0,
     inventoryUpdated: 0,
     skipped: [],
@@ -409,6 +424,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   }
   if (remateIdAlias.size > 0) {
     result.remateIdMappings = Object.fromEntries(remateIdAlias);
+    result.remateItemsMigrated = await migrateRemateItemsToCanonicalRemates(supabase, remateIdAlias);
   }
 
   const eventByVehicle = new Map<string, string>();
@@ -655,6 +671,15 @@ export async function deleteRemateItemsForRemovedAssignments(
     return { deleted: 0, skipped };
   }
 
+  const sharedRemates = await fetchRematesForSyncLookup(supabase);
+  const remateIdsToTry = (remateId: string): string[] => {
+    const auction = config.upcomingAuctions?.find((entry) => entry.id === remateId);
+    const canonical = auction
+      ? resolveCanonicalRemateIdForSync(remateId, auction.name, sharedRemates)
+      : remateId;
+    return [...new Set([remateId, canonical].filter(Boolean))];
+  };
+
   let deleted = 0;
   for (const { remateId, vehicleKey } of removals) {
     const patentResolved = resolveVehiclePatent(config, vehicleKey);
@@ -665,29 +690,37 @@ export async function deleteRemateItemsForRemovedAssignments(
     }
     const patenteNorm = normalizePatent(patente);
 
-    const { data: existingRows, error: readError } = await supabase
-      .from(REMATES_ITEMS_TABLE)
-      .select("id, patente")
-      .eq("remate_id", remateId);
-    if (readError) {
-      skipped.push(`No se pudieron leer ítems de ${remateId}: ${readError.message}`);
-      continue;
-    }
+    let deleteTargetRemateId = remateId;
+    let idsToDelete: string[] = [];
+    for (const candidateRemateId of remateIdsToTry(remateId)) {
+      const { data: existingRows, error: readError } = await supabase
+        .from(REMATES_ITEMS_TABLE)
+        .select("id, patente")
+        .eq("remate_id", candidateRemateId);
+      if (readError) {
+        skipped.push(`No se pudieron leer ítems de ${candidateRemateId}: ${readError.message}`);
+        continue;
+      }
 
-    const idsToDelete = (existingRows ?? [])
-      .filter((row) => normalizePatent(String(row.patente ?? "")) === patenteNorm)
-      .map((row) => String(row.id));
+      idsToDelete = (existingRows ?? [])
+        .filter((row) => normalizePatent(String(row.patente ?? "")) === patenteNorm)
+        .map((row) => String(row.id));
+      if (idsToDelete.length) {
+        deleteTargetRemateId = candidateRemateId;
+        break;
+      }
+    }
 
     if (!idsToDelete.length) continue;
 
     const { error: delError } = await supabase.from(REMATES_ITEMS_TABLE).delete().in("id", idsToDelete);
     if (delError) {
-      skipped.push(`No se pudo eliminar ${patenteNorm} de ${remateId}: ${delError.message}`);
+      skipped.push(`No se pudo eliminar ${patenteNorm} de ${deleteTargetRemateId}: ${delError.message}`);
       continue;
     }
     deleted += idsToDelete.length;
     await supabase.from("remates_items_exclusiones").upsert(
-      { remate_id: remateId, patente_norm: patenteNorm },
+      { remate_id: deleteTargetRemateId, patente_norm: patenteNorm },
       { onConflict: "remate_id,patente_norm" },
     );
     await revertInventarioTrasQuitarDeRemate(patente);
