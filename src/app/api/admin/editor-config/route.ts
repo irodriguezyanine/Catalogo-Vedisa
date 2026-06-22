@@ -1,9 +1,13 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
-import { syncEditorConfigToSharedTablesWithOptions } from "@/lib/catalog-shared-sync";
+import {
+  deleteRemateItemsForRemovedAssignments,
+  findRemovedVehicleAssignments,
+  syncEditorConfigToSharedTablesWithOptions,
+} from "@/lib/catalog-shared-sync";
 import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
-import { getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
+import { getEditorConfig, getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { toPublicEditorSnapshot } from "@/lib/public-editor-config";
 import { assertProductionSecrets, validateEditorConfigPayload } from "@/lib/validate-editor-config";
@@ -46,11 +50,17 @@ export async function PUT(req: Request) {
   if (!validation.ok) {
     return Response.json({ ok: false, error: validation.error }, { status: 400 });
   }
+
+  const previousLoaded = await getEditorConfig();
   const result = await saveEditorConfig(config, session.email);
   if (!result.ok) {
     return Response.json({ ok: false, error: result.error }, { status: 400 });
   }
   const normalizedConfig = result.normalizedConfig ?? config;
+
+  const removedAssignments = findRemovedVehicleAssignments(previousLoaded.config, normalizedConfig);
+  const removalResult = await deleteRemateItemsForRemovedAssignments(removedAssignments, normalizedConfig);
+
   const mergedConfig = preserveEditorBaseSectionVisibility(
     normalizedConfig,
     await mergeSharedEventsIntoConfig(normalizedConfig),
@@ -62,7 +72,13 @@ export async function PUT(req: Request) {
       deletedRemateIds: body.deletedAuctionIds ?? [],
     });
     revalidateCatalogSurfaces();
-    return Response.json({ ok: true, sync, config: mergedConfig, syncOk: true });
+    return Response.json({
+      ok: true,
+      sync,
+      config: mergedConfig,
+      syncOk: true,
+      removedFromRemate: removalResult.deleted,
+    });
   } catch (error) {
     const message =
       error instanceof Error

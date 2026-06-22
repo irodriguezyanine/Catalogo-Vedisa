@@ -516,3 +516,73 @@ export async function syncEditorConfigToSharedTablesWithOptions(
 
   return result;
 }
+
+export type RemovedVehicleAssignment = {
+  remateId: string;
+  vehicleKey: string;
+};
+
+/** Asignaciones que el editor quitó respecto a la config anterior. */
+export function findRemovedVehicleAssignments(
+  previous: EditorConfig,
+  next: EditorConfig,
+): RemovedVehicleAssignment[] {
+  const prev = previous.vehicleUpcomingAuctionIds ?? {};
+  const nxt = next.vehicleUpcomingAuctionIds ?? {};
+  const removals: RemovedVehicleAssignment[] = [];
+
+  for (const [vehicleKey, prevRemateId] of Object.entries(prev)) {
+    if (!prevRemateId) continue;
+    if (nxt[vehicleKey] === prevRemateId) continue;
+    removals.push({ remateId: prevRemateId, vehicleKey });
+  }
+
+  return removals;
+}
+
+/** Borra en remates_items las unidades que el catálogo dejó de asignar a un evento. */
+export async function deleteRemateItemsForRemovedAssignments(
+  removals: RemovedVehicleAssignment[],
+  config: EditorConfig,
+): Promise<{ deleted: number; skipped: string[] }> {
+  const supabase = getServerSupabase();
+  const skipped: string[] = [];
+  if (!supabase || removals.length === 0) {
+    return { deleted: 0, skipped };
+  }
+
+  let deleted = 0;
+  for (const { remateId, vehicleKey } of removals) {
+    const patentResolved = resolveVehiclePatent(config, vehicleKey);
+    const patente = patentResolved?.patente;
+    if (!patente) {
+      skipped.push(`Sin patente para quitar del remate: ${vehicleKey}`);
+      continue;
+    }
+    const patenteNorm = normalizePatent(patente);
+
+    const { data: existingRows, error: readError } = await supabase
+      .from(REMATES_ITEMS_TABLE)
+      .select("id, patente")
+      .eq("remate_id", remateId);
+    if (readError) {
+      skipped.push(`No se pudieron leer ítems de ${remateId}: ${readError.message}`);
+      continue;
+    }
+
+    const idsToDelete = (existingRows ?? [])
+      .filter((row) => normalizePatent(String(row.patente ?? "")) === patenteNorm)
+      .map((row) => String(row.id));
+
+    if (!idsToDelete.length) continue;
+
+    const { error: delError } = await supabase.from(REMATES_ITEMS_TABLE).delete().in("id", idsToDelete);
+    if (delError) {
+      skipped.push(`No se pudo eliminar ${patenteNorm} de ${remateId}: ${delError.message}`);
+      continue;
+    }
+    deleted += idsToDelete.length;
+  }
+
+  return { deleted, skipped };
+}
