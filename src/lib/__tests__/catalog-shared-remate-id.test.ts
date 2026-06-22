@@ -20,8 +20,15 @@ describe("resolveCanonicalRemateIdForSync", () => {
     ).toBe(subastasCanonicalId);
   });
 
-  it("usa el único remate que coincide por número", () => {
-    const remates = [{ id: subastasCanonicalId, numero_remate: "1085", descripcion: "REMATE 1085" }];
+  it("matchea por numero_correlativo aunque numero_remate sea Remate #01085", () => {
+    const remates = [
+      {
+        id: subastasCanonicalId,
+        numero_remate: "Remate #01085",
+        numero_correlativo: 1085,
+        descripcion: "REMATE 1085",
+      },
+    ];
 
     expect(
       resolveCanonicalRemateIdForSync(catalogDuplicateId, "REMATE 1085", remates),

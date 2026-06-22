@@ -18,6 +18,7 @@ type SyncResult = {
   rematesUpserted: number;
   remateItemsUpserted: number;
   remateItemsMigrated: number;
+  remateExclusionsCleared: number;
   inventoryCreated: number;
   inventoryUpdated: number;
   skipped: string[];
@@ -305,7 +306,7 @@ async function fetchRematesForSyncLookup(
 ): Promise<SharedRemateLookupRow[]> {
   const { data, error } = await supabase
     .from(REMATES_TABLE)
-    .select("id, numero_remate, descripcion")
+    .select("id, numero_remate, numero_correlativo, descripcion")
     .limit(2000);
   if (error) {
     console.warn("No se pudieron leer remates para mapeo de sync:", error.message);
@@ -366,6 +367,34 @@ async function migrateRemateItemsToCanonicalRemates(
   return migrated;
 }
 
+/** Supabase borra inserts en remates_items si la patente está en remates_items_exclusiones. */
+async function clearRemateItemExclusionsForAssignments(
+  supabase: NonNullable<ReturnType<typeof getServerSupabase>>,
+  remateItemRows: RemateItemSyncRow[],
+): Promise<number> {
+  let cleared = 0;
+
+  for (const row of remateItemRows) {
+    const patenteNorm = normalizePatent(row.patente);
+    if (!patenteNorm) continue;
+
+    const { data, error } = await supabase
+      .from("remates_items_exclusiones")
+      .delete()
+      .eq("remate_id", row.remate_id)
+      .eq("patente_norm", patenteNorm)
+      .select("patente_norm");
+
+    if (error) {
+      console.warn(`No se pudo limpiar exclusión ${patenteNorm}@${row.remate_id}:`, error.message);
+      continue;
+    }
+    cleared += (data ?? []).length;
+  }
+
+  return cleared;
+}
+
 export async function syncEditorConfigToSharedTables(config: EditorConfig): Promise<SyncResult> {
   return syncEditorConfigToSharedTablesWithOptions(config, {});
 }
@@ -380,6 +409,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       rematesUpserted: 0,
       remateItemsUpserted: 0,
       remateItemsMigrated: 0,
+      remateExclusionsCleared: 0,
       inventoryCreated: 0,
       inventoryUpdated: 0,
       skipped: ["Falta SUPABASE_SERVICE_ROLE_KEY o URL de Supabase para sincronizar."],
@@ -390,6 +420,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
     rematesUpserted: 0,
     remateItemsUpserted: 0,
     remateItemsMigrated: 0,
+    remateExclusionsCleared: 0,
     inventoryCreated: 0,
     inventoryUpdated: 0,
     skipped: [],
@@ -585,6 +616,11 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   }
 
   if (remateItemRows.length > 0) {
+    result.remateExclusionsCleared = await clearRemateItemExclusionsForAssignments(
+      supabase,
+      remateItemRows,
+    );
+
     const { error } = await supabase
       .from(REMATES_ITEMS_TABLE)
       .upsert(remateItemRows, { onConflict: "remate_id,patente,tipo_documento" });
