@@ -2940,6 +2940,8 @@ export function CatalogHomeClient({
   );
   const autoSaveReadyRef = useRef(false);
   const lastPersistedConfigRef = useRef("");
+  const configRef = useRef(config);
+  configRef.current = config;
   const persistEditorConfigRef = useRef<
     (config: EditorConfig) => Promise<{ ok: boolean; syncOk?: boolean; syncSkipped?: string[] }>
   >(async () => ({ ok: false }));
@@ -6549,41 +6551,70 @@ export function CatalogHomeClient({
         new Set([...uniqueKeys, ...Array.from(enrichedItems.keys())]),
       );
 
-      let nextConfig: EditorConfig | null = null;
-      setConfig((prev) => {
-        const nextDetails = { ...prev.vehicleDetails };
-        for (const [key, details] of Object.entries(enrichedDetails)) {
-          nextDetails[key] = { ...(nextDetails[key] ?? {}), ...details };
-        }
-
-        const hiddenVehicleIds = (prev.hiddenVehicleIds ?? []).filter(
-          (id) => !keysToAssign.includes(id),
-        );
-        const publicationUnblocked = clearPublicationBlocksForVehicleKeys(prev, keysToAssign);
-        const base = {
-          ...prev,
-          ...publicationUnblocked,
-          vehicleDetails: nextDetails,
-          hiddenVehicleIds,
-        };
-
+      const isVehicleAlreadyInBatchTarget = (vehicleKey: string): boolean => {
         if (batchAssignTarget.type === "auction") {
-          const auction = sortedUpcomingAuctions.find((entry) => entry.id === batchAssignTarget.auctionId);
-          const lane =
-            getAuctionCommercialEventType(auction ?? { id: batchAssignTarget.auctionId, name: "", date: "" }) ===
-            "venta_directa"
-              ? "ventas-directas"
-              : "proximos-remates";
-          const exclusive = applyExclusiveCommercialAssignment(
-            base,
-            keysToAssign,
-            { lane, auctionId: batchAssignTarget.auctionId },
-            sortedUpcomingAuctions,
-          );
-          nextConfig = { ...base, ...exclusive };
-          return nextConfig;
+          return (configRef.current.vehicleUpcomingAuctionIds?.[vehicleKey] ?? "") === batchAssignTarget.auctionId;
         }
+        return (configRef.current.sectionVehicleIds?.[batchAssignTarget.sectionId] ?? []).includes(
+          vehicleKey,
+        );
+      };
 
+      if (keysToAssign.length > 0 && keysToAssign.every(isVehicleAlreadyInBatchTarget)) {
+        const persistResult = await persistEditorConfigRef.current(configRef.current);
+        if (!persistResult.ok) {
+          showSystemNotice(
+            "error",
+            "No se guardó en servidor",
+            "Las unidades ya están asignadas aquí, pero no se pudo re-sincronizar con Tasaciones.",
+          );
+          return;
+        }
+        const syncWarning =
+          persistResult.syncOk === false || (persistResult.syncSkipped?.length ?? 0) > 0
+            ? ` ${persistResult.syncSkipped?.slice(0, 2).join("; ") ?? "Revisa la sincronización con Tasaciones."}`
+            : "";
+        showSystemNotice(
+          "success",
+          "Ya asignados",
+          `Las unidades ya estaban en ${batchAssignTargetLabel}. Se re-sincronizó con Tasaciones/Subastas.${syncWarning}`,
+        );
+        closeBatchAssignModal();
+        return;
+      }
+
+      const prev = configRef.current;
+      const nextDetails = { ...prev.vehicleDetails };
+      for (const [key, details] of Object.entries(enrichedDetails)) {
+        nextDetails[key] = { ...(nextDetails[key] ?? {}), ...details };
+      }
+      const hiddenVehicleIds = (prev.hiddenVehicleIds ?? []).filter(
+        (id) => !keysToAssign.includes(id),
+      );
+      const publicationUnblocked = clearPublicationBlocksForVehicleKeys(prev, keysToAssign);
+      const base: EditorConfig = {
+        ...prev,
+        ...publicationUnblocked,
+        vehicleDetails: nextDetails,
+        hiddenVehicleIds,
+      };
+
+      let nextConfig: EditorConfig;
+      if (batchAssignTarget.type === "auction") {
+        const auction = sortedUpcomingAuctions.find((entry) => entry.id === batchAssignTarget.auctionId);
+        const lane =
+          getAuctionCommercialEventType(auction ?? { id: batchAssignTarget.auctionId, name: "", date: "" }) ===
+          "venta_directa"
+            ? "ventas-directas"
+            : "proximos-remates";
+        const exclusive = applyExclusiveCommercialAssignment(
+          base,
+          keysToAssign,
+          { lane, auctionId: batchAssignTarget.auctionId },
+          sortedUpcomingAuctions,
+        );
+        nextConfig = { ...base, ...exclusive };
+      } else {
         const exclusive = applyExclusiveCommercialAssignment(
           base,
           keysToAssign,
@@ -6591,12 +6622,9 @@ export function CatalogHomeClient({
           sortedUpcomingAuctions,
         );
         nextConfig = { ...base, ...exclusive };
-        return nextConfig;
-      });
-
-      if (!nextConfig) {
-        throw new Error("No se pudo preparar la asignación de vehículos.");
       }
+
+      setConfig(nextConfig);
 
       lastPersistedConfigRef.current = JSON.stringify(nextConfig);
       const persistResult = await persistEditorConfigRef.current(nextConfig);
