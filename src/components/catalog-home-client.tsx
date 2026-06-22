@@ -11,6 +11,7 @@ import {
   type MouseEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -75,6 +76,7 @@ import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
 import { EditorVehiculoDocumentos } from "@/components/admin/EditorVehiculoDocumentos";
 import { AnalyticsDashboard } from "@/components/admin/analytics-dashboard";
 import { getSessionAttribution, mergeAnalyticsPayload } from "@/lib/analytics-context";
+import { formatHeroNextRemateLabel } from "@/lib/auction-display";
 import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background-video";
 import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
@@ -1311,13 +1313,6 @@ function formatAuctionWindowLabel(auction: UpcomingAuction): string {
   return formatAuctionDateLabel(auction.date);
 }
 
-function formatDateDash(value: Date): string {
-  const dd = String(value.getDate()).padStart(2, "0");
-  const mm = String(value.getMonth() + 1).padStart(2, "0");
-  const yyyy = value.getFullYear();
-  return `${dd}-${mm}-${yyyy}`;
-}
-
 function getTimeZoneOffsetMinutes(timeZone: string, date: Date): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -1396,21 +1391,6 @@ function parseAuctionDateTime(auction: UpcomingAuction): Date | null {
   }
 
   return buildDateInTimeZone(year, month, day, hours, minutes, "America/Santiago");
-}
-
-function formatAuctionCountdownClock(diffMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
-  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
-  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${hours}:${minutes}:${seconds}`;
-}
-
-function formatAuctionCountdownHours(targetDate: Date, nowMs: number): string {
-  const diffMs = targetDate.getTime() - nowMs;
-  const diffHours = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60)));
-  const clock = formatAuctionCountdownClock(diffMs);
-  return `Próximo remate en ${diffHours} (${clock}) horas`;
 }
 
 function isRecentAuctionDate(value?: string): boolean {
@@ -2813,6 +2793,10 @@ export function CatalogHomeClient({
 }: Props) {
   const router = useRouter();
   const isStandaloneDetailPage = Boolean(standaloneVehicleKey?.trim());
+  const [canUseDomPortal, setCanUseDomPortal] = useState(false);
+  useEffect(() => {
+    setCanUseDomPortal(true);
+  }, []);
   const [config, setConfig] = useState<EditorConfig>(() =>
     normalizeEditorConfigClient(initialConfig),
   );
@@ -2946,7 +2930,6 @@ export function CatalogHomeClient({
     unorderedList: false,
     orderedList: false,
   }));
-  const [countdownNowMs, setCountdownNowMs] = useState<number | null>(null);
   const manualObservationsEditorRef = useRef<HTMLDivElement | null>(null);
   const heroTitleEditorRef = useRef<HTMLDivElement | null>(null);
   const heroSubtitleEditorRef = useRef<HTMLDivElement | null>(null);
@@ -4104,24 +4087,11 @@ export function CatalogHomeClient({
     return upcoming[0] ?? null;
   }, [sortedRemateAuctions]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setCountdownNowMs(Date.now());
-    }, 1000);
-    setCountdownNowMs(Date.now());
-    return () => window.clearInterval(timer);
-  }, []);
-
   const heroAuctionCountdown = useMemo(() => {
-    if (countdownNowMs === null || !nextAuction?.date) return null;
-    const diffMs = nextAuction.date.getTime() - countdownNowMs;
-    if (diffMs <= 0) return null;
-    return {
-      label: formatAuctionCountdownHours(nextAuction.date, countdownNowMs),
-      name: nextAuction.auction.name,
-      dateLabel: formatDateDash(nextAuction.date),
-    };
-  }, [nextAuction, countdownNowMs]);
+    if (!nextAuction) return null;
+    const label = formatHeroNextRemateLabel(nextAuction.auction);
+    return label ? { label } : null;
+  }, [nextAuction]);
 
   const toggleQuickFilter = (filterId: QuickFilterId) => {
     if (!isAllowedHomeBodyFilter(filterId)) return;
@@ -10095,12 +10065,8 @@ export function CatalogHomeClient({
             </div>
             ) : null}
             {heroAuctionCountdown ? (
-            <div className={`hero-video-countdown mt-4 inline-flex w-fit flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${config.homeLayout.heroAlignment === "center" ? "mx-auto justify-center" : ""}`}>
+            <div className={`hero-video-countdown mt-4 inline-flex w-fit rounded-xl border px-3 py-2 text-xs font-semibold ${config.homeLayout.heroAlignment === "center" ? "mx-auto justify-center" : ""}`}>
               <span>{heroAuctionCountdown.label}</span>
-              <span className="text-amber-200/80">-</span>
-              <span>{heroAuctionCountdown.name}</span>
-              <span className="text-amber-200/80">-</span>
-              <span>{heroAuctionCountdown.dateLabel}</span>
             </div>
             ) : null}
             </div>
@@ -10922,91 +10888,96 @@ export function CatalogHomeClient({
               </div>
             </div>
           </div>
-          <div
-            className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-[76] hidden md:bottom-5 md:block"
-            aria-label="Acciones del vehículo"
-          >
-            <div
-              className={`mx-auto flex w-full max-w-7xl justify-end ${
-                isStandaloneDetailPage ? "px-4 sm:px-6 lg:px-8" : "px-3 md:px-6"
-              }`}
-            >
-              <div
-                className="pointer-events-auto flex flex-wrap items-center justify-end gap-2"
-                onClick={(event) => event.stopPropagation()}
-              >
-              <button
-                type="button"
-                onClick={openOfferModal}
-                disabled={selectedVehicleReferencePriceAmount <= 0}
-                className="ui-focus inline-flex h-10 items-center justify-center rounded-full border border-cyan-300 bg-cyan-50 px-4 text-xs font-semibold text-cyan-700 shadow-md transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Enviar mi precio"
-                title={
-                  selectedVehicleReferencePriceAmount > 0
-                    ? "Enviar mi precio"
-                    : "No hay precio referencial disponible"
-                }
-              >
-                Enviar mi precio
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void shareSelectedVehicle();
-                }}
-                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 shadow-md transition hover:bg-slate-50"
-                aria-label="Compartir"
-                title="Compartir"
-              >
-                <ShareIcon className="h-4 w-4" />
-              </button>
-              <a
-                href={selectedVehicleWhatsappUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() =>
-                  trackEvent("whatsapp_click_modal", {
-                    ...(selectedVehicle
-                      ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
-                      : { itemKey: selectedVehicleKey }),
-                  })
-                }
-                className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white shadow-md transition hover:brightness-95"
-                aria-label={selectedVehiclePrimaryCtaLabel}
-                title={selectedVehiclePrimaryCtaLabel}
-              >
-                <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="currentColor" aria-hidden="true">
-                  <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.46 1.33 4.96L2 22l5.3-1.38a9.83 9.83 0 0 0 4.74 1.21h.01c5.45 0 9.87-4.42 9.87-9.88A9.87 9.87 0 0 0 12.04 2Zm0 18.03h-.01a8.13 8.13 0 0 1-4.14-1.14l-.3-.18-3.15.82.84-3.07-.2-.31a8.13 8.13 0 0 1-1.25-4.3c0-4.51 3.69-8.2 8.22-8.2 4.53 0 8.21 3.68 8.21 8.2 0 4.53-3.69 8.2-8.22 8.2Zm4.49-6.19c-.25-.12-1.49-.73-1.72-.81-.23-.09-.4-.12-.57.12-.17.25-.65.81-.8.97-.15.17-.29.19-.54.06-.25-.12-1.04-.38-1.99-1.22-.74-.66-1.24-1.48-1.39-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.44.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.44-.06-.12-.57-1.37-.78-1.88-.21-.49-.42-.42-.57-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.09 0 1.23.9 2.42 1.03 2.58.12.17 1.77 2.71 4.29 3.8.6.26 1.07.42 1.43.54.6.19 1.15.16 1.59.1.49-.07 1.49-.61 1.7-1.2.21-.59.21-1.1.15-1.2-.06-.1-.23-.16-.48-.28Z" />
-                </svg>
-              </a>
-              {isStandaloneDetailPage ? (
-                <Link
-                  href={standaloneBackHrefProp}
-                  className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md transition hover:bg-slate-50"
-                  aria-label="Volver a vehículos disponibles"
-                  title="Volver a vehículos disponibles"
-                >
-                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-                    <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </Link>
-              ) : (
-                <button
-                  type="button"
-                  className="ui-focus hidden h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md transition hover:bg-slate-50 md:inline-flex"
-                  onClick={navigateBackFromVehicleDetail}
-                  aria-label="Volver a resultados"
-                  title="Volver a resultados"
-                >
-                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-                    <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              )}
-              </div>
-            </div>
-          </div>
         </div>
+          {canUseDomPortal && selectedVehicle
+            ? createPortal(
+                <div
+                  className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-[80] hidden md:bottom-5 md:block"
+                  aria-label="Acciones del vehículo"
+                >
+                  <div
+                    className={`mx-auto flex w-full max-w-7xl justify-end ${
+                      isStandaloneDetailPage ? "px-4 sm:px-6 lg:px-8" : "px-3 md:px-6"
+                    }`}
+                  >
+                    <div
+                      className="pointer-events-auto flex flex-wrap items-center justify-end gap-2"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={openOfferModal}
+                        disabled={selectedVehicleReferencePriceAmount <= 0}
+                        className="ui-focus inline-flex h-10 items-center justify-center rounded-full border border-cyan-300 bg-cyan-50 px-4 text-xs font-semibold text-cyan-700 shadow-md transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label="Enviar mi precio"
+                        title={
+                          selectedVehicleReferencePriceAmount > 0
+                            ? "Enviar mi precio"
+                            : "No hay precio referencial disponible"
+                        }
+                      >
+                        Enviar mi precio
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void shareSelectedVehicle();
+                        }}
+                        className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 shadow-md transition hover:bg-slate-50"
+                        aria-label="Compartir"
+                        title="Compartir"
+                      >
+                        <ShareIcon className="h-4 w-4" />
+                      </button>
+                      <a
+                        href={selectedVehicleWhatsappUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={() =>
+                          trackEvent("whatsapp_click_modal", {
+                            ...(selectedVehicle
+                              ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
+                              : { itemKey: selectedVehicleKey }),
+                          })
+                        }
+                        className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white shadow-md transition hover:brightness-95"
+                        aria-label={selectedVehiclePrimaryCtaLabel}
+                        title={selectedVehiclePrimaryCtaLabel}
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="currentColor" aria-hidden="true">
+                          <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.46 1.33 4.96L2 22l5.3-1.38a9.83 9.83 0 0 0 4.74 1.21h.01c5.45 0 9.87-4.42 9.87-9.88A9.87 9.87 0 0 0 12.04 2Zm0 18.03h-.01a8.13 8.13 0 0 1-4.14-1.14l-.3-.18-3.15.82.84-3.07-.2-.31a8.13 8.13 0 0 1-1.25-4.3c0-4.51 3.69-8.2 8.22-8.2 4.53 0 8.21 3.68 8.21 8.2 0 4.53-3.69 8.2-8.22 8.2Zm4.49-6.19c-.25-.12-1.49-.73-1.72-.81-.23-.09-.4-.12-.57.12-.17.25-.65.81-.8.97-.15.17-.29.19-.54.06-.25-.12-1.04-.38-1.99-1.22-.74-.66-1.24-1.48-1.39-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.44.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.44-.06-.12-.57-1.37-.78-1.88-.21-.49-.42-.42-.57-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.09 0 1.23.9 2.42 1.03 2.58.12.17 1.77 2.71 4.29 3.8.6.26 1.07.42 1.43.54.6.19 1.15.16 1.59.1.49-.07 1.49-.61 1.7-1.2.21-.59.21-1.1.15-1.2-.06-.1-.23-.16-.48-.28Z" />
+                        </svg>
+                      </a>
+                      {isStandaloneDetailPage ? (
+                        <Link
+                          href={standaloneBackHrefProp}
+                          className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md transition hover:bg-slate-50"
+                          aria-label="Volver a vehículos disponibles"
+                          title="Volver a vehículos disponibles"
+                        >
+                          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                            <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          className="ui-focus hidden h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md transition hover:bg-slate-50 md:inline-flex"
+                          onClick={navigateBackFromVehicleDetail}
+                          aria-label="Volver a resultados"
+                          title="Volver a resultados"
+                        >
+                          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+                            <path d="M11.75 4.5L6.25 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>,
+                document.body,
+              )
+            : null}
           {selectedVehicleLightboxImage ? (
             <div
               className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 p-4"

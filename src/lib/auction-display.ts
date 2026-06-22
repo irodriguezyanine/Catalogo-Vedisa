@@ -1,15 +1,33 @@
 import type { UpcomingAuction } from "@/types/editor";
 
+const CHILE_TIME_ZONE = "America/Santiago";
+
 function parseAuctionStartDate(auction: UpcomingAuction): Date | null {
   if (auction.startAt) {
     const start = new Date(auction.startAt);
     if (!Number.isNaN(start.getTime())) return start;
   }
-  if (auction.date) {
-    const date = new Date(auction.date);
-    if (!Number.isNaN(date.getTime())) return date;
+  const rawDate = (auction.date ?? "").trim();
+  if (!rawDate) return null;
+
+  if (rawDate.includes("T")) {
+    const parsed = new Date(rawDate);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
   }
-  return null;
+
+  const dateMatch = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!dateMatch) {
+    const fallback = new Date(rawDate);
+    return Number.isNaN(fallback.getTime()) ? null : fallback;
+  }
+
+  const timeMatch = auction.name.match(/(\d{1,2}):(\d{2})/);
+  const hours = timeMatch ? Number(timeMatch[1]) : 10;
+  const minutes = timeMatch ? Number(timeMatch[2]) : 0;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const localIso = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}T${pad(hours)}:${pad(minutes)}:00`;
+  const parsed = new Date(localIso);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function parseAuctionEndDate(auction: UpcomingAuction): Date | null {
@@ -54,6 +72,32 @@ export function formatAuctionHumanSchedule(auction: UpcomingAuction): string {
   }
 
   return `${capitalizedDay} · ${formatClock(start)}`;
+}
+
+export function formatHeroNextRemateLabel(auction: UpcomingAuction): string | null {
+  const start = parseAuctionStartDate(auction);
+  if (!start) return null;
+
+  const weekday = start.toLocaleDateString("es-CL", {
+    weekday: "long",
+    timeZone: CHILE_TIME_ZONE,
+  });
+  const day = start.toLocaleDateString("es-CL", {
+    day: "numeric",
+    timeZone: CHILE_TIME_ZONE,
+  });
+  const month = start.toLocaleDateString("es-CL", {
+    month: "long",
+    timeZone: CHILE_TIME_ZONE,
+  });
+  const time = start.toLocaleTimeString("es-CL", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: CHILE_TIME_ZONE,
+  });
+
+  return `Próximo remate el ${weekday} ${day} de ${month} a las ${time}`;
 }
 
 export function formatAuctionDaysUntilBadge(auction: UpcomingAuction, nowMs = Date.now()): string | null {

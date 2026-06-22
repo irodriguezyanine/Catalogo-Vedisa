@@ -53,20 +53,24 @@ export function RematesEmptyHomeState() {
   );
 }
 
+const REMATE_WEB_URL =
+  process.env.NEXT_PUBLIC_RAINWORX_URL ?? "https://www.vehiculoschocados.cl";
+
 function AuctionEventHero({
   auction,
   items,
   variant,
-  subastasUrl,
+  sectionId,
 }: {
   auction: UpcomingAuction;
   items: CatalogItem[];
   variant: UpcomingAuctionsSectionVariant;
-  subastasUrl: string;
+  sectionId: string;
 }) {
   const scheduleLabel = formatAuctionHumanSchedule(auction);
   const daysBadge = formatAuctionDaysUntilBadge(auction);
   const previewItems = items.slice(0, 3);
+  const listadoHref = `#${sectionId}-${auction.id}-listado`;
 
   return (
     <div className="overflow-hidden rounded-2xl border border-cyan-200/80 bg-gradient-to-br from-cyan-50 via-white to-slate-50 shadow-md">
@@ -85,14 +89,19 @@ function AuctionEventHero({
             {items.length} vehículo{items.length === 1 ? "" : "s"} disponible{items.length === 1 ? "" : "s"}
           </p>
           {variant === "remate" ? (
-            <a
-              href={subastasUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ui-focus premium-btn-primary mt-4 inline-flex min-h-11 items-center px-5"
-            >
-              Entrar al remate online
-            </a>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <a href={listadoHref} className="ui-focus premium-btn-primary inline-flex min-h-11 items-center px-5">
+                Ver listado de vehículos en remate
+              </a>
+              <a
+                href={REMATE_WEB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ui-focus premium-btn-secondary inline-flex min-h-11 items-center px-5"
+              >
+                Ir a remate web
+              </a>
+            </div>
           ) : null}
         </div>
         {previewItems.length > 0 ? (
@@ -144,10 +153,12 @@ export function UpcomingAuctionsSection({
                 auction={auction}
                 items={items}
                 variant={variant}
-                subastasUrl={process.env.NEXT_PUBLIC_SUBASTAS_URL ?? "https://vedisaremates.vercel.app"}
+                sectionId={copy.sectionId}
               />
             </div>
-            {renderCards(auction, items, `${copy.sectionId}-${auction.id}`)}
+            <div id={`${copy.sectionId}-${auction.id}-listado`} className="scroll-mt-24">
+              {renderCards(auction, items, `${copy.sectionId}-${auction.id}`)}
+            </div>
           </div>
         ))}
       </div>
