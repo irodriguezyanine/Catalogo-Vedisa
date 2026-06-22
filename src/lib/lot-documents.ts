@@ -74,3 +74,18 @@ export function lotDocumentOpenUrl(url: string, kind: LotDocumentKind): string {
   if (kind === "image") return url;
   return cloudinaryRawPdfUrlForInlineDisplay(url);
 }
+
+/** Une listas de documentos sin duplicar por URL (editor Cloudinary + Tasaciones). */
+export function mergeLotDocumentLinks(...lists: LotDocumentLink[][]): LotDocumentLink[] {
+  const seen = new Set<string>();
+  const out: LotDocumentLink[] = [];
+  for (const list of lists) {
+    for (const doc of list) {
+      const url = doc.url.trim();
+      if (!url.startsWith("http") || seen.has(url)) continue;
+      seen.add(url);
+      out.push({ ...doc, url, label: doc.label.trim() || "Documento" });
+    }
+  }
+  return out;
+}

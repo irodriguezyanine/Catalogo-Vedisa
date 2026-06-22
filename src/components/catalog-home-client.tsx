@@ -55,6 +55,7 @@ import {
   lotDocumentKindBadgeClass,
   lotDocumentKindLabel,
   lotDocumentOpenUrl,
+  mergeLotDocumentLinks,
   parseLotDocumentsJson,
   serializeLotDocumentsJson,
   type LotDocumentLink,
@@ -4299,6 +4300,46 @@ export function CatalogHomeClient({
       );
     return parseLotDocumentsJson(j);
   }, [selectedVehicle, selectedVehicleLookup, selectedVehicleOverride]);
+
+  const [tasacionesVehicleDocuments, setTasacionesVehicleDocuments] = useState<LotDocumentLink[]>([]);
+
+  useEffect(() => {
+    if (!selectedVehicle) {
+      setTasacionesVehicleDocuments([]);
+      return;
+    }
+    const patente = normalizePatentToken(getPatent(selectedVehicle));
+    if (!patente) {
+      setTasacionesVehicleDocuments([]);
+      return;
+    }
+
+    let cancelled = false;
+    void fetch(`/api/public/vehiculo-documentos?patente=${encodeURIComponent(patente)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (cancelled || !payload || payload.ok !== true) return;
+        const rows = Array.isArray(payload.documentos) ? payload.documentos : [];
+        setTasacionesVehicleDocuments(
+          rows.filter(
+            (doc: LotDocumentLink) =>
+              typeof doc?.url === "string" && doc.url.trim().startsWith("http"),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setTasacionesVehicleDocuments([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVehicle]);
+
+  const selectedVehicleDisplayDocuments = useMemo(
+    () => mergeLotDocumentLinks(selectedVehicleLotDocuments, tasacionesVehicleDocuments),
+    [selectedVehicleLotDocuments, tasacionesVehicleDocuments],
+  );
 
   const selectedVehicleTabs = useMemo(
     () => {
@@ -10512,7 +10553,7 @@ export function CatalogHomeClient({
             descriptionHtml={formatExtendedDescriptionHtml(selectedVehicleExpandedDescription)}
             generalFields={selectedVehicleFieldsByTab.general}
             technicalFields={selectedVehicleFieldsByTab.tecnica}
-            documents={selectedVehicleLotDocuments}
+            documents={selectedVehicleDisplayDocuments}
             whatsappUrl={selectedVehicleWhatsappUrl}
             whatsappLabel={selectedVehiclePrimaryCtaLabel}
             onBack={navigateBackFromVehicleDetail}
@@ -10766,9 +10807,9 @@ export function CatalogHomeClient({
                 </div>
                 <div className="p-5">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documentación</p>
-                  {selectedVehicleLotDocuments.length > 0 ? (
+                  {selectedVehicleDisplayDocuments.length > 0 ? (
                     <ul className="mt-3 list-none space-y-2.5 p-0">
-                      {selectedVehicleLotDocuments.map((doc, idx) => {
+                      {selectedVehicleDisplayDocuments.map((doc, idx) => {
                         const kind = inferLotDocumentKind(doc.url, doc.mimeType);
                         return (
                         <li key={`lot-doc-footer-${doc.url}-${idx}`}>
