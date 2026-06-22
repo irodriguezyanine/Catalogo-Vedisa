@@ -11,6 +11,7 @@ import {
   mergeEditorConfigAfterServerPersist,
 } from "@/lib/catalog-shared-constants";
 import { getEditorConfig, getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
+import { notifySharedSyncPeers } from "@/lib/catalog-shared-sync-peer-notify";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { toPublicEditorSnapshot } from "@/lib/public-editor-config";
 import { assertProductionSecrets, validateEditorConfigPayload } from "@/lib/validate-editor-config";
@@ -85,9 +86,11 @@ export async function PUT(req: Request) {
 
     await saveEditorConfig(mergedConfig, session.email);
     revalidateCatalogSurfaces();
+    const peerNotify = await notifySharedSyncPeers("catalog@editor-config-put");
     return Response.json({
       ok: true,
       sync,
+      peerNotify,
       config: mergedConfig,
       syncOk: sync.skipped.length === 0,
       removedFromRemate: removalResult.deleted,

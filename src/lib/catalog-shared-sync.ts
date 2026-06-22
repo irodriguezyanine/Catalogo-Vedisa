@@ -16,6 +16,13 @@ type SyncResult = {
   inventoryCreated: number;
   inventoryUpdated: number;
   skipped: string[];
+  remateIdMappings?: Record<string, string>;
+};
+
+type SharedRemateLookupRow = {
+  id: string;
+  numero_remate?: string | null;
+  descripcion?: string | null;
 };
 
 type SyncOptions = {
@@ -243,6 +250,7 @@ function buildRemateItemPayload(
   remateId: string,
   patente: string,
   eventType: "remate" | "venta_directa",
+  catalogAuctionId?: string,
 ): RemateItemSyncRow {
   const manualId = vehicleKey.startsWith("manual-") ? vehicleKey.slice("manual-".length) : "";
   const manual = manualId ? manualById(config).get(manualId) : undefined;
@@ -270,6 +278,9 @@ function buildRemateItemPayload(
       event_origin: eventType === "venta_directa" ? "catalogo_venta_directa" : "catalogo_remate",
       source_vehicle_key: vehicleKey,
       synced_at: new Date().toISOString(),
+      ...(catalogAuctionId && catalogAuctionId !== remateId
+        ? { catalog_auction_id: catalogAuctionId, tasaciones_remate_id: remateId }
+        : {}),
     },
   };
 }
@@ -288,6 +299,58 @@ async function findInventarioByPatent(
 
   if (!data) return null;
   return data as InventarioLookup;
+}
+
+async function fetchRematesForSyncLookup(
+  supabase: NonNullable<ReturnType<typeof getServerSupabase>>,
+): Promise<SharedRemateLookupRow[]> {
+  const { data, error } = await supabase
+    .from(REMATES_TABLE)
+    .select("id, numero_remate, descripcion")
+    .limit(2000);
+  if (error) {
+    console.warn("No se pudieron leer remates para mapeo de sync:", error.message);
+    return [];
+  }
+  return (data ?? []) as SharedRemateLookupRow[];
+}
+
+function extractRemateNumberFromLabel(label: string): string | null {
+  const match = label.match(/REMATE\s*(\d+)/i);
+  return match?.[1] ?? null;
+}
+
+/** Usa el UUID del remate que Tasaciones ya tiene (p. ej. REMATE 1085), no uno duplicado del catálogo. */
+function resolveCanonicalRemateIdForSync(
+  configAuctionId: string,
+  auctionName: string,
+  remates: SharedRemateLookupRow[],
+): string {
+  if (remates.some((row) => row.id === configAuctionId)) return configAuctionId;
+
+  const numero = extractRemateNumberFromLabel(auctionName);
+  if (numero) {
+    const byNumero = remates.find((row) => {
+      const rowNumero = String(row.numero_remate ?? "").trim();
+      const descripcion = String(row.descripcion ?? "").toUpperCase();
+      return (
+        rowNumero === numero ||
+        descripcion.includes(`REMATE ${numero}`) ||
+        descripcion.includes(`REMATE${numero}`)
+      );
+    });
+    if (byNumero?.id) return byNumero.id;
+  }
+
+  const label = auctionName.trim().toLowerCase();
+  if (label) {
+    const byDescription = remates.find((row) =>
+      String(row.descripcion ?? "").trim().toLowerCase().includes(label),
+    );
+    if (byDescription?.id) return byDescription.id;
+  }
+
+  return configAuctionId;
 }
 
 export async function syncEditorConfigToSharedTables(config: EditorConfig): Promise<SyncResult> {
@@ -337,9 +400,24 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   }
 
   const { remateAssignments, remateKeys, directSaleKeys } = buildSyncTargets(config);
+  const sharedRemates = await fetchRematesForSyncLookup(supabase);
+  const remateIdAlias = new Map<string, string>();
+  for (const auction of config.upcomingAuctions ?? []) {
+    if (!isUuid(auction.id)) continue;
+    const canonical = resolveCanonicalRemateIdForSync(auction.id, auction.name, sharedRemates);
+    remateIdAlias.set(auction.id, canonical);
+  }
+  if (remateIdAlias.size > 0) {
+    result.remateIdMappings = Object.fromEntries(remateIdAlias);
+  }
+
   const eventByVehicle = new Map<string, string>();
+  const catalogAuctionByVehicle = new Map<string, string>();
   for (const [vehicleKey, remateId] of Object.entries(remateAssignments)) {
-    if (isUuid(remateId)) eventByVehicle.set(vehicleKey, remateId);
+    if (!isUuid(remateId)) continue;
+    const canonical = remateIdAlias.get(remateId) ?? remateId;
+    eventByVehicle.set(vehicleKey, canonical);
+    if (canonical !== remateId) catalogAuctionByVehicle.set(vehicleKey, remateId);
   }
   for (const vehicleKey of directSaleKeys) {
     if (!eventByVehicle.has(vehicleKey)) {
@@ -349,7 +427,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   const rematesVentaDirecta = new Set<string>();
   for (const auction of config.upcomingAuctions ?? []) {
     if (resolveCommercialEventType(auction) === "venta_directa" && isUuid(auction.id)) {
-      rematesVentaDirecta.add(auction.id);
+      rematesVentaDirecta.add(remateIdAlias.get(auction.id) ?? auction.id);
     }
   }
   for (const [vehicleKey, remateId] of eventByVehicle.entries()) {
@@ -358,11 +436,15 @@ export async function syncEditorConfigToSharedTablesWithOptions(
 
   const remateRows: RemateSyncRow[] = [];
   const hiddenCategoryIds = config.hiddenCategoryIds ?? [];
+  const upsertedRemateIds = new Set<string>();
   for (const auction of config.upcomingAuctions ?? []) {
     if (!isUuid(auction.id)) {
       result.skipped.push(`Remate omitido (ID legacy no UUID): ${auction.name}`);
       continue;
     }
+    const canonicalId = remateIdAlias.get(auction.id) ?? auction.id;
+    if (upsertedRemateIds.has(canonicalId)) continue;
+    upsertedRemateIds.add(canonicalId);
     const fechaHoraCierre =
       parseIsoOrNull(auction.endAt) ?? parseDateToRemateTimestamp(auction.date, auction.name);
     if (!fechaHoraCierre) {
@@ -374,9 +456,12 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       new Date(new Date(fechaHoraCierre).getTime() - 24 * 60 * 60 * 1000).toISOString();
     const nombre = auction.name.trim();
     const tipoEvento = resolveCommercialEventType(auction);
-    const esVentaDirecta = rematesVentaDirecta.has(auction.id) || tipoEvento === "venta_directa";
+    const esVentaDirecta =
+      rematesVentaDirecta.has(canonicalId) ||
+      rematesVentaDirecta.has(auction.id) ||
+      tipoEvento === "venta_directa";
     remateRows.push({
-      id: auction.id,
+      id: canonicalId,
       fecha_hora_inicio: fechaHoraInicio,
       fecha_hora_cierre: fechaHoraCierre,
       fecha_hora_remate: fechaHoraCierre,
@@ -471,7 +556,16 @@ export async function syncEditorConfigToSharedTablesWithOptions(
     const eventType: "remate" | "venta_directa" = rematesVentaDirecta.has(remateId)
       ? "venta_directa"
       : "remate";
-    remateItemRows.push(buildRemateItemPayload(config, vehicleKey, remateId, patentResolved.patente, eventType));
+    remateItemRows.push(
+      buildRemateItemPayload(
+        config,
+        vehicleKey,
+        remateId,
+        patentResolved.patente,
+        eventType,
+        catalogAuctionByVehicle.get(vehicleKey),
+      ),
+    );
   }
 
   if (remateItemRows.length > 0) {
