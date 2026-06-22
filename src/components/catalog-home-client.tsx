@@ -72,6 +72,7 @@ import {
 } from "@/lib/glo3d-client-cooldown";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
+import { EditorVehiculoDocumentos } from "@/components/admin/EditorVehiculoDocumentos";
 import { AnalyticsDashboard } from "@/components/admin/analytics-dashboard";
 import { getSessionAttribution, mergeAnalyticsPayload } from "@/lib/analytics-context";
 import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background-video";
@@ -4304,25 +4305,34 @@ export function CatalogHomeClient({
 
   const [tasacionesVehicleDocuments, setTasacionesVehicleDocuments] = useState<LotDocumentLink[]>([]);
   const [nombresArchivoOcultosTasaciones, setNombresArchivoOcultosTasaciones] = useState<string[]>([]);
+  const [tasacionesDocsStatus, setTasacionesDocsStatus] = useState<"idle" | "loading" | "ready">("idle");
 
   useEffect(() => {
     if (!selectedVehicle) {
       setTasacionesVehicleDocuments([]);
       setNombresArchivoOcultosTasaciones([]);
+      setTasacionesDocsStatus("idle");
       return;
     }
     const patente = normalizePatentToken(getPatent(selectedVehicle));
     if (!patente) {
       setTasacionesVehicleDocuments([]);
       setNombresArchivoOcultosTasaciones([]);
+      setTasacionesDocsStatus("ready");
       return;
     }
 
     let cancelled = false;
+    setTasacionesDocsStatus("loading");
     void fetch(`/api/public/vehiculo-documentos?patente=${encodeURIComponent(patente)}`)
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
-        if (cancelled || !payload || payload.ok !== true) return;
+        if (cancelled) return;
+        if (!payload || payload.ok !== true) {
+          setTasacionesVehicleDocuments([]);
+          setNombresArchivoOcultosTasaciones([]);
+          return;
+        }
         const rows = Array.isArray(payload.documentos) ? payload.documentos : [];
         setTasacionesVehicleDocuments(
           rows.filter(
@@ -4339,6 +4349,9 @@ export function CatalogHomeClient({
           setTasacionesVehicleDocuments([]);
           setNombresArchivoOcultosTasaciones([]);
         }
+      })
+      .finally(() => {
+        if (!cancelled) setTasacionesDocsStatus("ready");
       });
 
     return () => {
@@ -4349,16 +4362,18 @@ export function CatalogHomeClient({
   const selectedVehicleLotDocumentsSinOcultos = useMemo(
     () =>
       selectedVehicleLotDocuments.filter(
-        (doc) => !isLotDocumentLabelBlocked(doc.label, nombresArchivoOcultosTasaciones),
+        (doc) =>
+          doc.visibleInCatalog !== false &&
+          !isLotDocumentLabelBlocked(doc.label, nombresArchivoOcultosTasaciones),
       ),
     [selectedVehicleLotDocuments, nombresArchivoOcultosTasaciones],
   );
 
   /** Tasaciones primero; importados externos después, sin repetir URL ni nombre. */
-  const selectedVehicleDisplayDocuments = useMemo(
-    () => mergeLotDocumentLinks(tasacionesVehicleDocuments, selectedVehicleLotDocumentsSinOcultos),
-    [tasacionesVehicleDocuments, selectedVehicleLotDocumentsSinOcultos],
-  );
+  const selectedVehicleDisplayDocuments = useMemo(() => {
+    if (tasacionesDocsStatus !== "ready") return [];
+    return mergeLotDocumentLinks(tasacionesVehicleDocuments, selectedVehicleLotDocumentsSinOcultos);
+  }, [tasacionesDocsStatus, tasacionesVehicleDocuments, selectedVehicleLotDocumentsSinOcultos]);
 
   const selectedVehicleTabs = useMemo(
     () => {
@@ -10826,7 +10841,11 @@ export function CatalogHomeClient({
                 </div>
                 <div className="p-5">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documentación</p>
-                  {selectedVehicleDisplayDocuments.length > 0 ? (
+                  {tasacionesDocsStatus === "loading" ? (
+                    <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-sm text-slate-400">
+                      Cargando documentación…
+                    </p>
+                  ) : selectedVehicleDisplayDocuments.length > 0 ? (
                     <ul className="mt-3 list-none space-y-2.5 p-0">
                       {selectedVehicleDisplayDocuments.map((doc, idx) => {
                         const kind = inferLotDocumentKind(doc.url, doc.mimeType);
@@ -12561,108 +12580,46 @@ export function CatalogHomeClient({
             ) : null}
 
             {detailEditorTab === "documentos" ? (
-              <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Documentación del vehículo
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Sube PDF, fotos, Excel, Word y otros archivos. Se almacenan en Cloudinary y se muestran en la ficha pública.
-                  </p>
-                </div>
-
-                <div
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setEditorDocumentDropActive(true);
-                  }}
-                  onDragLeave={() => setEditorDocumentDropActive(false)}
-                  onDrop={(event) => void handleEditorDocumentDrop(event)}
-                  className={`rounded-xl border-2 border-dashed px-4 py-8 text-center transition ${
-                    editorDocumentDropActive
-                      ? "border-cyan-400 bg-cyan-50/70"
-                      : "border-slate-300 bg-slate-50/60"
-                  }`}
-                >
-                  <p className="text-sm font-semibold text-slate-800">
-                    Arrastra archivos aquí
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    PDF, imágenes, Excel, Word, CSV y más · máx. 15 MB por archivo
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => editorDocumentFileInputRef.current?.click()}
-                    disabled={editorDocumentUploading}
-                    className="ui-focus mt-4 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {editorDocumentUploading ? "Subiendo a Cloudinary…" : "Seleccionar archivos"}
-                  </button>
-                  <input
-                    ref={editorDocumentFileInputRef}
-                    type="file"
-                    multiple
-                    accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.csv,.txt,image/*,application/pdf"
-                    className="hidden"
-                    onChange={(event) => {
-                      const picked = Array.from(event.target.files ?? []);
-                      if (picked.length > 0) void uploadEditorDocuments(picked);
+              <EditorVehiculoDocumentos
+                patente={editingDetails.patente?.trim() || getPatent(editingItem)}
+                editorDocuments={editingLotDocuments}
+                onEditorDocumentsChange={setEditingLotDocuments}
+                uploadSlot={
+                  <div
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setEditorDocumentDropActive(true);
                     }}
-                  />
-                </div>
-
-                {editingLotDocuments.length > 0 ? (
-                  <ul className="space-y-2">
-                    {editingLotDocuments.map((doc, index) => {
-                      const kind = inferLotDocumentKind(doc.url, doc.mimeType);
-                      return (
-                        <li
-                          key={`editor-doc-${doc.url}-${index}`}
-                          className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-2.5"
-                        >
-                          <span
-                            className={`inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${lotDocumentKindBadgeClass(kind)}`}
-                          >
-                            {lotDocumentKindLabel(kind)}
-                          </span>
-                          <input
-                            className="min-w-[10rem] flex-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
-                            value={doc.label}
-                            onChange={(event) => {
-                              const next = [...editingLotDocuments];
-                              next[index] = { ...doc, label: event.target.value };
-                              setEditingLotDocuments(next);
-                            }}
-                            aria-label={`Nombre del documento ${index + 1}`}
-                          />
-                          <a
-                            href={lotDocumentOpenUrl(doc.url, kind)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2.5 py-1.5 text-xs font-semibold text-cyan-800"
-                          >
-                            Ver
-                          </a>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = editingLotDocuments.filter((_, i) => i !== index);
-                              setEditingLotDocuments(next);
-                            }}
-                            className="ui-focus rounded border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700"
-                          >
-                            Quitar
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
-                    Aún no hay documentos para este vehículo.
-                  </p>
-                )}
-              </div>
+                    onDragLeave={() => setEditorDocumentDropActive(false)}
+                    onDrop={(event) => void handleEditorDocumentDrop(event)}
+                    className={`rounded-xl border-2 border-dashed px-4 py-6 text-center transition ${
+                      editorDocumentDropActive
+                        ? "border-cyan-400 bg-cyan-50/70"
+                        : "border-slate-300 bg-slate-50/60"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => editorDocumentFileInputRef.current?.click()}
+                      disabled={editorDocumentUploading}
+                      className="ui-focus rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {editorDocumentUploading ? "Subiendo…" : "Seleccionar archivos"}
+                    </button>
+                    <input
+                      ref={editorDocumentFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.csv,.txt,image/*,application/pdf"
+                      className="hidden"
+                      onChange={(event) => {
+                        const picked = Array.from(event.target.files ?? []);
+                        if (picked.length > 0) void uploadEditorDocuments(picked);
+                      }}
+                    />
+                  </div>
+                }
+              />
             ) : null}
 
             {detailEditorTab === "publicacion" ? (

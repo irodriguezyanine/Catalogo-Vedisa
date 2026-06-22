@@ -4,6 +4,8 @@ export type LotDocumentLink = {
   url: string;
   label: string;
   mimeType?: string;
+  /** Solo importados del editor; por defecto visible. */
+  visibleInCatalog?: boolean;
 };
 
 export type LotDocumentKind = "pdf" | "image" | "excel" | "word" | "presentation" | "file";
@@ -21,7 +23,9 @@ export function parseLotDocumentsJson(json: string | undefined | null): LotDocum
       if (!url.startsWith("http")) continue;
       const label = typeof row.label === "string" && row.label.trim() ? row.label.trim() : "Documento";
       const mimeType = typeof row.mimeType === "string" ? row.mimeType : undefined;
-      out.push({ url, label, mimeType });
+      const visibleInCatalog =
+        row.visibleInCatalog === false || row.visible_in_catalog === false ? false : true;
+      out.push({ url, label, mimeType, visibleInCatalog });
     }
     return out;
   } catch {
@@ -35,6 +39,7 @@ export function serializeLotDocumentsJson(docs: LotDocumentLink[]): string {
       url: doc.url.trim(),
       label: doc.label.trim() || "Documento",
       ...(doc.mimeType?.trim() ? { mimeType: doc.mimeType.trim() } : {}),
+      ...(doc.visibleInCatalog === false ? { visibleInCatalog: false } : {}),
     }))
     .filter((doc) => doc.url.startsWith("http"));
   return JSON.stringify(clean);
