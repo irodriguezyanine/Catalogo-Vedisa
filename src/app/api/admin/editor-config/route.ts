@@ -6,7 +6,10 @@ import {
   findRemovedVehicleAssignments,
   syncEditorConfigToSharedTablesWithOptions,
 } from "@/lib/catalog-shared-sync";
-import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
+import {
+  preserveEditorBaseSectionVisibility,
+  mergeEditorConfigAfterServerPersist,
+} from "@/lib/catalog-shared-constants";
 import { getEditorConfig, getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { toPublicEditorSnapshot } from "@/lib/public-editor-config";
@@ -72,9 +75,12 @@ export async function PUT(req: Request) {
       deletedRemateIds: body.deletedAuctionIds ?? [],
     });
 
-    const mergedConfig = preserveEditorBaseSectionVisibility(
+    const mergedFromShared = await mergeSharedEventsIntoConfig(normalizedConfig, {
+      pruneOrphanCatalogAssignments: false,
+    });
+    const mergedConfig = mergeEditorConfigAfterServerPersist(
       normalizedConfig,
-      await mergeSharedEventsIntoConfig(normalizedConfig),
+      preserveEditorBaseSectionVisibility(normalizedConfig, mergedFromShared),
     );
 
     await saveEditorConfig(mergedConfig, session.email);

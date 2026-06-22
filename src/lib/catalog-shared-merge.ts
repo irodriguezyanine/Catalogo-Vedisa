@@ -186,6 +186,33 @@ function resolveCatalogVehicleKeys(
   return [...resolved];
 }
 
+function vehicleStillInRematePatentes(
+  vehicleKey: string,
+  allowed: Set<string>,
+  inventoryAliases: Map<string, string>,
+  config: EditorConfig,
+): boolean {
+  const candidatePatentes = new Set<string>();
+  for (const alias of resolveCatalogVehicleKeys(inventoryAliases, vehicleKey)) {
+    const norm = normalizePatentKey(alias);
+    if (norm) candidatePatentes.add(norm);
+  }
+  const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+  if (detailPatente) candidatePatentes.add(detailPatente);
+
+  if ([...candidatePatentes].some((patente) => allowed.has(patente))) return true;
+
+  for (const patente of allowed) {
+    for (const aliasKey of resolveCatalogVehicleKeys(inventoryAliases, patente)) {
+      if (aliasKey === vehicleKey) return true;
+      const norm = normalizePatentKey(aliasKey);
+      if (norm && candidatePatentes.has(norm)) return true;
+    }
+  }
+
+  return false;
+}
+
 function assignVehicleToAuction(
   assignments: Record<string, string>,
   section: Set<string>,
@@ -494,15 +521,12 @@ export async function mergeSharedEventsIntoConfig(
         const allowed = patentesByRemate.get(auctionId);
         if (!allowed || allowed.size === 0) continue;
 
-        const candidatePatentes = new Set<string>();
-        for (const alias of resolveCatalogVehicleKeys(inventoryAliases, vehicleKey)) {
-          const norm = normalizePatentKey(alias);
-          if (norm) candidatePatentes.add(norm);
-        }
-        const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
-        if (detailPatente) candidatePatentes.add(detailPatente);
-
-        const stillInRemate = [...candidatePatentes].some((patente) => allowed.has(patente));
+        const stillInRemate = vehicleStillInRematePatentes(
+          vehicleKey,
+          allowed,
+          inventoryAliases,
+          config,
+        );
         if (!stillInRemate) {
           delete nextVehicleUpcomingAuctionIds[vehicleKey];
           rematesSection.delete(vehicleKey);

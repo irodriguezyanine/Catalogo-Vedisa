@@ -170,3 +170,43 @@ export function preserveEditorBaseSectionVisibility(
     hiddenCategoryIds: Array.from(hidden),
   };
 }
+
+/** Tras guardar, conserva asignaciones que el editor acaba de enviar aunque el merge aún no las refleje. */
+export function mergeEditorConfigAfterServerPersist(
+  editorSent: EditorConfig,
+  serverReturned: EditorConfig,
+): EditorConfig {
+  const preserved = preserveEditorBaseSectionVisibility(editorSent, serverReturned);
+  const sentAssignments = editorSent.vehicleUpcomingAuctionIds ?? {};
+  const mergedAssignments = { ...(preserved.vehicleUpcomingAuctionIds ?? {}) };
+
+  for (const [vehicleKey, auctionId] of Object.entries(sentAssignments)) {
+    if (auctionId) mergedAssignments[vehicleKey] = auctionId;
+  }
+
+  const proxSet = new Set(preserved.sectionVehicleIds?.["proximos-remates"] ?? []);
+  const vdSet = new Set(preserved.sectionVehicleIds?.["ventas-directas"] ?? []);
+
+  for (const [vehicleKey, auctionId] of Object.entries(sentAssignments)) {
+    if (!auctionId) continue;
+    proxSet.delete(vehicleKey);
+    vdSet.delete(vehicleKey);
+    const auction = preserved.upcomingAuctions?.find((entry) => entry.id === auctionId);
+    const eventType = resolveCommercialEventType(auction ?? { name: "" });
+    if (eventType === "venta_directa") vdSet.add(vehicleKey);
+    else proxSet.add(vehicleKey);
+  }
+
+  for (const key of editorSent.sectionVehicleIds?.["proximos-remates"] ?? []) proxSet.add(key);
+  for (const key of editorSent.sectionVehicleIds?.["ventas-directas"] ?? []) vdSet.add(key);
+
+  return {
+    ...preserved,
+    vehicleUpcomingAuctionIds: mergedAssignments,
+    sectionVehicleIds: {
+      ...preserved.sectionVehicleIds,
+      "proximos-remates": Array.from(proxSet),
+      "ventas-directas": Array.from(vdSet),
+    },
+  };
+}

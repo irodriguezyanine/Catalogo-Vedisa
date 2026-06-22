@@ -104,6 +104,7 @@ import {
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
   DEFAULT_VENTA_DIRECTA_EVENT_NAME,
   preserveEditorBaseSectionVisibility,
+  mergeEditorConfigAfterServerPersist,
   reconcileVisibleRemateAuctionsSectionVisibility,
 } from "@/lib/catalog-shared-constants";
 import {
@@ -6130,8 +6131,8 @@ export function CatalogHomeClient({
     });
   };
 
-  const openBatchAssignModal = (target: BatchAssignTarget) => {
-    setGroupManageTarget(null);
+  const openBatchAssignModal = (target: BatchAssignTarget, keepGroupManageOpen = false) => {
+    if (!keepGroupManageOpen) setGroupManageTarget(null);
     setBatchAssignTarget(target);
     setBatchAssignSearchTerm("");
     setBatchAssignSelectedKeys([]);
@@ -6621,6 +6622,9 @@ export function CatalogHomeClient({
           : `${batchAssignSelectedKeys.length} vehículo(s) asignados a ${batchAssignTargetLabel} y sincronizados con Tasaciones/Subastas.${syncWarning}`,
       );
       closeBatchAssignModal();
+      if (groupManageTarget) {
+        setGroupManageSearchTerm("");
+      }
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === "TimeoutError"
@@ -7186,7 +7190,7 @@ export function CatalogHomeClient({
     deletedAuctionIdsRef.current.clear();
     setLastAutoSaveAt(new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }));
     const configPersistida = payload.config
-      ? preserveEditorBaseSectionVisibility(
+      ? mergeEditorConfigAfterServerPersist(
           nextConfig,
           normalizeEditorConfigClient(payload.config),
         )
@@ -11695,7 +11699,7 @@ export function CatalogHomeClient({
                   type="button"
                   onClick={() => {
                     if (!groupManageTarget) return;
-                    openBatchAssignModal(groupManageTarget);
+                    openBatchAssignModal(groupManageTarget, true);
                   }}
                   className="ui-focus inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
                 >
