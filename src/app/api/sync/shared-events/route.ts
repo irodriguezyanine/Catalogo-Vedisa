@@ -1,6 +1,5 @@
-import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
+import { handleCatalogSyncEvent } from "@/lib/catalog-sync-event-handler";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
-import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 import { getEditorConfig } from "@/lib/editor-config";
 import { buildCatalogSyncCorsHeaders, withCatalogSyncCors } from "@/lib/catalog-sync-cors";
 
@@ -32,16 +31,18 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await reconcileSharedPlatforms("webhook@shared-sync");
-    revalidateCatalogSurfaces();
+    const result = await handleCatalogSyncEvent(
+      { type: "reconcile", source: "webhook@shared-events" },
+      "webhook@shared-sync",
+    );
     return withCatalogSyncCors(
       req,
       Response.json({
-        ok: true,
-        persisted: result.persisted,
-        sync: result.sync,
-        upcomingAuctions: result.mergedConfig.upcomingAuctions?.length ?? 0,
-        assignedVehicles: Object.keys(result.mergedConfig.vehicleUpcomingAuctionIds ?? {}).length,
+        ok: result.ok,
+        error: result.error,
+        revalidated: result.revalidated,
+        configVersion: result.configVersion,
+        details: result.details,
         reconciledAt: new Date().toISOString(),
       }),
     );

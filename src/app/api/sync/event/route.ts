@@ -1,5 +1,6 @@
 import { handleCatalogSyncEvent } from "@/lib/catalog-sync-event-handler";
 import { buildCatalogSyncCorsHeaders, withCatalogSyncCors } from "@/lib/catalog-sync-cors";
+import type { CatalogSyncEvent } from "@/types/catalog-sync-contract";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -16,7 +17,7 @@ export async function OPTIONS(req: Request) {
   return new Response(null, { status: 204, headers: buildCatalogSyncCorsHeaders(req) });
 }
 
-/** Compatibilidad: delega al handler unificado remove-vehicle. */
+/** Endpoint idempotente unificado: reconcile | remove-vehicle | visibility-changed */
 export async function POST(req: Request) {
   if (!isAuthorized(req)) {
     return withCatalogSyncCors(
@@ -25,41 +26,25 @@ export async function POST(req: Request) {
     );
   }
 
-  const body = (await req.json().catch(() => ({}))) as {
-    remateId?: string;
-    patente?: string;
+  const body = (await req.json().catch(() => ({}))) as CatalogSyncEvent & {
+    source?: string;
   };
+  const eventType = String(body.type ?? "").trim() as CatalogSyncEvent["type"];
 
-  const remateId = String(body.remateId ?? "").trim();
-  const patente = String(body.patente ?? "").trim();
-  if (!remateId || !patente) {
+  if (!eventType) {
     return withCatalogSyncCors(
       req,
-      Response.json({ ok: false, error: "Faltan remateId o patente." }, { status: 400 }),
+      Response.json({ ok: false, error: "Falta type en el evento." }, { status: 400 }),
     );
   }
 
   const result = await handleCatalogSyncEvent(
-    {
-      type: "remove-vehicle",
-      remateId,
-      patente,
-      idempotencyKey: `remove:${remateId}:${patente.toUpperCase().replace(/\s+/g, "").replace(/-/g, "")}`,
-    },
-    "webhook@remove-vehicle",
+    { ...body, type: eventType },
+    body.source ?? "webhook@sync-event",
   );
 
   return withCatalogSyncCors(
     req,
-    Response.json(
-      {
-        ok: result.ok,
-        error: result.error,
-        removedKeys: (result.details?.results as Array<{ removedKeys: string[] }> | undefined)?.[0]
-          ?.removedKeys,
-        revalidated: result.revalidated,
-      },
-      { status: result.ok ? 200 : 500 },
-    ),
+    Response.json(result, { status: result.ok ? 200 : 500 }),
   );
 }

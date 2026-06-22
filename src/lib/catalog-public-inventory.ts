@@ -272,10 +272,6 @@ export function resolveCommercialEventBadge(
   const key = getVehicleKey(item);
   if (assignedBadges[key]) return assignedBadges[key];
 
-  const estadoRetiro = extractEstadoRetiroFromItem(item);
-  if (estadoRetiro === "en_bodega_a_venta_directa") {
-    return { kind: "venta_directa", label: "Venta directa" };
-  }
   return null;
 }
 

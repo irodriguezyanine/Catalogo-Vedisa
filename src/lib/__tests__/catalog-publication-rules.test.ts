@@ -54,8 +54,17 @@ describe("isCatalogPublishedVehicle", () => {
     expect(isCatalogPublishedVehicle(item, config)).toBe(true);
   });
 
-  it("sigue publicando venta directa por estado de inventario", () => {
+  it("no publica en_bodega_a_venta_directa sin asignación activa", () => {
     const item = itemWithEstado("en_bodega_a_venta_directa", "ABCD12");
-    expect(isCatalogPublishedVehicle(item, baseConfig)).toBe(true);
+    expect(isCatalogPublishedVehicle(item, baseConfig)).toBe(false);
+  });
+
+  it("publica en_bodega_a_venta_directa con asignación a venta directa", () => {
+    const config = {
+      ...baseConfig,
+      vehicleUpcomingAuctionIds: { ABCD12: "6f4a7e7a-0c83-4e0a-8a7e-9d60f6797f11" },
+    };
+    const item = itemWithEstado("en_bodega_a_venta_directa", "ABCD12");
+    expect(isCatalogPublishedVehicle(item, config)).toBe(true);
   });
 });

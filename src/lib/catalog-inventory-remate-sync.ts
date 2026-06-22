@@ -18,9 +18,9 @@ export function normalizePatenteInventario(value?: string | null): string {
     .replace(/-/g, "");
 }
 
-/** Al quitar un vehículo de un remate, deja de estar en bodega-a-remate en inventario compartido. */
-export async function revertInventarioTrasQuitarDeRemate(
+async function revertInventarioPorEstado(
   patente: string,
+  fromEstado: string,
 ): Promise<{ updated: number; error?: string }> {
   const supabase = getServerSupabase();
   const patenteNorm = normalizePatenteInventario(patente);
@@ -39,7 +39,7 @@ export async function revertInventarioTrasQuitarDeRemate(
 
   const ids = (rows ?? [])
     .filter((row) => normalizePatenteInventario(row.patente) === patenteNorm)
-    .filter((row) => String(row.estado_retiro ?? "").toLowerCase() === "en_bodega_a_remate")
+    .filter((row) => String(row.estado_retiro ?? "").toLowerCase() === fromEstado)
     .map((row) => String(row.id));
 
   if (!ids.length) return { updated: 0 };
@@ -54,4 +54,28 @@ export async function revertInventarioTrasQuitarDeRemate(
   }
 
   return { updated: ids.length };
+}
+
+/** Al quitar un vehículo de un remate, deja de estar en bodega-a-remate en inventario compartido. */
+export async function revertInventarioTrasQuitarDeRemate(
+  patente: string,
+): Promise<{ updated: number; error?: string }> {
+  return revertInventarioPorEstado(patente, "en_bodega_a_remate");
+}
+
+/** Al quitar un vehículo de venta directa, deja de estar en bodega-a-venta-directa. */
+export async function revertInventarioTrasQuitarDeVentaDirecta(
+  patente: string,
+): Promise<{ updated: number; error?: string }> {
+  return revertInventarioPorEstado(patente, "en_bodega_a_venta_directa");
+}
+
+/** Revierte inventario según el tipo de evento comercial del que se quitó la unidad. */
+export async function revertInventarioTrasQuitarDeEvento(
+  patente: string,
+  eventType: "remate" | "venta_directa",
+): Promise<{ updated: number; error?: string }> {
+  return eventType === "venta_directa"
+    ? revertInventarioTrasQuitarDeVentaDirecta(patente)
+    : revertInventarioTrasQuitarDeRemate(patente);
 }

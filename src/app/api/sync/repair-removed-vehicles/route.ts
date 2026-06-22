@@ -1,7 +1,6 @@
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { removeVehicleFromCatalogEvent } from "@/lib/catalog-remove-vehicle-from-event";
 import { buildCatalogSyncCorsHeaders, withCatalogSyncCors } from "@/lib/catalog-sync-cors";
-import { revertInventarioTrasQuitarDeRemate } from "@/lib/catalog-inventory-remate-sync";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -53,7 +52,6 @@ export async function POST(req: Request) {
     const results: Array<{ patente: string; ok: boolean; removedKeys: string[] }> = [];
     for (const patente of patentes) {
       const removed = await removeVehicleFromCatalogEvent(remateId, patente);
-      await revertInventarioTrasQuitarDeRemate(patente);
       results.push({ patente, ok: removed.ok, removedKeys: removed.removedKeys });
     }
     revalidateCatalogSurfaces();

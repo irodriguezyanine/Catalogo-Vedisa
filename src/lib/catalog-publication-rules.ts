@@ -106,8 +106,7 @@ export function isExplicitlyPublishedInEditor(key: string, config: EditorConfig)
 
 /**
  * Define qué unidades puede ver el catálogo público (home, /vehiculos y detalle).
- * - Publicadas en el panel admin o asignadas a remate/venta directa activa (sync compartida), o
- * - Sincronizadas desde VedisaTasaciones1 con estado de bodega válido.
+ * - Publicadas en el panel admin o asignadas a remate/venta directa activa (sync compartida).
  * Nunca incluye vehículos de ocasión ni unidades en otros estados de retiro.
  */
 export function isCatalogPublishedVehicle(item: CatalogItem, config: EditorConfig): boolean {
@@ -128,9 +127,6 @@ export function isCatalogPublishedVehicle(item: CatalogItem, config: EditorConfi
 
   if (config.vehicleUpcomingAuctionIds?.[key]) return true;
 
-  const estadoRetiro = extractEstadoRetiro(item);
-  // Venta directa: el pool de inventario puede publicarse sin asignación explícita.
-  if (estadoRetiro === "en_bodega_a_venta_directa") return true;
-  // en_bodega_a_remate ya no publica por sí solo: requiere asignación activa arriba.
+  // Sin asignación activa en el editor, el estado de inventario no publica por sí solo.
   return false;
 }

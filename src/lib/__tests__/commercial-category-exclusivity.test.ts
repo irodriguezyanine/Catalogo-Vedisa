@@ -52,4 +52,9 @@ describe("commercial-category-exclusivity", () => {
     const config = { ...DEFAULT_EDITOR_CONFIG };
     expect(resolveVehicleCommercialLane("RHCP68", config, "en_bodega_a_remate")).toBeNull();
   });
+
+  it("no infiere venta directa solo por estado en_bodega_a_venta_directa", () => {
+    const config = { ...DEFAULT_EDITOR_CONFIG };
+    expect(resolveVehicleCommercialLane("ABCD12", config, "en_bodega_a_venta_directa")).toBeNull();
+  });
 });

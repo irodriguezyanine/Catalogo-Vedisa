@@ -1,4 +1,5 @@
-import { revertInventarioTrasQuitarDeRemate } from "@/lib/catalog-inventory-remate-sync";
+import { DEFAULT_VENTA_DIRECTA_EVENT_ID } from "@/lib/catalog-shared-constants";
+import { revertInventarioTrasQuitarDeEvento } from "@/lib/catalog-inventory-remate-sync";
 import {
   deleteRemateItemsForRemovedAssignments,
   findRemovedVehicleAssignments,
@@ -84,7 +85,8 @@ export async function removeVehicleFromCatalogEvent(
 
   const removals = findRemovedVehicleAssignments(previous, saved.normalizedConfig ?? next);
   await deleteRemateItemsForRemovedAssignments(removals, saved.normalizedConfig ?? next);
-  await revertInventarioTrasQuitarDeRemate(patente);
+  const eventType = remateId === DEFAULT_VENTA_DIRECTA_EVENT_ID ? "venta_directa" : "remate";
+  await revertInventarioTrasQuitarDeEvento(patente, eventType);
 
   return { ok: true, removedKeys };
 }

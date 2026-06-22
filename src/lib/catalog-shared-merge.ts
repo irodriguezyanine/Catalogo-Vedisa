@@ -432,10 +432,12 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
       .map((auction) => auction.id),
   );
 
+  let patentesByRemate = new Map<string, Set<string>>();
+
   if (activeRows.length > 0) {
     const remateIds = activeRows.map((row) => row.id).filter(Boolean);
     const sharedItems = await fetchSharedRemateItems(remateIds);
-    const patentesByRemate = new Map<string, Set<string>>();
+    patentesByRemate = new Map<string, Set<string>>();
 
     for (const item of sharedItems) {
       const remateId = String(item.remate_id ?? "");
@@ -543,6 +545,32 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
   }
 
   ensureDefaultVentaDirectaAuction(byId, ventaDirectaSection);
+
+  const ventaDirectaPoolKeys = new Set<string>();
+  for (const raw of ventaDirectaInventoryRaw) {
+    for (const key of resolveCatalogVehicleKeys(inventoryAliases, raw)) {
+      ventaDirectaPoolKeys.add(key);
+      const norm = normalizePatentKey(key);
+      if (norm) ventaDirectaPoolKeys.add(norm);
+    }
+  }
+  for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
+    if (nextVehicleUpcomingAuctionIds[vehicleKey] !== DEFAULT_VENTA_DIRECTA_EVENT_ID) continue;
+    const candidateKeys = resolveCatalogVehicleKeys(inventoryAliases, vehicleKey);
+    const inPool = candidateKeys.some((key) => ventaDirectaPoolKeys.has(key));
+    const allowed = patentesByRemate.get(DEFAULT_VENTA_DIRECTA_EVENT_ID);
+    const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+    const inItems =
+      Boolean(allowed?.size) &&
+      [...candidateKeys, detailPatente]
+        .map((value) => normalizePatentKey(value))
+        .filter(Boolean)
+        .some((patente) => allowed?.has(patente));
+    if (!inPool && !inItems) {
+      delete nextVehicleUpcomingAuctionIds[vehicleKey];
+      ventaDirectaSection.delete(vehicleKey);
+    }
+  }
 
   const upcomingAuctions = Array.from(byId.values()).filter((auction) =>
     isEditorAuctionStillActive(auction, nowMs),

@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { revertInventarioTrasQuitarDeRemate } from "@/lib/catalog-inventory-remate-sync";
+import { revertInventarioTrasQuitarDeRemate, revertInventarioTrasQuitarDeVentaDirecta } from "@/lib/catalog-inventory-remate-sync";
 import {
   collectDirectSaleVehicleKeys,
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
@@ -516,6 +516,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
         } else {
           for (const patente of patentesRevertir) {
             await revertInventarioTrasQuitarDeRemate(patente);
+            await revertInventarioTrasQuitarDeVentaDirecta(patente);
           }
         }
       }
@@ -591,7 +592,12 @@ export async function deleteRemateItemsForRemovedAssignments(
       continue;
     }
     deleted += idsToDelete.length;
+    await supabase.from("remates_items_exclusiones").upsert(
+      { remate_id: remateId, patente_norm: patenteNorm },
+      { onConflict: "remate_id,patente_norm" },
+    );
     await revertInventarioTrasQuitarDeRemate(patente);
+    await revertInventarioTrasQuitarDeVentaDirecta(patente);
   }
 
   return { deleted, skipped };

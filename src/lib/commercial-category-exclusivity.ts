@@ -57,8 +57,6 @@ export function resolveVehicleCommercialLane(
   if (inVenta) return "ventas-directas";
   if (inRemate) return "proximos-remates";
 
-  const estado = normalizeInventoryEstado(inventoryEstadoRetiro);
-  if (estado === "en_bodega_a_venta_directa") return "ventas-directas";
   return null;
 }
 
