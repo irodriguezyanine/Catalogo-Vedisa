@@ -276,9 +276,6 @@ export function resolveCommercialEventBadge(
   if (estadoRetiro === "en_bodega_a_venta_directa") {
     return { kind: "venta_directa", label: "Venta directa" };
   }
-  if (estadoRetiro === "en_bodega_a_remate") {
-    return { kind: "remate", label: "Remate" };
-  }
   return null;
 }
 

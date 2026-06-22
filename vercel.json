@@ -7,11 +7,15 @@
     },
     {
       "path": "/api/cron/reconcile-shared",
-      "schedule": "0 5 * * *"
+      "schedule": "0 */2 * * *"
     },
     {
       "path": "/api/cron/aggregate-analytics",
       "schedule": "15 4 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-analytics-report",
+      "schedule": "0 * * * 5"
     }
   ]
 }

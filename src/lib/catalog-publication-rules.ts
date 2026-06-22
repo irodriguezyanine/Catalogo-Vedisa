@@ -129,5 +129,8 @@ export function isCatalogPublishedVehicle(item: CatalogItem, config: EditorConfi
   if (config.vehicleUpcomingAuctionIds?.[key]) return true;
 
   const estadoRetiro = extractEstadoRetiro(item);
-  return CATALOG_PUBLISHED_ESTADOS_RETIRO.has(estadoRetiro);
+  // Venta directa: el pool de inventario puede publicarse sin asignación explícita.
+  if (estadoRetiro === "en_bodega_a_venta_directa") return true;
+  // en_bodega_a_remate ya no publica por sí solo: requiere asignación activa arriba.
+  return false;
 }

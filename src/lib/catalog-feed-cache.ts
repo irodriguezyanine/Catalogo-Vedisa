@@ -11,5 +11,5 @@ export const CATALOG_FEED_CACHE_TAG = "catalog-feed";
 export const getCachedCatalogFeed = unstable_cache(
   async (): Promise<CatalogFeed> => getCatalogFeed(),
   ["catalog-feed-v1"],
-  { revalidate: 120, tags: [CATALOG_FEED_CACHE_TAG] },
+  { revalidate: 60, tags: [CATALOG_FEED_CACHE_TAG] },
 );

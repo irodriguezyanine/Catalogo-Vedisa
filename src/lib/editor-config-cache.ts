@@ -10,5 +10,5 @@ export const EDITOR_CONFIG_CACHE_TAG = "catalog-editor-config";
 export const getCachedMergedEditorConfig = unstable_cache(
   async (): Promise<EditorConfigLoadResult> => getMergedEditorConfig(),
   ["catalog-editor-config-v1"],
-  { revalidate: 120, tags: [EDITOR_CONFIG_CACHE_TAG] },
+  { revalidate: 60, tags: [EDITOR_CONFIG_CACHE_TAG] },
 );

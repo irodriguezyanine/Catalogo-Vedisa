@@ -1,3 +1,4 @@
+import { revertInventarioTrasQuitarDeRemate } from "@/lib/catalog-inventory-remate-sync";
 import {
   deleteRemateItemsForRemovedAssignments,
   findRemovedVehicleAssignments,
@@ -83,6 +84,7 @@ export async function removeVehicleFromCatalogEvent(
 
   const removals = findRemovedVehicleAssignments(previous, saved.normalizedConfig ?? next);
   await deleteRemateItemsForRemovedAssignments(removals, saved.normalizedConfig ?? next);
+  await revertInventarioTrasQuitarDeRemate(patente);
 
   return { ok: true, removedKeys };
 }

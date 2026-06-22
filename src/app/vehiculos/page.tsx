@@ -3,7 +3,7 @@ import { CatalogVehiclesListClient } from "@/components/catalog-vehicles-list-cl
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 
-export const revalidate = 120;
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: "Vehículos disponibles | Catálogo VEDISA REMATES",

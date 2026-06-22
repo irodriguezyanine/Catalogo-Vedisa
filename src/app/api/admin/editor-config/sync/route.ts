@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
+import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 
 export async function POST() {
   const cookieStore = await cookies();
@@ -12,6 +13,7 @@ export async function POST() {
 
   try {
     const result = await reconcileSharedPlatforms(session.email ?? "admin@catalogo");
+    revalidateCatalogSurfaces();
     return Response.json({
       ok: true,
       sync: result.sync,

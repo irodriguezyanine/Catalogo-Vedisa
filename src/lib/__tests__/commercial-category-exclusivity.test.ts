@@ -47,4 +47,9 @@ describe("commercial-category-exclusivity", () => {
     expect(next.sectionVehicleIds["proximos-remates"]).not.toContain("XYZ789");
     expect(next.sectionVehicleIds["ventas-directas"]).toContain("XYZ789");
   });
+
+  it("no infiere remate solo por estado en_bodega_a_remate", () => {
+    const config = { ...DEFAULT_EDITOR_CONFIG };
+    expect(resolveVehicleCommercialLane("RHCP68", config, "en_bodega_a_remate")).toBeNull();
+  });
 });

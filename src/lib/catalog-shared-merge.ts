@@ -349,6 +349,30 @@ export function finalizeMergedHiddenCategoryIds(
  * con la configuración del editor del catálogo, sin perder eventos creados localmente
  * que aún no se replicaron.
  */
+async function fetchExcludedPatentesByRemate(): Promise<Map<string, Set<string>>> {
+  const supabase = getServerSupabase();
+  if (!supabase) return new Map();
+
+  const { data, error } = await supabase
+    .from("remates_items_exclusiones")
+    .select("remate_id, patente_norm");
+
+  if (error) {
+    console.warn("No se pudieron leer exclusiones de remates:", error);
+    return new Map();
+  }
+
+  const map = new Map<string, Set<string>>();
+  for (const row of (data ?? []) as Array<{ remate_id?: string | null; patente_norm?: string | null }>) {
+    const remateId = String(row.remate_id ?? "");
+    const patente = normalizePatentKey(row.patente_norm);
+    if (!remateId || !patente) continue;
+    if (!map.has(remateId)) map.set(remateId, new Set());
+    map.get(remateId)?.add(patente);
+  }
+  return map;
+}
+
 export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise<EditorConfig> {
   const nowMs = Date.now();
   const soldVehicleKeys = new Set(config.soldVehicleIds ?? []);
@@ -395,6 +419,7 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
   }
 
   const inventoryAliases = await fetchInventoryVehicleKeyAliases();
+  const excludedPatentesByRemate = await fetchExcludedPatentesByRemate();
   const nextVehicleUpcomingAuctionIds: Record<string, string> = {
     ...(config.vehicleUpcomingAuctionIds ?? {}),
   };
@@ -421,6 +446,8 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
       if (!auctionId || !visibleAuctionIdsFromRows.has(auctionId)) continue;
       const patenteNorm = normalizePatentKey(item.patente);
       if (patenteNorm) {
+        const excluded = excludedPatentesByRemate.get(auctionId);
+        if (excluded?.has(patenteNorm)) continue;
         if (!patentesByRemate.has(auctionId)) patentesByRemate.set(auctionId, new Set());
         patentesByRemate.get(auctionId)?.add(patenteNorm);
       }
@@ -462,6 +489,33 @@ export async function mergeSharedEventsIntoConfig(config: EditorConfig): Promise
 
       const stillInRemate = [...candidatePatentes].some((patente) => allowed.has(patente));
       if (!stillInRemate) {
+        delete nextVehicleUpcomingAuctionIds[vehicleKey];
+        rematesSection.delete(vehicleKey);
+      }
+    }
+
+    for (const remateId of remateIds) {
+      const allowed = patentesByRemate.get(remateId) ?? new Set<string>();
+      if (allowed.size > 0) continue;
+      for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
+        if (nextVehicleUpcomingAuctionIds[vehicleKey] !== remateId) continue;
+        delete nextVehicleUpcomingAuctionIds[vehicleKey];
+        rematesSection.delete(vehicleKey);
+      }
+    }
+
+    for (const [vehicleKey, auctionId] of Object.entries(nextVehicleUpcomingAuctionIds)) {
+      const excluded = excludedPatentesByRemate.get(auctionId);
+      if (!excluded?.size) continue;
+      const candidatePatentes = new Set<string>();
+      for (const alias of resolveCatalogVehicleKeys(inventoryAliases, vehicleKey)) {
+        const norm = normalizePatentKey(alias);
+        if (norm) candidatePatentes.add(norm);
+      }
+      const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+      if (detailPatente) candidatePatentes.add(detailPatente);
+      const isExcluded = [...candidatePatentes].some((patente) => excluded.has(patente));
+      if (isExcluded) {
         delete nextVehicleUpcomingAuctionIds[vehicleKey];
         rematesSection.delete(vehicleKey);
       }
