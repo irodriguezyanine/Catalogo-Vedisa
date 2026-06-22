@@ -13,6 +13,50 @@ function isAuthorized(req: Request): boolean {
   return bearer === secret || headerSecret === secret;
 }
 
+function parseCatalogSyncEvent(raw: unknown): CatalogSyncEvent | { error: string } {
+  if (!raw || typeof raw !== "object") {
+    return { error: "Body inválido." };
+  }
+
+  const body = raw as Record<string, unknown>;
+  const type = String(body.type ?? "").trim();
+
+  switch (type) {
+    case "reconcile":
+      return {
+        type: "reconcile",
+        source: typeof body.source === "string" ? body.source : undefined,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+      };
+    case "remove-vehicle": {
+      const remateId = String(body.remateId ?? "").trim();
+      if (!remateId) return { error: "Falta remateId." };
+      return {
+        type: "remove-vehicle",
+        remateId,
+        patente: typeof body.patente === "string" ? body.patente : undefined,
+        patentes: Array.isArray(body.patentes)
+          ? body.patentes.map((value) => String(value))
+          : undefined,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+      };
+    }
+    case "visibility-changed": {
+      const remateId = String(body.remateId ?? "").trim();
+      if (!remateId) return { error: "Falta remateId." };
+      return {
+        type: "visibility-changed",
+        remateId,
+        visible: body.visible === true || body.visible === "true",
+        source: typeof body.source === "string" ? body.source : undefined,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+      };
+    }
+    default:
+      return { error: "Falta type en el evento o no es soportado." };
+  }
+}
+
 export async function OPTIONS(req: Request) {
   return new Response(null, { status: 204, headers: buildCatalogSyncCorsHeaders(req) });
 }
@@ -26,22 +70,24 @@ export async function POST(req: Request) {
     );
   }
 
-  const body = (await req.json().catch(() => ({}))) as CatalogSyncEvent & {
-    source?: string;
-  };
-  const eventType = String(body.type ?? "").trim() as CatalogSyncEvent["type"];
+  const rawBody = await req.json().catch(() => ({}));
+  const parsed = parseCatalogSyncEvent(rawBody);
 
-  if (!eventType) {
+  if ("error" in parsed) {
     return withCatalogSyncCors(
       req,
-      Response.json({ ok: false, error: "Falta type en el evento." }, { status: 400 }),
+      Response.json({ ok: false, error: parsed.error }, { status: 400 }),
     );
   }
 
-  const result = await handleCatalogSyncEvent(
-    { ...body, type: eventType },
-    body.source ?? "webhook@sync-event",
-  );
+  const source =
+    typeof rawBody === "object" &&
+    rawBody !== null &&
+    typeof (rawBody as Record<string, unknown>).source === "string"
+      ? String((rawBody as Record<string, unknown>).source)
+      : "webhook@sync-event";
+
+  const result = await handleCatalogSyncEvent(parsed, source);
 
   return withCatalogSyncCors(
     req,
