@@ -75,15 +75,52 @@ export function lotDocumentOpenUrl(url: string, kind: LotDocumentKind): string {
   return cloudinaryRawPdfUrlForInlineDisplay(url);
 }
 
-/** Une listas de documentos sin duplicar por URL (editor Cloudinary + Tasaciones). */
+function normalizeDocUrlKey(url: string): string {
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    return `${parsed.origin}${parsed.pathname}`.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase().split("?")[0] ?? "";
+  }
+}
+
+export function normalizeLotDocumentLabelKey(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function isLotDocumentLabelBlocked(
+  label: string,
+  blockedLabels: Iterable<string>,
+): boolean {
+  const key = normalizeLotDocumentLabelKey(label);
+  for (const blocked of blockedLabels) {
+    if (normalizeLotDocumentLabelKey(blocked) === key) return true;
+  }
+  return false;
+}
+
+function normalizeDocLabelKey(label: string): string {
+  return normalizeLotDocumentLabelKey(label);
+}
+
+/**
+ * Une listas (p. ej. API Tasaciones + editor/catálogo) sin repetir por URL ni por nombre de archivo.
+ * La primera lista tiene prioridad (recomendado: Tasaciones antes que importados externos).
+ */
 export function mergeLotDocumentLinks(...lists: LotDocumentLink[][]): LotDocumentLink[] {
-  const seen = new Set<string>();
+  const seenUrls = new Set<string>();
+  const seenLabels = new Set<string>();
   const out: LotDocumentLink[] = [];
   for (const list of lists) {
     for (const doc of list) {
       const url = doc.url.trim();
-      if (!url.startsWith("http") || seen.has(url)) continue;
-      seen.add(url);
+      if (!url.startsWith("http")) continue;
+      const urlKey = normalizeDocUrlKey(url);
+      const labelKey = normalizeDocLabelKey(doc.label || "Documento");
+      if (seenUrls.has(urlKey) || seenLabels.has(labelKey)) continue;
+      seenUrls.add(urlKey);
+      seenLabels.add(labelKey);
       out.push({ ...doc, url, label: doc.label.trim() || "Documento" });
     }
   }

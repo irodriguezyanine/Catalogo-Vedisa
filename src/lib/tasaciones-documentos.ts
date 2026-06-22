@@ -9,12 +9,21 @@ export type TasacionesDocumentoPublico = {
   origen_almacenamiento?: "supabase" | "externo";
 };
 
+export type TasacionesDocumentosFetchResult = {
+  documentos: LotDocumentLink[];
+  nombresArchivoOcultos: string[];
+};
+
 type TasacionesDocumentosApiResponse = {
   ok?: boolean;
+  meta?: {
+    nombres_archivo_ocultos?: string[];
+  };
   por_patente?: Record<
     string,
     {
       documentos?: TasacionesDocumentoPublico[];
+      nombres_archivo_ocultos?: string[];
     }
   >;
   data?: TasacionesDocumentoPublico[];
@@ -37,6 +46,18 @@ function pickDocumentosFromPayload(
   return [];
 }
 
+function pickNombresOcultosFromPayload(
+  payload: TasacionesDocumentosApiResponse,
+  patenteNorm: string,
+): string[] {
+  const porPatente = payload.por_patente?.[patenteNorm]?.nombres_archivo_ocultos;
+  if (Array.isArray(porPatente) && porPatente.length > 0) return porPatente;
+  if (Array.isArray(payload.meta?.nombres_archivo_ocultos)) {
+    return payload.meta.nombres_archivo_ocultos;
+  }
+  return [];
+}
+
 /**
  * Documentos de inventario en Tasaciones (Supabase Storage o Cloudinary vía public_url).
  * Solo servidor: usa CATALOG_SOURCE_API_TOKEN.
@@ -44,12 +65,13 @@ function pickDocumentosFromPayload(
 export async function fetchTasacionesDocumentosByPatent(
   patente: string,
   options?: { revalidate?: number },
-): Promise<LotDocumentLink[]> {
+): Promise<TasacionesDocumentosFetchResult> {
+  const empty = { documentos: [], nombresArchivoOcultos: [] };
   const apiBase = process.env.CATALOG_SOURCE_API_URL?.trim();
-  if (!apiBase) return [];
+  if (!apiBase) return empty;
 
   const patenteNorm = normalizePatentKey(patente);
-  if (!patenteNorm) return [];
+  if (!patenteNorm) return empty;
 
   const token = process.env.CATALOG_SOURCE_API_TOKEN?.trim();
   const base = apiBase.trim().replace(/\/$/, "");
@@ -83,13 +105,18 @@ export async function fetchTasacionesDocumentosByPatent(
     console.warn(
       `[tasaciones-documentos] ${endpoint.pathname} respondió ${response.status} para ${patenteNorm}`,
     );
-    return [];
+    return empty;
   }
 
   const payload = (await response.json()) as TasacionesDocumentosApiResponse;
-  if (!payload.ok) return [];
+  if (!payload.ok) return empty;
 
-  return pickDocumentosFromPayload(payload, patenteNorm)
+  const documentos = pickDocumentosFromPayload(payload, patenteNorm)
     .filter((doc) => doc.public_url?.trim().startsWith("http"))
     .map(tasacionesDocumentoToLotLink);
+
+  return {
+    documentos,
+    nombresArchivoOcultos: pickNombresOcultosFromPayload(payload, patenteNorm),
+  };
 }

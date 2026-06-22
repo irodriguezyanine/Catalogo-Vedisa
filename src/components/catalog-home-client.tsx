@@ -52,9 +52,11 @@ import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
 import { cloudinaryRawUrlsInlineInHtml } from "@/lib/cloudinary-delivery";
 import {
   inferLotDocumentKind,
+  isLotDocumentLabelBlocked,
   lotDocumentKindBadgeClass,
   lotDocumentKindLabel,
   lotDocumentOpenUrl,
+  mergeLotDocumentLinks,
   parseLotDocumentsJson,
   serializeLotDocumentsJson,
   type LotDocumentLink,
@@ -4301,48 +4303,41 @@ export function CatalogHomeClient({
   }, [selectedVehicle, selectedVehicleLookup, selectedVehicleOverride]);
 
   const [tasacionesVehicleDocuments, setTasacionesVehicleDocuments] = useState<LotDocumentLink[]>([]);
-  /** Si la API de Tasaciones responde, es la única fuente pública (respeta visible_catalogo). */
-  const [documentosPublicosOrigen, setDocumentosPublicosOrigen] = useState<
-    "idle" | "tasaciones" | "legacy"
-  >("idle");
+  const [nombresArchivoOcultosTasaciones, setNombresArchivoOcultosTasaciones] = useState<string[]>([]);
 
   useEffect(() => {
     if (!selectedVehicle) {
       setTasacionesVehicleDocuments([]);
-      setDocumentosPublicosOrigen("idle");
+      setNombresArchivoOcultosTasaciones([]);
       return;
     }
     const patente = normalizePatentToken(getPatent(selectedVehicle));
     if (!patente) {
       setTasacionesVehicleDocuments([]);
-      setDocumentosPublicosOrigen("legacy");
+      setNombresArchivoOcultosTasaciones([]);
       return;
     }
 
     let cancelled = false;
-    setDocumentosPublicosOrigen("idle");
     void fetch(`/api/public/vehiculo-documentos?patente=${encodeURIComponent(patente)}`)
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
-        if (cancelled) return;
-        if (payload?.ok === true) {
-          const rows = Array.isArray(payload.documentos) ? payload.documentos : [];
-          setTasacionesVehicleDocuments(
-            rows.filter(
-              (doc: LotDocumentLink) =>
-                typeof doc?.url === "string" && doc.url.trim().startsWith("http"),
-            ),
-          );
-          setDocumentosPublicosOrigen("tasaciones");
-          return;
-        }
-        setTasacionesVehicleDocuments([]);
-        setDocumentosPublicosOrigen("legacy");
+        if (cancelled || !payload || payload.ok !== true) return;
+        const rows = Array.isArray(payload.documentos) ? payload.documentos : [];
+        setTasacionesVehicleDocuments(
+          rows.filter(
+            (doc: LotDocumentLink) =>
+              typeof doc?.url === "string" && doc.url.trim().startsWith("http"),
+          ),
+        );
+        setNombresArchivoOcultosTasaciones(
+          Array.isArray(payload.nombres_archivo_ocultos) ? payload.nombres_archivo_ocultos : [],
+        );
       })
       .catch(() => {
         if (!cancelled) {
           setTasacionesVehicleDocuments([]);
-          setDocumentosPublicosOrigen("legacy");
+          setNombresArchivoOcultosTasaciones([]);
         }
       });
 
@@ -4351,11 +4346,19 @@ export function CatalogHomeClient({
     };
   }, [selectedVehicle]);
 
-  const selectedVehicleDisplayDocuments = useMemo(() => {
-    if (documentosPublicosOrigen === "tasaciones") return tasacionesVehicleDocuments;
-    if (documentosPublicosOrigen === "legacy") return selectedVehicleLotDocuments;
-    return [];
-  }, [documentosPublicosOrigen, tasacionesVehicleDocuments, selectedVehicleLotDocuments]);
+  const selectedVehicleLotDocumentsSinOcultos = useMemo(
+    () =>
+      selectedVehicleLotDocuments.filter(
+        (doc) => !isLotDocumentLabelBlocked(doc.label, nombresArchivoOcultosTasaciones),
+      ),
+    [selectedVehicleLotDocuments, nombresArchivoOcultosTasaciones],
+  );
+
+  /** Tasaciones primero; importados externos después, sin repetir URL ni nombre. */
+  const selectedVehicleDisplayDocuments = useMemo(
+    () => mergeLotDocumentLinks(tasacionesVehicleDocuments, selectedVehicleLotDocumentsSinOcultos),
+    [tasacionesVehicleDocuments, selectedVehicleLotDocumentsSinOcultos],
+  );
 
   const selectedVehicleTabs = useMemo(
     () => {

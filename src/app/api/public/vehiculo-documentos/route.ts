@@ -11,11 +11,14 @@ export async function GET(request: Request) {
     return Response.json({ ok: false, error: "Indica patente." }, { status: 400 });
   }
 
-  const documentos = await fetchTasacionesDocumentosByPatent(patente, { revalidate: 120 });
+  const { documentos, nombresArchivoOcultos } = await fetchTasacionesDocumentosByPatent(patente, {
+    revalidate: 120,
+  });
 
   return Response.json({
     ok: true,
     patente,
     documentos,
+    nombres_archivo_ocultos: nombresArchivoOcultos,
   });
 }
