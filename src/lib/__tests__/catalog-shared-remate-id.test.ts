@@ -34,6 +34,19 @@ describe("resolveCanonicalRemateIdForSync", () => {
       resolveCanonicalRemateIdForSync(catalogDuplicateId, "REMATE 1085", remates),
     ).toBe(subastasCanonicalId);
   });
+
+  it("prefiere el UUID canónico de venta directa catálogo", () => {
+    const canonicalVdId = "6f4a7e7a-0c83-4e0a-8a7e-9d60f6797f11";
+    const duplicateVdId = "33333333-3333-4333-8333-333333333333";
+    const remates = [
+      { id: duplicateVdId, descripcion: "Venta Directa - Catálogo" },
+      { id: canonicalVdId, descripcion: "Venta Directa - Catálogo" },
+    ];
+
+    expect(
+      resolveCanonicalRemateIdForSync(duplicateVdId, "Venta Directa - Catálogo", remates),
+    ).toBe(canonicalVdId);
+  });
 });
 
 describe("applyRemateIdMappingsToEditorConfig", () => {

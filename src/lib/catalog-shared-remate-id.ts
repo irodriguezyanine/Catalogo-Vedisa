@@ -1,4 +1,8 @@
 import type { EditorConfig } from "@/types/editor";
+import {
+  DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  DEFAULT_VENTA_DIRECTA_EVENT_NAME,
+} from "@/lib/catalog-shared-constants";
 
 export type SharedRemateLookupRow = {
   id: string;
@@ -63,6 +67,28 @@ export function resolveCanonicalRemateIdForSync(
   auctionName: string,
   remates: SharedRemateLookupRow[],
 ): string {
+  const catalogLabel = DEFAULT_VENTA_DIRECTA_EVENT_NAME.trim().toLowerCase();
+  const auctionLabel = auctionName.trim().toLowerCase();
+  if (
+    configAuctionId === DEFAULT_VENTA_DIRECTA_EVENT_ID ||
+    auctionLabel === catalogLabel ||
+    (auctionLabel.includes("venta directa") && auctionLabel.includes("catálogo")) ||
+    (auctionLabel.includes("venta directa") && auctionLabel.includes("catalogo"))
+  ) {
+    if (remates.some((row) => row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID)) {
+      return DEFAULT_VENTA_DIRECTA_EVENT_ID;
+    }
+    const byCatalogName = remates.filter((row) =>
+      String(row.descripcion ?? "")
+        .trim()
+        .toLowerCase()
+        .includes("venta directa"),
+    );
+    if (byCatalogName.length >= 1) {
+      return pickPreferredRemateMatch(byCatalogName, configAuctionId).id;
+    }
+  }
+
   const numero = extractRemateNumberFromLabel(auctionName);
   if (numero) {
     const matches = remates.filter((row) => remateMatchesNumber(row, numero));
