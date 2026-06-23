@@ -2860,6 +2860,7 @@ export function CatalogHomeClient({
   const [editingDetails, setEditingDetails] = useState<EditorVehicleDetails | null>(null);
   const [newAuctionName, setNewAuctionName] = useState("");
   const [newAuctionDate, setNewAuctionDate] = useState("");
+  const [newAuctionEndDate, setNewAuctionEndDate] = useState("");
   const [newAuctionStartTime, setNewAuctionStartTime] = useState("10:00");
   const [newAuctionEndTime, setNewAuctionEndTime] = useState("15:00");
   const [newAuctionEventType, setNewAuctionEventType] = useState<CommercialEventType>("remate");
@@ -6198,8 +6199,9 @@ export function CatalogHomeClient({
   const createUpcomingAuction = (eventType: CommercialEventType) => {
     const name = newAuctionName.trim();
     const date = newAuctionDate.trim();
+    const endDate = eventType === "venta_directa" ? (newAuctionEndDate.trim() || date) : date;
     const startAt = toChileIsoDateTime(date, newAuctionStartTime);
-    const endAt = toChileIsoDateTime(date, newAuctionEndTime);
+    const endAt = toChileIsoDateTime(endDate, newAuctionEndTime);
     if (!name || !date) {
       showSystemNotice("error", "Datos incompletos", "Debes completar nombre y fecha del remate.");
       return;
@@ -6209,7 +6211,13 @@ export function CatalogHomeClient({
       return;
     }
     if (new Date(endAt).getTime() <= new Date(startAt).getTime()) {
-      showSystemNotice("error", "Horario inválido", "La hora de cierre debe ser posterior a la hora de inicio.");
+      showSystemNotice(
+        "error",
+        "Horario inválido",
+        eventType === "venta_directa"
+          ? "La fecha y hora de cierre deben ser posteriores al inicio."
+          : "La hora de cierre debe ser posterior a la hora de inicio.",
+      );
       return;
     }
     const id = crypto.randomUUID();
@@ -6219,6 +6227,7 @@ export function CatalogHomeClient({
     }));
     setNewAuctionName("");
     setNewAuctionDate("");
+    setNewAuctionEndDate("");
     setNewAuctionStartTime("10:00");
     setNewAuctionEndTime("15:00");
     setNewAuctionEventType("remate");
@@ -9273,7 +9282,7 @@ export function CatalogHomeClient({
                 </div>
 
                 {showCreateCategoryForm ? (
-                  <div className="mt-3 grid gap-2 rounded-lg border border-cyan-100 bg-cyan-50/40 p-2 md:grid-cols-[auto_auto_1fr_1fr_auto_auto]">
+                  <div className="mt-3 grid gap-2 rounded-lg border border-cyan-100 bg-cyan-50/40 p-2 md:grid-cols-[auto_auto_1fr_1fr_auto_auto_auto_auto]">
                     <select
                       value={createGroupKind}
                       onChange={(event) => {
@@ -9292,7 +9301,13 @@ export function CatalogHomeClient({
                       <>
                         <select
                           value={newAuctionEventType}
-                          onChange={(event) => setNewAuctionEventType(event.target.value as CommercialEventType)}
+                          onChange={(event) => {
+                            const nextType = event.target.value as CommercialEventType;
+                            setNewAuctionEventType(nextType);
+                            if (nextType === "venta_directa" && newAuctionDate) {
+                              setNewAuctionEndDate((prev) => prev || newAuctionDate);
+                            }
+                          }}
                           className="ui-focus rounded-md border border-cyan-200 bg-white px-2.5 py-2 text-sm"
                         >
                           <option value="remate">Remate</option>
@@ -9307,9 +9322,29 @@ export function CatalogHomeClient({
                         <input
                           type="date"
                           value={newAuctionDate}
-                          onChange={(event) => setNewAuctionDate(event.target.value)}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setNewAuctionDate(value);
+                            if (
+                              newAuctionEventType === "venta_directa" &&
+                              (!newAuctionEndDate || newAuctionEndDate < value)
+                            ) {
+                              setNewAuctionEndDate(value);
+                            }
+                          }}
                           className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                          title={newAuctionEventType === "venta_directa" ? "Inicio (fecha)" : "Fecha del evento"}
                         />
+                        {newAuctionEventType === "venta_directa" ? (
+                          <input
+                            type="date"
+                            value={newAuctionEndDate}
+                            min={newAuctionDate}
+                            onChange={(event) => setNewAuctionEndDate(event.target.value)}
+                            className="ui-focus rounded-md border border-cyan-200 bg-white px-3 py-2 text-sm"
+                            title="Finalización (fecha)"
+                          />
+                        ) : null}
                         <input
                           type="time"
                           value={newAuctionStartTime}
