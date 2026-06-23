@@ -1,6 +1,7 @@
 import type { VehicleCommercialEventBadge } from "@/components/catalog-card";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { EditorConfig, EditorVehicleDetails, ManualPublication, UpcomingAuction } from "@/types/editor";
+import { resolveCommercialEventType } from "@/lib/catalog-shared-constants";
 import {
   extractEstadoRetiro,
   isCatalogPublishedVehicle,
@@ -273,6 +274,45 @@ export function resolveCommercialEventBadge(
   if (assignedBadges[key]) return assignedBadges[key];
 
   return null;
+}
+
+export type VehicleListCommercialFilter = "all" | "remate" | "venta_directa";
+
+export function getVehicleAssignedAuctionId(item: CatalogItem, config: EditorConfig): string | null {
+  const auctionId = config.vehicleUpcomingAuctionIds?.[getVehicleKey(item)];
+  return auctionId?.trim() ? auctionId : null;
+}
+
+export function getFilterableAuctionGroups(config: EditorConfig): {
+  remates: UpcomingAuction[];
+  ventasDirectas: UpcomingAuction[];
+} {
+  const remates: UpcomingAuction[] = [];
+  const ventasDirectas: UpcomingAuction[] = [];
+  for (const auction of config.upcomingAuctions ?? []) {
+    if (!auction?.id) continue;
+    if (resolveCommercialEventType(auction) === "venta_directa") {
+      ventasDirectas.push(auction);
+    } else {
+      remates.push(auction);
+    }
+  }
+  return { remates, ventasDirectas };
+}
+
+export function matchesVehicleListCommercialFilter(
+  item: CatalogItem,
+  config: EditorConfig,
+  options: { tipo: VehicleListCommercialFilter; eventoId: string | null },
+): boolean {
+  const auctionId = getVehicleAssignedAuctionId(item, config);
+  if (options.eventoId) return auctionId === options.eventoId;
+  if (options.tipo === "all") return true;
+  if (!auctionId) return false;
+  const auctionsById = new Map((config.upcomingAuctions ?? []).map((auction) => [auction.id, auction]));
+  const auction = auctionsById.get(auctionId);
+  if (!auction) return false;
+  return resolveCommercialEventType(auction) === options.tipo;
 }
 
 export function getVisibleCatalogItems(feed: CatalogFeed, config: EditorConfig): CatalogItem[] {

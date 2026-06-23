@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { CatalogVehiclesListClient } from "@/components/catalog-vehicles-list-client";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
 import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
@@ -13,5 +14,15 @@ export const metadata: Metadata = {
 
 export default async function VehiclesPage() {
   const [feed, editorConfigResult] = await Promise.all([getCachedCatalogFeed(), getCachedMergedEditorConfig()]);
-  return <CatalogVehiclesListClient feed={feed} initialConfig={editorConfigResult.config} />;
+  return (
+    <Suspense
+      fallback={
+        <div className="catalog-bg flex min-h-screen items-center justify-center text-sm text-slate-600">
+          Cargando vehículos...
+        </div>
+      }
+    >
+      <CatalogVehiclesListClient feed={feed} initialConfig={editorConfigResult.config} />
+    </Suspense>
+  );
 }

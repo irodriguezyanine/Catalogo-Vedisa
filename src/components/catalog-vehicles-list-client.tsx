@@ -2,19 +2,24 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { shouldShowPatentsToViewer } from "@/lib/catalog-patent-visibility";
 import { inferVehicleSiniestradoStatus } from "@/components/catalog-card";
 import {
   buildCommercialEventByVehicleKey,
   formatPrice,
+  getFilterableAuctionGroups,
   getPatent,
   getVehicleKey,
   getVisibleCatalogItems,
+  matchesVehicleListCommercialFilter,
   resolveCommercialEventBadge,
   resolveVehiclePriceRaw,
+  type VehicleListCommercialFilter,
 } from "@/lib/catalog-public-inventory";
 import { mergeAnalyticsPayload } from "@/lib/analytics-context";
+import { resolveCommercialEventType } from "@/lib/catalog-shared-constants";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { EditorConfig } from "@/types/editor";
 import type { VehicleCommercialEventBadge } from "@/components/catalog-card";
@@ -25,6 +30,22 @@ type Props = {
 };
 
 const PAGE_SIZE = 24;
+
+function parseTipoFilter(value: string | null): VehicleListCommercialFilter {
+  if (value === "remate" || value === "venta_directa") return value;
+  return "all";
+}
+
+function buildVehiclesListHref(tipo: VehicleListCommercialFilter, eventoId: string | null): string {
+  const params = new URLSearchParams();
+  if (eventoId) {
+    params.set("evento", eventoId);
+  } else if (tipo !== "all") {
+    params.set("tipo", tipo);
+  }
+  const query = params.toString();
+  return query ? `/vehiculos?${query}` : "/vehiculos";
+}
 
 function isLikelyImageUrl(url?: string): boolean {
   if (!url || !url.startsWith("http")) return false;
@@ -150,9 +171,49 @@ function VehicleListRow({
 }
 
 export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [searchTerm, setSearchTerm] = useState("");
   const [page, setPage] = useState(1);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [tipoFilter, setTipoFilter] = useState<VehicleListCommercialFilter>(() =>
+    parseTipoFilter(searchParams.get("tipo")),
+  );
+  const [eventoFilter, setEventoFilter] = useState<string | null>(() => searchParams.get("evento"));
+
+  const auctionGroups = useMemo(() => getFilterableAuctionGroups(initialConfig), [initialConfig]);
+
+  const auctionsById = useMemo(
+    () => new Map((initialConfig.upcomingAuctions ?? []).map((auction) => [auction.id, auction] as const)),
+    [initialConfig.upcomingAuctions],
+  );
+
+  const syncFiltersFromUrl = useCallback(() => {
+    const eventoFromUrl = searchParams.get("evento");
+    const tipoFromUrl = parseTipoFilter(searchParams.get("tipo"));
+    setEventoFilter(eventoFromUrl);
+    if (eventoFromUrl) {
+      const auction = auctionsById.get(eventoFromUrl);
+      if (auction) {
+        setTipoFilter(resolveCommercialEventType(auction));
+        return;
+      }
+    }
+    setTipoFilter(tipoFromUrl);
+  }, [auctionsById, searchParams]);
+
+  useEffect(() => {
+    syncFiltersFromUrl();
+  }, [syncFiltersFromUrl]);
+
+  const updateFilters = useCallback(
+    (nextTipo: VehicleListCommercialFilter, nextEvento: string | null) => {
+      setTipoFilter(nextTipo);
+      setEventoFilter(nextEvento);
+      router.replace(buildVehiclesListHref(nextTipo, nextEvento), { scroll: false });
+    },
+    [router],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -196,9 +257,15 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
   );
 
   const filteredItems = useMemo(() => {
+    const byGroup = items.filter((item) =>
+      matchesVehicleListCommercialFilter(item, initialConfig, {
+        tipo: tipoFilter,
+        eventoId: eventoFilter,
+      }),
+    );
     const query = searchTerm.trim().toLowerCase();
-    if (!query) return items;
-    return items.filter((item) => {
+    if (!query) return byGroup;
+    return byGroup.filter((item) => {
       const raw = item.raw as Record<string, unknown>;
       const haystack = [
         item.title,
@@ -214,11 +281,16 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [items, searchTerm, showPatents]);
+  }, [items, searchTerm, showPatents, initialConfig, tipoFilter, eventoFilter]);
+
+  const activeEventoLabel = useMemo(() => {
+    if (!eventoFilter) return null;
+    return auctionsById.get(eventoFilter)?.name ?? null;
+  }, [auctionsById, eventoFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm]);
+  }, [searchTerm, tipoFilter, eventoFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
 
@@ -264,39 +336,112 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
         </header>
 
         <div className="mb-6 glass-soft rounded-2xl border border-slate-300/80 bg-white/95 p-4 shadow-md">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative min-w-0 flex-1">
-              <svg
-                viewBox="0 0 20 20"
-                fill="none"
-                aria-hidden="true"
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative min-w-0 flex-1">
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                >
+                  <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  <circle cx="8.75" cy="8.75" r="5.75" stroke="currentColor" strokeWidth="1.8" />
+                </svg>
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder={
+                    showPatents ? "Buscar por patente, marca, modelo..." : "Buscar por marca, modelo..."
+                  }
+                  className="ui-focus w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-800"
+                  aria-label={
+                    showPatents ? "Buscar vehículos por patente, marca o modelo" : "Buscar vehículos por marca o modelo"
+                  }
+                />
+              </div>
+              <span
+                className="shrink-0 rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+                aria-live="polite"
               >
-                <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                <circle cx="8.75" cy="8.75" r="5.75" stroke="currentColor" strokeWidth="1.8" />
-              </svg>
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder={
-                  showPatents ? "Buscar por patente, marca, modelo..." : "Buscar por marca, modelo..."
-                }
-                className="ui-focus w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-800"
-                aria-label={showPatents ? "Buscar vehículos por patente, marca o modelo" : "Buscar vehículos por marca o modelo"}
-              />
+                {filteredItems.length} vehículo{filteredItems.length === 1 ? "" : "s"}
+              </span>
             </div>
-            <span
-              className="shrink-0 rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
-              aria-live="polite"
-            >
-              {filteredItems.length} vehículo{filteredItems.length === 1 ? "" : "s"}
-            </span>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block font-semibold text-slate-700">Tipo de venta</span>
+                <select
+                  value={tipoFilter}
+                  onChange={(event) => {
+                    const nextTipo = parseTipoFilter(event.target.value);
+                    updateFilters(nextTipo, null);
+                  }}
+                  className="ui-focus w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800"
+                  aria-label="Filtrar por tipo de venta"
+                >
+                  <option value="all">Todos</option>
+                  <option value="remate">Remates</option>
+                  <option value="venta_directa">Ventas directas</option>
+                </select>
+              </label>
+
+              <label className="block text-sm">
+                <span className="mb-1 block font-semibold text-slate-700">Grupo / evento</span>
+                <select
+                  value={eventoFilter ?? ""}
+                  onChange={(event) => {
+                    const nextEvento = event.target.value || null;
+                    if (!nextEvento) {
+                      updateFilters(tipoFilter, null);
+                      return;
+                    }
+                    const auction = auctionsById.get(nextEvento);
+                    const inferredTipo: VehicleListCommercialFilter = auction
+                      ? resolveCommercialEventType(auction)
+                      : tipoFilter;
+                    updateFilters(inferredTipo, nextEvento);
+                  }}
+                  className="ui-focus w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800"
+                  aria-label="Filtrar por grupo o evento"
+                >
+                  <option value="">Todos los grupos</option>
+                  {(tipoFilter === "all" || tipoFilter === "remate") && auctionGroups.remates.length > 0 ? (
+                    <optgroup label="Remates">
+                      {auctionGroups.remates.map((auction) => (
+                        <option key={auction.id} value={auction.id}>
+                          {auction.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {(tipoFilter === "all" || tipoFilter === "venta_directa") &&
+                  auctionGroups.ventasDirectas.length > 0 ? (
+                    <optgroup label="Ventas directas">
+                      {auctionGroups.ventasDirectas.map((auction) => (
+                        <option key={auction.id} value={auction.id}>
+                          {auction.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                </select>
+              </label>
+            </div>
+
+            {activeEventoLabel ? (
+              <p className="text-xs font-medium text-cyan-800">
+                Mostrando vehículos de: <span className="font-bold">{activeEventoLabel}</span>
+              </p>
+            ) : null}
           </div>
         </div>
 
         {filteredItems.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-            No encontramos vehículos para esta búsqueda.
+            {searchTerm.trim() || tipoFilter !== "all" || eventoFilter
+              ? "No encontramos vehículos para estos filtros."
+              : "No hay vehículos publicados en este momento."}
           </div>
         ) : (
           <div className="flex flex-col gap-4">

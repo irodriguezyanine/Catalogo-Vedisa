@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { CatalogItem } from "@/types/catalog";
 import type { UpcomingAuction } from "@/types/editor";
 import { formatAuctionDaysUntilBadge, formatAuctionHumanSchedule } from "@/lib/auction-display";
@@ -75,17 +76,19 @@ function AuctionEventHero({
   auction,
   items,
   variant,
-  sectionId,
 }: {
   auction: UpcomingAuction;
   items: CatalogItem[];
   variant: UpcomingAuctionsSectionVariant;
-  sectionId: string;
 }) {
   const scheduleLabel = formatAuctionHumanSchedule(auction);
   const daysBadge = formatAuctionDaysUntilBadge(auction);
   const previewItems = items.slice(0, 3);
-  const listadoHref = `#${sectionId}-${auction.id}-listado`;
+  const listadoHref = `/vehiculos?evento=${encodeURIComponent(auction.id)}`;
+  const listadoLabel =
+    variant === "venta_directa"
+      ? "Ver listado de vehículos en venta directa"
+      : "Ver listado de vehículos en remate";
 
   return (
     <div className="overflow-hidden rounded-2xl border border-cyan-200/80 bg-gradient-to-br from-cyan-50 via-white to-slate-50 shadow-md">
@@ -105,9 +108,9 @@ function AuctionEventHero({
           </p>
           {variant === "remate" ? (
             <div className="mt-4 flex flex-wrap gap-2">
-              <a href={listadoHref} className="ui-focus premium-btn-primary inline-flex min-h-11 items-center px-5">
-                Ver listado de vehículos en remate
-              </a>
+              <Link href={listadoHref} className="ui-focus premium-btn-primary inline-flex min-h-11 items-center px-5">
+                {listadoLabel}
+              </Link>
               <a
                 href={REMATE_WEB_URL}
                 target="_blank"
@@ -117,7 +120,13 @@ function AuctionEventHero({
                 Ir a remate web
               </a>
             </div>
-          ) : null}
+          ) : (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href={listadoHref} className="ui-focus premium-btn-primary inline-flex min-h-11 items-center px-5">
+                {listadoLabel}
+              </Link>
+            </div>
+          )}
         </div>
         {previewItems.length > 0 ? (
           <div className="flex gap-2 md:justify-end">
@@ -168,7 +177,6 @@ export function UpcomingAuctionsSection({
                 auction={auction}
                 items={items}
                 variant={variant}
-                sectionId={copy.sectionId}
               />
             </div>
             <div id={`${copy.sectionId}-${auction.id}-listado`} className="scroll-mt-24">
