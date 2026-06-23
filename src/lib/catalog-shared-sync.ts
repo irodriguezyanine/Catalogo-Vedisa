@@ -471,16 +471,6 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       eventByVehicle.set(vehicleKey, DEFAULT_VENTA_DIRECTA_EVENT_ID);
     }
   }
-  const rematesVentaDirecta = new Set<string>();
-  for (const auction of config.upcomingAuctions ?? []) {
-    if (resolveCommercialEventType(auction) === "venta_directa" && isUuid(auction.id)) {
-      rematesVentaDirecta.add(remateIdAlias.get(auction.id) ?? auction.id);
-    }
-  }
-  for (const [vehicleKey, remateId] of eventByVehicle.entries()) {
-    if (directSaleKeys.has(vehicleKey)) rematesVentaDirecta.add(remateId);
-  }
-
   const remateRows: RemateSyncRow[] = [];
   const hiddenCategoryIds = config.hiddenCategoryIds ?? [];
   const upsertedRemateIds = new Set<string>();
@@ -502,11 +492,8 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       parseIsoOrNull(auction.startAt) ??
       new Date(new Date(fechaHoraCierre).getTime() - 24 * 60 * 60 * 1000).toISOString();
     const nombre = auction.name.trim();
-    const tipoEvento = resolveCommercialEventType(auction);
-    const esVentaDirecta =
-      rematesVentaDirecta.has(canonicalId) ||
-      rematesVentaDirecta.has(auction.id) ||
-      tipoEvento === "venta_directa";
+    const tipoEvento = resolveCommercialEventType({ id: auction.id, name: nombre, eventType: auction.eventType });
+    const esVentaDirecta = tipoEvento === "venta_directa";
     remateRows.push({
       id: canonicalId,
       fecha_hora_inicio: fechaHoraInicio,
@@ -600,9 +587,18 @@ export async function syncEditorConfigToSharedTablesWithOptions(
     }
     const patenteUpper = patentResolved.patente.trim().toUpperCase();
     desiredRemateItemKeys.add(`${remateId}|${patenteUpper}|factura_exenta`);
-    const eventType: "remate" | "venta_directa" = rematesVentaDirecta.has(remateId)
-      ? "venta_directa"
-      : "remate";
+    const linkedAuction = (config.upcomingAuctions ?? []).find(
+      (entry) => (remateIdAlias.get(entry.id) ?? entry.id) === remateId,
+    );
+    const eventType: "remate" | "venta_directa" = linkedAuction
+      ? resolveCommercialEventType({
+          id: linkedAuction.id,
+          name: linkedAuction.name,
+          eventType: linkedAuction.eventType,
+        })
+      : remateId === DEFAULT_VENTA_DIRECTA_EVENT_ID
+        ? "venta_directa"
+        : "remate";
     remateItemRows.push(
       buildRemateItemPayload(
         config,

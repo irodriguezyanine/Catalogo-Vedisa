@@ -107,6 +107,7 @@ import {
   preserveEditorBaseSectionVisibility,
   mergeEditorConfigAfterServerPersist,
   reconcileVisibleCommercialSectionVisibility,
+  resolveCommercialEventType,
 } from "@/lib/catalog-shared-constants";
 import {
   applyExclusiveCommercialAssignment,
@@ -382,10 +383,11 @@ function sanitizeAuctionTitle(value?: string | null): string {
 }
 
 function getAuctionEventType(auction: UpcomingAuction): CommercialEventType {
-  if (auction.eventType === "venta_directa" || auction.eventType === "remate") {
-    return auction.eventType;
-  }
-  return detectCommercialEventType(auction.name);
+  return resolveCommercialEventType({
+    id: auction.id,
+    name: auction.name,
+    eventType: auction.eventType,
+  });
 }
 
 function resolveEstadoRetiroForBatchTarget(
@@ -4035,23 +4037,21 @@ export function CatalogHomeClient({
   const resolvedHomeSectionOrder = useMemo(() => {
     const managedIds = managedCategoryOrderEntries.map((entry) => entry.id);
     const validManagedIds = new Set(managedIds);
-    const unique: HomeSectionOrderId[] = [];
+    const managedFromConfig: HomeSectionOrderId[] = [];
     for (const rawSectionId of config.homeLayout.sectionOrder ?? []) {
       const sectionId = rawSectionId as HomeSectionOrderId;
-      const isValidBase =
-        isBaseHomeSectionOrderId(sectionId) && !RETIRED_HOME_SECTION_IDS.has(sectionId as SectionId);
-      const isValidManaged =
-        sectionId.startsWith("managed:") && validManagedIds.has(sectionId as HomeSectionOrderId);
-      if (!isValidBase && !isValidManaged) continue;
-      if (!unique.includes(sectionId)) unique.push(sectionId);
-    }
-    for (const baseId of BASE_HOME_SECTION_ORDER) {
-      if (!unique.includes(baseId)) unique.push(baseId);
+      if (
+        sectionId.startsWith("managed:") &&
+        validManagedIds.has(sectionId) &&
+        !managedFromConfig.includes(sectionId)
+      ) {
+        managedFromConfig.push(sectionId);
+      }
     }
     for (const managedId of managedIds) {
-      if (!unique.includes(managedId)) unique.push(managedId);
+      if (!managedFromConfig.includes(managedId)) managedFromConfig.push(managedId);
     }
-    return unique;
+    return [...BASE_HOME_SECTION_ORDER, ...managedFromConfig];
   }, [config.homeLayout.sectionOrder, managedCategoryOrderEntries]);
   const homeSectionCountById = useMemo(() => {
     const map = new Map<HomeSectionOrderId, number>();

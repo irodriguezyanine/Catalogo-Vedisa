@@ -54,6 +54,26 @@ describe("resolveCommercialEventType", () => {
     expect(resolveCommercialEventType({ name: "Venta Directa Q2" })).toBe("venta_directa");
     expect(resolveCommercialEventType({ name: "Remate 1084", eventType: "remate" })).toBe("remate");
   });
+
+  it("prioriza remate por nombre aunque eventType diga venta_directa", () => {
+    expect(
+      resolveCommercialEventType({
+        id: "ad1430b8-9327-42d0-8233-28ce5f93a724",
+        name: "REMATE 1085",
+        eventType: "venta_directa",
+      }),
+    ).toBe("remate");
+  });
+
+  it("mantiene venta directa catalogo por id fijo", () => {
+    expect(
+      resolveCommercialEventType({
+        id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
+        name: "REMATE especial",
+        eventType: "remate",
+      }),
+    ).toBe("venta_directa");
+  });
 });
 
 describe("isVentaDirectaAuctionActive", () => {

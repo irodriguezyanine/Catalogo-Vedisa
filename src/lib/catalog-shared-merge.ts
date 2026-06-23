@@ -41,20 +41,11 @@ function normalizeText(value?: string | null) {
 }
 
 function inferEventType(row: SharedRemateRow): "remate" | "venta_directa" {
-  if (row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) return "venta_directa";
-  const text = normalizeText(`${row.numero_remate ?? ""} ${row.descripcion ?? ""}`);
-  if (
-    text.includes("ventadirecta") ||
-    text.includes("vtadirecta") ||
-    text.includes("vtdirecta") ||
-    text.includes("ventadir")
-  ) {
-    return "venta_directa";
-  }
-  if (row.tipo === "venta_directa" || row.tipo === "remate") {
-    return row.tipo;
-  }
-  return "remate";
+  return resolveCommercialEventType({
+    id: row.id,
+    name: row.descripcion ?? row.numero_remate ?? inferEventName(row),
+    eventType: row.tipo ?? undefined,
+  });
 }
 
 function inferEventDate(row: SharedRemateRow) {
@@ -671,6 +662,22 @@ export async function mergeSharedEventsIntoConfig(
 
   const unblockedPublication = clearHiddenBlocksForVehicleKeys(config, reassignedVehicleKeys);
 
+  for (const [vehicleKey, auctionId] of Object.entries(filteredVehicleUpcomingAuctionIds)) {
+    const auction = byId.get(auctionId);
+    const lane = resolveCommercialEventType({
+      id: auctionId,
+      name: auction?.name,
+      eventType: auction?.eventType,
+    });
+    if (lane === "venta_directa") {
+      rematesSection.delete(vehicleKey);
+      ventaDirectaSection.add(vehicleKey);
+    } else {
+      ventaDirectaSection.delete(vehicleKey);
+      rematesSection.add(vehicleKey);
+    }
+  }
+
   return {
     ...config,
     ...unblockedPublication,
@@ -683,6 +690,11 @@ export async function mergeSharedEventsIntoConfig(
       })
       .map((auction) => ({
         ...auction,
+        eventType: resolveCommercialEventType({
+          id: auction.id,
+          name: auction.name,
+          eventType: auction.eventType,
+        }),
         eventOrigin:
           auction.eventOrigin ??
           inferOriginFromSources(sourcesByAuction.get(auction.id) ?? new Set<string>()),

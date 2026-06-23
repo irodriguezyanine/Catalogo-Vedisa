@@ -13,11 +13,10 @@ function normalizeEventText(value?: string | null): string {
 }
 
 export function resolveCommercialEventType(
-  source: { name?: string | null; eventType?: string | null },
+  source: { id?: string | null; name?: string | null; eventType?: string | null },
 ): "remate" | "venta_directa" {
-  if (source.eventType === "venta_directa" || source.eventType === "remate") {
-    return source.eventType;
-  }
+  if (source.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) return "venta_directa";
+
   const text = normalizeEventText(source.name);
   if (
     text.includes("ventadirecta") ||
@@ -26,6 +25,13 @@ export function resolveCommercialEventType(
     text.includes("ventadir")
   ) {
     return "venta_directa";
+  }
+  if (text.includes("remate")) {
+    return "remate";
+  }
+
+  if (source.eventType === "venta_directa" || source.eventType === "remate") {
+    return source.eventType;
   }
   return "remate";
 }
@@ -243,7 +249,9 @@ export function mergeEditorConfigAfterServerPersist(
     proxSet.delete(vehicleKey);
     vdSet.delete(vehicleKey);
     const auction = preserved.upcomingAuctions?.find((entry) => entry.id === auctionId);
-    const eventType = resolveCommercialEventType(auction ?? { name: "" });
+    const eventType = resolveCommercialEventType(
+      auction ?? { id: auctionId, name: "", eventType: undefined },
+    );
     if (eventType === "venta_directa") vdSet.add(vehicleKey);
     else proxSet.add(vehicleKey);
   }
