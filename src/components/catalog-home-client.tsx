@@ -2902,7 +2902,6 @@ export function CatalogHomeClient({
   const [detailEditorTab, setDetailEditorTab] = useState<DetailEditorTabId>("general");
   const [selectedVehicleTab, setSelectedVehicleTab] = useState<VehicleDetailTabId>("descripcion");
   const [revalidating, setRevalidating] = useState(false);
-  const [sharedSyncBusy, setSharedSyncBusy] = useState(false);
   const [sharedSyncStatus, setSharedSyncStatus] = useState<{
     ventaDirectaCatalog: {
       present: boolean;
@@ -7424,49 +7423,6 @@ export function CatalogHomeClient({
     return () => window.clearTimeout(timeout);
   }, [adminView, config, isAdmin, isBootstrapping, persistEditorConfig]);
 
-  const refreshSharedSyncOnly = useCallback(async () => {
-    setSharedSyncBusy(true);
-    try {
-      const response = await fetch("/api/admin/editor-config/sync", { method: "POST" });
-      const payload = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        config?: EditorConfig;
-        syncStatus?: {
-          checkedAt: string;
-          remateAuctions: number;
-          ventaDirectaAuctions: number;
-          ventaDirectaCatalog: {
-            present: boolean;
-            vehicleCount: number;
-            sharedItemsCount?: number;
-            needsReconcile?: boolean;
-          };
-        };
-      };
-      if (!response.ok || !payload.ok || !payload.config) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
-      applyMergedAdminConfig(payload.config);
-      if (payload.syncStatus) setSharedSyncStatus(payload.syncStatus);
-      router.refresh();
-      const vd = payload.syncStatus?.ventaDirectaCatalog;
-      showSystemNotice(
-        "success",
-        "Sincronizado con Tasaciones",
-        `Remates: ${payload.syncStatus?.remateAuctions ?? 0} · VD: ${vd?.vehicleCount ?? 0} editor · ${vd?.sharedItemsCount ?? 0} en Supabase${vd?.needsReconcile ? " (revisar desalineación)" : ""}.`,
-      );
-    } catch (error) {
-      showSystemNotice(
-        "error",
-        "Sync Tasaciones",
-        error instanceof Error ? error.message : "No se pudo sincronizar con Tasaciones.",
-      );
-    } finally {
-      setSharedSyncBusy(false);
-    }
-  }, [applyMergedAdminConfig, router, showSystemNotice]);
-
   const refreshInventoryAndSync = useCallback(async () => {
     setRevalidating(true);
     try {
@@ -7515,6 +7471,13 @@ export function CatalogHomeClient({
       setRevalidating(false);
     }
   }, [applyMergedAdminConfig, router, showSystemNotice]);
+
+  const adminInventorySyncBusy = revalidating;
+
+  const runAdminInventoryAndSync = useCallback(async () => {
+    if (adminInventorySyncBusy) return;
+    await refreshInventoryAndSync();
+  }, [adminInventorySyncBusy, refreshInventoryAndSync]);
 
   const syncVehicleWithGlo3dAutored = useCallback(
     async (vehicleKey: string) => {
@@ -8504,61 +8467,28 @@ export function CatalogHomeClient({
                 <h3 className="text-lg font-semibold text-slate-900">Modo editor administrador</h3>
                 <p className="text-xs text-slate-500">Lista limpia de unidades con gestión individual de remates, categorías, visibilidad y precio.</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    autoSaveState === "error"
-                      ? "border border-rose-200 bg-rose-50 text-rose-700"
-                      : autoSaveState === "saving" || saving
-                        ? "border border-amber-200 bg-amber-50 text-amber-700"
-                        : autoSaveState === "saved"
-                          ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border border-slate-200 bg-slate-100 text-slate-600"
-                  }`}
-                >
-                  {autoSaveState === "error"
-                    ? "Guardado automático con respaldo local"
-                    : autoSaveState === "saving" || saving
-                      ? "Guardando cambios..."
-                      : autoSaveState === "saved"
-                        ? `Guardado automático ${lastAutoSaveAt ? `· ${lastAutoSaveAt}` : ""}`
-                        : "Guardado automático activo"}
-                </span>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    sharedSyncStatus?.ventaDirectaCatalog.present &&
-                    !sharedSyncStatus.ventaDirectaCatalog.needsReconcile
-                      ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                      : "border border-amber-200 bg-amber-50 text-amber-800"
-                  }`}
-                >
-                  {sharedSyncBusy || revalidating
-                    ? "Sincronizando Tasaciones..."
-                    : sharedSyncStatus?.ventaDirectaCatalog.present
-                      ? sharedSyncStatus.ventaDirectaCatalog.needsReconcile
-                        ? `VD desalineado: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} editor · ${sharedSyncStatus.ventaDirectaCatalog.sharedItemsCount ?? 0} Supabase`
-                        : `VD alineado: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} vehículos`
-                      : "VD Tasaciones: sin catálogo"}
-                </span>
+              <div className="flex shrink-0 items-center">
                 <button
-                  onClick={() => void refreshSharedSyncOnly()}
-                  disabled={sharedSyncBusy || revalidating}
-                  className="ui-focus inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 shadow-sm transition hover:bg-cyan-100 disabled:opacity-60"
+                  type="button"
+                  onClick={() => void runAdminInventoryAndSync()}
+                  disabled={adminInventorySyncBusy}
+                  title="Actualizar inventario y sincronizar con Tasaciones"
+                  aria-label="Actualizar inventario y sincronizar con Tasaciones"
+                  className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:border-cyan-400 hover:bg-cyan-50 hover:text-cyan-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 ${sharedSyncBusy ? "animate-spin" : ""}`}>
-                    <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.262.263A7 7 0 0 0 17.25 10a.75.75 0 0 0-1.5 0 5.48 5.48 0 0 1-.438 1.424ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.466l.312.311h-2.433a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.537a.75.75 0 0 0-1.5 0v2.033l-.262-.263A7 7 0 0 0 2.75 10a.75.75 0 0 0 1.5 0c0-.51.07-1.003.438-1.424Z" clipRule="evenodd" />
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className={`h-5 w-5 ${adminInventorySyncBusy ? "animate-spin" : ""}`}
+                    aria-hidden
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.262.263A7 7 0 0 0 17.25 10a.75.75 0 0 0-1.5 0 5.48 5.48 0 0 1-.438 1.424ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.466l.312.311h-2.433a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.537a.75.75 0 0 0-1.5 0v2.033l-.262-.263A7 7 0 0 0 2.75 10a.75.75 0 0 0 1.5 0c0-.51.07-1.003.438-1.424Z"
+                      clipRule="evenodd"
+                    />
                   </svg>
-                  {sharedSyncBusy ? "Sync..." : "Sync Tasaciones"}
-                </button>
-                <button
-                  onClick={() => void refreshInventoryAndSync()}
-                  disabled={revalidating || sharedSyncBusy}
-                  className="ui-focus inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:opacity-60"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 ${revalidating ? "animate-spin" : ""}`}>
-                    <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.262.263A7 7 0 0 0 17.25 10a.75.75 0 0 0-1.5 0 5.48 5.48 0 0 1-.438 1.424ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.466l.312.311h-2.433a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.537a.75.75 0 0 0-1.5 0v2.033l-.262-.263A7 7 0 0 0 2.75 10a.75.75 0 0 0 1.5 0c0-.51.07-1.003.438-1.424Z" clipRule="evenodd" />
-                  </svg>
-                  {revalidating ? "Actualizando..." : "Actualizar inventario y sync"}
                 </button>
               </div>
             </div>
