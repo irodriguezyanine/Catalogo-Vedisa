@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
+import { buildCatalogSharedSyncStatus } from "@/lib/catalog-shared-sync-status";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 
 export async function POST() {
@@ -20,6 +21,7 @@ export async function POST() {
       syncOk: true,
       persisted: result.persisted,
       config: result.mergedConfig,
+      syncStatus: buildCatalogSharedSyncStatus(result.mergedConfig),
     });
   } catch (error) {
     const message =

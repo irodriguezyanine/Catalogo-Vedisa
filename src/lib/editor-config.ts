@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { migrateEditorAuctionIds } from "@/lib/auction-id";
 import {
   preserveEditorBaseSectionVisibility,
-  reconcileVisibleRemateAuctionsSectionVisibility,
+  reconcileVisibleCommercialSectionVisibility,
 } from "@/lib/catalog-shared-constants";
 import {
   resolveCatalogHeroDescription,
@@ -86,7 +86,7 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       catalogo: migrated?.sectionVehicleIds?.catalogo ?? defaults.sectionVehicleIds.catalogo,
     },
     hiddenVehicleIds: migrated?.hiddenVehicleIds ?? defaults.hiddenVehicleIds,
-    hiddenCategoryIds: reconcileVisibleRemateAuctionsSectionVisibility(
+    hiddenCategoryIds: reconcileVisibleCommercialSectionVisibility(
       migrated?.hiddenCategoryIds ?? defaults.hiddenCategoryIds,
       upcomingAuctions,
     ),
@@ -179,7 +179,7 @@ export async function getMergedEditorConfig(): Promise<EditorConfigLoadResult> {
   return {
     config: {
       ...preserved,
-      hiddenCategoryIds: reconcileVisibleRemateAuctionsSectionVisibility(
+      hiddenCategoryIds: reconcileVisibleCommercialSectionVisibility(
         preserved.hiddenCategoryIds,
         preserved.upcomingAuctions,
       ),

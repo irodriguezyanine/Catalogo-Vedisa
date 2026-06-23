@@ -48,29 +48,42 @@ export function collectDirectSaleVehicleKeys(config: EditorConfig): Set<string> 
 export function ensureDefaultVentaDirectaAuction(
   byId: Map<string, UpcomingAuction>,
   ventaDirectaSection: Set<string>,
+  options?: {
+    sharedItemCount?: number;
+    sharedRow?: {
+      descripcion?: string | null;
+      fecha_hora_inicio?: string | null;
+      fecha_hora_cierre?: string | null;
+      fecha_hora_remate?: string | null;
+    };
+  },
 ): void {
-  if (ventaDirectaSection.size === 0) return;
+  const sharedItemCount = options?.sharedItemCount ?? 0;
+  if (ventaDirectaSection.size === 0 && sharedItemCount === 0) return;
 
+  const sharedRow = options?.sharedRow;
   const existing = byId.get(DEFAULT_VENTA_DIRECTA_EVENT_ID);
-  if (existing) {
-    byId.set(DEFAULT_VENTA_DIRECTA_EVENT_ID, {
-      ...existing,
-      eventType: "venta_directa",
-      name: existing.name?.trim() || DEFAULT_VENTA_DIRECTA_EVENT_NAME,
-    });
-    return;
-  }
-
-  const now = new Date();
-  const end = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+  const name =
+    existing?.name?.trim() ||
+    String(sharedRow?.descripcion ?? "").trim() ||
+    DEFAULT_VENTA_DIRECTA_EVENT_NAME;
+  const startAt = existing?.startAt ?? sharedRow?.fecha_hora_inicio ?? existing?.date ?? undefined;
+  const endAt =
+    existing?.endAt ??
+    sharedRow?.fecha_hora_cierre ??
+    sharedRow?.fecha_hora_remate ??
+    undefined;
   byId.set(DEFAULT_VENTA_DIRECTA_EVENT_ID, {
+    ...(existing ?? {
+      id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
+      date: new Date().toISOString().slice(0, 10),
+    }),
     id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
-    name: DEFAULT_VENTA_DIRECTA_EVENT_NAME,
-    date: now.toISOString().slice(0, 10),
-    startAt: now.toISOString(),
-    endAt: end.toISOString(),
+    name,
+    startAt,
+    endAt,
     eventType: "venta_directa",
-    eventOrigin: "catalogo",
+    eventOrigin: existing?.eventOrigin ?? "tasaciones",
   });
 }
 
@@ -135,6 +148,14 @@ function isRemateAuctionVisible(
   return !hiddenCategoryIds.has(`auction:${auction.id}`);
 }
 
+function isVentaDirectaAuctionVisible(
+  auction: UpcomingAuction,
+  hiddenCategoryIds: Set<string>,
+): boolean {
+  if (resolveCommercialEventType(auction) !== "venta_directa") return false;
+  return !hiddenCategoryIds.has(`auction:${auction.id}`);
+}
+
 /** Si hay al menos un remate visible por subgrupo, la sección base no puede quedar oculta. */
 export function reconcileVisibleRemateAuctionsSectionVisibility(
   hiddenCategoryIds: Iterable<string> | undefined,
@@ -148,6 +169,34 @@ export function reconcileVisibleRemateAuctionsSectionVisibility(
     hidden.delete("section:proximos-remates");
   }
   return Array.from(hidden);
+}
+
+/** Si hay venta directa visible por subgrupo, la sección base no puede quedar oculta. */
+export function reconcileVisibleVentaDirectaAuctionsSectionVisibility(
+  hiddenCategoryIds: Iterable<string> | undefined,
+  upcomingAuctions: UpcomingAuction[] | undefined,
+): string[] {
+  const hidden = new Set(hiddenCategoryIds ?? []);
+  const hasVisibleVentaDirectaAuction = (upcomingAuctions ?? []).some((auction) =>
+    isVentaDirectaAuctionVisible(auction, hidden),
+  );
+  if (hasVisibleVentaDirectaAuction) {
+    hidden.delete("section:ventas-directas");
+    hidden.delete(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`);
+  }
+  return Array.from(hidden);
+}
+
+/** Alinea visibilidad de secciones base con subgrupos comerciales visibles. */
+export function reconcileVisibleCommercialSectionVisibility(
+  hiddenCategoryIds: Iterable<string> | undefined,
+  upcomingAuctions: UpcomingAuction[] | undefined,
+): string[] {
+  const afterRemates = reconcileVisibleRemateAuctionsSectionVisibility(
+    hiddenCategoryIds,
+    upcomingAuctions,
+  );
+  return reconcileVisibleVentaDirectaAuctionsSectionVisibility(afterRemates, upcomingAuctions);
 }
 
 /** El editor manda la visibilidad de secciones base; el merge no puede revertirla. */

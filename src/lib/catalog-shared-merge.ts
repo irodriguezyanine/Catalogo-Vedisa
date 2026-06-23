@@ -41,9 +41,7 @@ function normalizeText(value?: string | null) {
 }
 
 function inferEventType(row: SharedRemateRow): "remate" | "venta_directa" {
-  if (row.tipo === "venta_directa" || row.tipo === "remate") {
-    return row.tipo;
-  }
+  if (row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) return "venta_directa";
   const text = normalizeText(`${row.numero_remate ?? ""} ${row.descripcion ?? ""}`);
   if (
     text.includes("ventadirecta") ||
@@ -52,6 +50,9 @@ function inferEventType(row: SharedRemateRow): "remate" | "venta_directa" {
     text.includes("ventadir")
   ) {
     return "venta_directa";
+  }
+  if (row.tipo === "venta_directa" || row.tipo === "remate") {
+    return row.tipo;
   }
   return "remate";
 }
@@ -143,12 +144,22 @@ async function fetchInventoryVehicleKeyAliases(): Promise<Map<string, string>> {
   const supabase = getServerSupabase();
   if (!supabase) return new Map();
 
-  const { data, error } = await supabase
-    .from(INVENTARIO_TABLE)
-    .select("id, patente, stock_number")
-    .limit(10000);
-  if (error) {
-    console.warn("No se pudo leer inventario para cruce de patentes:", error);
+  const runSelect = async (columns: string) =>
+    supabase.from(INVENTARIO_TABLE).select(columns).limit(10000);
+
+  let data: unknown[] | null = null;
+  const full = await runSelect("id, patente, stock_number");
+  if (!full.error) {
+    data = full.data ?? [];
+  } else if (isMissingColumnError(full.error)) {
+    const fallback = await runSelect("id, patente");
+    if (fallback.error) {
+      console.warn("No se pudo leer inventario para cruce de patentes:", fallback.error);
+      return new Map();
+    }
+    data = fallback.data ?? [];
+  } else {
+    console.warn("No se pudo leer inventario para cruce de patentes:", full.error);
     return new Map();
   }
 
@@ -229,6 +240,7 @@ function assignVehicleToAuction(
 function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
   const estado = String(row.estado ?? "").trim().toLowerCase();
   if (estado === "cerrado") return false;
+  if (row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) return true;
   if (inferEventType(row) === "venta_directa") {
     if (estado === "abierto") return true;
     const endAt = row.fecha_hora_cierre ?? row.fecha_hora_remate;
@@ -263,14 +275,26 @@ async function fetchVentaDirectaInventoryRawKeys(): Promise<string[]> {
   const supabase = getServerSupabase();
   if (!supabase) return [];
 
-  const { data, error } = await supabase
-    .from(INVENTARIO_TABLE)
-    .select("patente, stock_number, id")
-    .eq("estado_retiro", ESTADO_RETIRO_VENTA_DIRECTA)
-    .limit(10000);
+  const runSelect = async (columns: string) =>
+    supabase
+      .from(INVENTARIO_TABLE)
+      .select(columns)
+      .eq("estado_retiro", ESTADO_RETIRO_VENTA_DIRECTA)
+      .limit(10000);
 
-  if (error) {
-    console.warn("No se pudo leer inventario en venta directa:", error);
+  let data: unknown[] | null = null;
+  const full = await runSelect("patente, stock_number, id");
+  if (!full.error) {
+    data = full.data ?? [];
+  } else if (isMissingColumnError(full.error)) {
+    const fallback = await runSelect("patente, id");
+    if (fallback.error) {
+      console.warn("No se pudo leer inventario en venta directa:", fallback.error);
+      return [];
+    }
+    data = fallback.data ?? [];
+  } else {
+    console.warn("No se pudo leer inventario en venta directa:", full.error);
     return [];
   }
 
@@ -447,14 +471,17 @@ export async function mergeSharedEventsIntoConfig(
     const current = byId.get(row.id) ?? (config.upcomingAuctions ?? []).find((event) => event.id === row.id);
     const currentName = sanitizeEventTitle(current?.name ?? row.descripcion ?? row.numero_remate ?? "");
     const fallbackName = sanitizeEventTitle(inferEventName(row));
+    const resolvedEventType = inferEventType(row);
     byId.set(row.id, {
       id: row.id,
       name: currentName && currentName !== "Sin título" ? currentName : fallbackName,
       date: current?.date || inferEventDate(row),
       startAt: current?.startAt ?? row.fecha_hora_inicio ?? undefined,
       endAt: current?.endAt ?? inferEventEndAt(row),
-      eventType: row.tipo ?? current?.eventType ?? inferEventType(row),
-      eventOrigin: current?.eventOrigin,
+      eventType: resolvedEventType,
+      eventOrigin:
+        current?.eventOrigin ??
+        (row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID ? "tasaciones" : undefined),
     });
   }
 
@@ -583,7 +610,12 @@ export async function mergeSharedEventsIntoConfig(
     }
   }
 
-  ensureDefaultVentaDirectaAuction(byId, ventaDirectaSection);
+  const defaultVentaDirectaItemCount =
+    patentesByRemate.get(DEFAULT_VENTA_DIRECTA_EVENT_ID)?.size ?? 0;
+  ensureDefaultVentaDirectaAuction(byId, ventaDirectaSection, {
+    sharedItemCount: defaultVentaDirectaItemCount,
+    sharedRow: data.find((row) => row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID),
+  });
 
   const ventaDirectaPoolKeys = new Set<string>();
   for (const raw of ventaDirectaInventoryRaw) {

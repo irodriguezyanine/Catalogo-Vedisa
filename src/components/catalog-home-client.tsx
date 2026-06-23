@@ -106,7 +106,7 @@ import {
   DEFAULT_VENTA_DIRECTA_EVENT_NAME,
   preserveEditorBaseSectionVisibility,
   mergeEditorConfigAfterServerPersist,
-  reconcileVisibleRemateAuctionsSectionVisibility,
+  reconcileVisibleCommercialSectionVisibility,
 } from "@/lib/catalog-shared-constants";
 import {
   applyExclusiveCommercialAssignment,
@@ -757,7 +757,7 @@ function normalizeEditorConfigClient(
   const exclusive = enforceCommercialExclusivityInConfig(baseConfig);
   return {
     ...exclusive,
-    hiddenCategoryIds: reconcileVisibleRemateAuctionsSectionVisibility(
+    hiddenCategoryIds: reconcileVisibleCommercialSectionVisibility(
       exclusive.hiddenCategoryIds,
       exclusive.upcomingAuctions,
     ),
@@ -2900,6 +2900,13 @@ export function CatalogHomeClient({
   const [detailEditorTab, setDetailEditorTab] = useState<DetailEditorTabId>("general");
   const [selectedVehicleTab, setSelectedVehicleTab] = useState<VehicleDetailTabId>("descripcion");
   const [revalidating, setRevalidating] = useState(false);
+  const [sharedSyncBusy, setSharedSyncBusy] = useState(false);
+  const [sharedSyncStatus, setSharedSyncStatus] = useState<{
+    ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+    remateAuctions: number;
+    ventaDirectaAuctions: number;
+    checkedAt?: string;
+  } | null>(null);
   const [rainworxLotUrl, setRainworxLotUrl] = useState("");
   const [rainworxCatalogId, setRainworxCatalogId] = useState("");
   const [rainworxImporting, setRainworxImporting] = useState(false);
@@ -3364,6 +3371,57 @@ export function CatalogHomeClient({
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [adminView, isAdmin, isBootstrapping, isStandaloneDetailPage]);
+
+  const applyMergedAdminConfig = useCallback((mergedConfig: EditorConfig) => {
+    const normalized = normalizeEditorConfigClient(mergedConfig);
+    setConfig(normalized);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
+    }
+    lastPersistedConfigRef.current = JSON.stringify(normalized);
+    autoSaveReadyRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin || adminView !== "editor" || isBootstrapping) return;
+
+    let cancelled = false;
+    const refreshAdminSharedConfig = async () => {
+      try {
+        const response = await fetch("/api/admin/sync-status", { cache: "no-store" });
+        if (!response.ok || cancelled) return;
+        const payload = (await response.json()) as {
+          config?: EditorConfig;
+          status?: {
+            checkedAt: string;
+            remateAuctions: number;
+            ventaDirectaAuctions: number;
+            ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+          };
+        };
+        if (payload.config && !cancelled) {
+          applyMergedAdminConfig(payload.config);
+        }
+        if (payload.status && !cancelled) {
+          setSharedSyncStatus(payload.status);
+        }
+      } catch {
+        // ignore transient refresh errors
+      }
+    };
+
+    void refreshAdminSharedConfig();
+    const interval = window.setInterval(() => void refreshAdminSharedConfig(), 20_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshAdminSharedConfig();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [adminView, applyMergedAdminConfig, isAdmin, isBootstrapping]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -7332,6 +7390,43 @@ export function CatalogHomeClient({
     return () => window.clearTimeout(timeout);
   }, [adminView, config, isAdmin, isBootstrapping, persistEditorConfig]);
 
+  const refreshSharedSyncOnly = useCallback(async () => {
+    setSharedSyncBusy(true);
+    try {
+      const response = await fetch("/api/admin/editor-config/sync", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        config?: EditorConfig;
+        syncStatus?: {
+          checkedAt: string;
+          remateAuctions: number;
+          ventaDirectaAuctions: number;
+          ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+        };
+      };
+      if (!response.ok || !payload.ok || !payload.config) {
+        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
+      }
+      applyMergedAdminConfig(payload.config);
+      if (payload.syncStatus) setSharedSyncStatus(payload.syncStatus);
+      router.refresh();
+      showSystemNotice(
+        "success",
+        "Sincronizado con Tasaciones",
+        `Remates: ${payload.syncStatus?.remateAuctions ?? 0} · Ventas directas: ${payload.syncStatus?.ventaDirectaAuctions ?? 0} · Catálogo VD: ${payload.syncStatus?.ventaDirectaCatalog.vehicleCount ?? 0} vehículos.`,
+      );
+    } catch (error) {
+      showSystemNotice(
+        "error",
+        "Sync Tasaciones",
+        error instanceof Error ? error.message : "No se pudo sincronizar con Tasaciones.",
+      );
+    } finally {
+      setSharedSyncBusy(false);
+    }
+  }, [applyMergedAdminConfig, router, showSystemNotice]);
+
   const refreshInventoryAndSync = useCallback(async () => {
     setRevalidating(true);
     try {
@@ -7342,6 +7437,13 @@ export function CatalogHomeClient({
         items?: CatalogItem[];
         itemCount?: number;
         source?: string;
+        config?: EditorConfig;
+        syncStatus?: {
+          checkedAt: string;
+          remateAuctions: number;
+          ventaDirectaAuctions: number;
+          ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+        };
       };
       if (!response.ok || !payload.ok || !payload.items) {
         throw new Error(payload.error ?? `Error HTTP ${response.status}`);
@@ -7349,11 +7451,13 @@ export function CatalogHomeClient({
       setLiveFeedItems(payload.items);
       setImportedInventoryItems([]);
       lastAutoImportPatentRef.current = "";
+      if (payload.config) applyMergedAdminConfig(payload.config);
+      if (payload.syncStatus) setSharedSyncStatus(payload.syncStatus);
       router.refresh();
       showSystemNotice(
         "success",
         "Inventario actualizado",
-        `Se cargó inventario desde Glo3D y Tasaciones (${payload.itemCount ?? payload.items.length} unidades, origen ${payload.source ?? "mixto"}) y se sincronizó con Subastas/Tasaciones.`,
+        `Se cargó inventario (${payload.itemCount ?? payload.items.length} unidades) y se sincronizó con Tasaciones. VD catálogo: ${payload.syncStatus?.ventaDirectaCatalog.vehicleCount ?? 0} vehículos.`,
       );
     } catch (error) {
       showSystemNotice(
@@ -7364,7 +7468,7 @@ export function CatalogHomeClient({
     } finally {
       setRevalidating(false);
     }
-  }, [router, showSystemNotice]);
+  }, [applyMergedAdminConfig, router, showSystemNotice]);
 
   const syncVehicleWithGlo3dAutored = useCallback(
     async (vehicleKey: string) => {
@@ -8374,9 +8478,32 @@ export function CatalogHomeClient({
                         ? `Guardado automático ${lastAutoSaveAt ? `· ${lastAutoSaveAt}` : ""}`
                         : "Guardado automático activo"}
                 </span>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                    sharedSyncStatus?.ventaDirectaCatalog.present
+                      ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border border-amber-200 bg-amber-50 text-amber-800"
+                  }`}
+                >
+                  {sharedSyncBusy || revalidating
+                    ? "Sincronizando Tasaciones..."
+                    : sharedSyncStatus?.ventaDirectaCatalog.present
+                      ? `VD Tasaciones: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} vehículos`
+                      : "VD Tasaciones: sin catálogo"}
+                </span>
+                <button
+                  onClick={() => void refreshSharedSyncOnly()}
+                  disabled={sharedSyncBusy || revalidating}
+                  className="ui-focus inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 shadow-sm transition hover:bg-cyan-100 disabled:opacity-60"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 ${sharedSyncBusy ? "animate-spin" : ""}`}>
+                    <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.262.263A7 7 0 0 0 17.25 10a.75.75 0 0 0-1.5 0 5.48 5.48 0 0 1-.438 1.424ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.466l.312.311h-2.433a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.537a.75.75 0 0 0-1.5 0v2.033l-.262-.263A7 7 0 0 0 2.75 10a.75.75 0 0 0 1.5 0c0-.51.07-1.003.438-1.424Z" clipRule="evenodd" />
+                  </svg>
+                  {sharedSyncBusy ? "Sync..." : "Sync Tasaciones"}
+                </button>
                 <button
                   onClick={() => void refreshInventoryAndSync()}
-                  disabled={revalidating}
+                  disabled={revalidating || sharedSyncBusy}
                   className="ui-focus inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:opacity-60"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 ${revalidating ? "animate-spin" : ""}`}>

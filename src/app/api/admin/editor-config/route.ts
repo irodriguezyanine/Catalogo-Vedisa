@@ -9,7 +9,9 @@ import {
 import {
   preserveEditorBaseSectionVisibility,
   mergeEditorConfigAfterServerPersist,
+  reconcileVisibleCommercialSectionVisibility,
 } from "@/lib/catalog-shared-constants";
+import { buildCatalogSharedSyncStatus } from "@/lib/catalog-shared-sync-status";
 import { applyRemateIdMappingsToEditorConfig } from "@/lib/catalog-shared-remate-id";
 import { getEditorConfig, getMergedEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { notifySharedSyncPeers } from "@/lib/catalog-shared-sync-peer-notify";
@@ -40,8 +42,20 @@ export async function GET() {
   const merged = await mergeSharedEventsIntoConfig(loaded.config, {
     pruneOrphanCatalogAssignments: false,
   });
-  const adminConfig = preserveEditorBaseSectionVisibility(loaded.config, merged);
-  return Response.json({ ok: true, config: adminConfig, persisted: loaded.persisted });
+  const preserved = preserveEditorBaseSectionVisibility(loaded.config, merged);
+  const adminConfig = {
+    ...preserved,
+    hiddenCategoryIds: reconcileVisibleCommercialSectionVisibility(
+      preserved.hiddenCategoryIds,
+      preserved.upcomingAuctions,
+    ),
+  };
+  return Response.json({
+    ok: true,
+    config: adminConfig,
+    persisted: loaded.persisted,
+    syncStatus: buildCatalogSharedSyncStatus(adminConfig),
+  });
 }
 
 export async function PUT(req: Request) {

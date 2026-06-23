@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { appendGlo3dOnlyCatalogItems, getCatalogFeed, isGlo3dCircuitOpen } from "@/lib/catalog";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
+import { buildCatalogSharedSyncStatus } from "@/lib/catalog-shared-sync-status";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -27,9 +28,13 @@ export async function POST() {
     return Response.json({
       ok: true,
       source: feed.source,
+      sync: reconcile.sync,
+      syncOk: true,
+      persisted: reconcile.persisted,
+      config: reconcile.mergedConfig,
+      syncStatus: buildCatalogSharedSyncStatus(reconcile.mergedConfig),
       itemCount: items.length,
       items,
-      sync: reconcile.sync,
       revalidatedAt: new Date().toISOString(),
     });
   } catch (error) {
