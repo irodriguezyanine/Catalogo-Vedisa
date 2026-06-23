@@ -619,17 +619,17 @@ export async function mergeSharedEventsIntoConfig(
   if (pruneOrphanCatalogAssignments) {
     for (const vehicleKey of Object.keys(nextVehicleUpcomingAuctionIds)) {
       if (nextVehicleUpcomingAuctionIds[vehicleKey] !== DEFAULT_VENTA_DIRECTA_EVENT_ID) continue;
-      const candidateKeys = resolveCatalogVehicleKeys(inventoryAliases, vehicleKey);
-      const inPool = candidateKeys.some((key) => ventaDirectaPoolKeys.has(key));
       const allowed = patentesByRemate.get(DEFAULT_VENTA_DIRECTA_EVENT_ID);
-      const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+      const candidateKeys = resolveCatalogVehicleKeys(inventoryAliases, vehicleKey);
       const inItems =
         Boolean(allowed?.size) &&
-        [...candidateKeys, detailPatente]
+        [...candidateKeys, normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente)]
           .map((value) => normalizePatentKey(value))
           .filter(Boolean)
           .some((patente) => allowed?.has(patente));
-      if (!inPool && !inItems) {
+      if (inItems) continue;
+      const inPool = candidateKeys.some((key) => ventaDirectaPoolKeys.has(key));
+      if (!inPool) {
         delete nextVehicleUpcomingAuctionIds[vehicleKey];
         ventaDirectaSection.delete(vehicleKey);
       }

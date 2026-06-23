@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
-import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
-import { preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
+import { mergeSharedEventsIntoConfig, fetchSharedRemateItems } from "@/lib/catalog-shared-merge";
+import { DEFAULT_VENTA_DIRECTA_EVENT_ID, preserveEditorBaseSectionVisibility } from "@/lib/catalog-shared-constants";
 import { buildCatalogSharedSyncStatus } from "@/lib/catalog-shared-sync-status";
 import { getEditorConfig } from "@/lib/editor-config";
 
@@ -22,10 +22,14 @@ export async function GET() {
     pruneOrphanCatalogAssignments: false,
   });
   const config = preserveEditorBaseSectionVisibility(loaded.config, merged);
+  const sharedItems = await fetchSharedRemateItems([DEFAULT_VENTA_DIRECTA_EVENT_ID]);
+  const sharedVentaDirectaItemsCount = sharedItems.filter(
+    (row) => String(row.remate_id ?? "") === DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  ).length;
 
   return Response.json({
     ok: true,
-    status: buildCatalogSharedSyncStatus(config),
+    status: buildCatalogSharedSyncStatus(config, { sharedVentaDirectaItemsCount }),
     config,
   });
 }

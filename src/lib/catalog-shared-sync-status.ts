@@ -12,6 +12,7 @@ export type CatalogSharedSyncStatus = {
     id: string;
     present: boolean;
     vehicleCount: number;
+    sharedItemsCount: number;
     visible: boolean;
     eventType: string | null;
   };
@@ -20,7 +21,10 @@ export type CatalogSharedSyncStatus = {
   proximosRematesSectionCount: number;
 };
 
-export function buildCatalogSharedSyncStatus(config: EditorConfig): CatalogSharedSyncStatus {
+export function buildCatalogSharedSyncStatus(
+  config: EditorConfig,
+  options?: { sharedVentaDirectaItemsCount?: number },
+): CatalogSharedSyncStatus {
   const hidden = new Set(config.hiddenCategoryIds ?? []);
   const upcoming = config.upcomingAuctions ?? [];
   const remateAuctions = upcoming.filter(
@@ -42,6 +46,7 @@ export function buildCatalogSharedSyncStatus(config: EditorConfig): CatalogShare
       id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
       present: Boolean(catalogAuction),
       vehicleCount,
+      sharedItemsCount: options?.sharedVentaDirectaItemsCount ?? 0,
       visible:
         Boolean(catalogAuction) &&
         !hidden.has(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`) &&

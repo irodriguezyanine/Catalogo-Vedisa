@@ -2904,7 +2904,11 @@ export function CatalogHomeClient({
   const [revalidating, setRevalidating] = useState(false);
   const [sharedSyncBusy, setSharedSyncBusy] = useState(false);
   const [sharedSyncStatus, setSharedSyncStatus] = useState<{
-    ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+    ventaDirectaCatalog: {
+      present: boolean;
+      vehicleCount: number;
+      sharedItemsCount?: number;
+    };
     remateAuctions: number;
     ventaDirectaAuctions: number;
     checkedAt?: string;
@@ -8480,7 +8484,9 @@ export function CatalogHomeClient({
                 </span>
                 <span
                   className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    sharedSyncStatus?.ventaDirectaCatalog.present
+                    sharedSyncStatus?.ventaDirectaCatalog.present &&
+                    (sharedSyncStatus.ventaDirectaCatalog.sharedItemsCount ?? 0) >=
+                      sharedSyncStatus.ventaDirectaCatalog.vehicleCount
                       ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
                       : "border border-amber-200 bg-amber-50 text-amber-800"
                   }`}
@@ -8488,7 +8494,7 @@ export function CatalogHomeClient({
                   {sharedSyncBusy || revalidating
                     ? "Sincronizando Tasaciones..."
                     : sharedSyncStatus?.ventaDirectaCatalog.present
-                      ? `VD Tasaciones: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} vehículos`
+                      ? `VD: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} editor · ${sharedSyncStatus.ventaDirectaCatalog.sharedItemsCount ?? 0} en Supabase`
                       : "VD Tasaciones: sin catálogo"}
                 </span>
                 <button
