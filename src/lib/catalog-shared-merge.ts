@@ -230,6 +230,7 @@ function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
   const estado = String(row.estado ?? "").trim().toLowerCase();
   if (estado === "cerrado") return false;
   if (inferEventType(row) === "venta_directa") {
+    if (estado === "abierto") return true;
     const endAt = row.fecha_hora_cierre ?? row.fecha_hora_remate;
     if (!endAt?.trim()) return true;
     const endMs = Date.parse(endAt);

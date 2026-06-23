@@ -3,6 +3,7 @@ import {
   applySharedRemateEstadoToHiddenCategories,
   collectDirectSaleVehicleKeys,
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
+  isVentaDirectaAuctionActive,
   preserveEditorBaseSectionVisibility,
   reconcileVisibleRemateAuctionsSectionVisibility,
   resolveCommercialEventType,
@@ -52,6 +53,40 @@ describe("resolveCommercialEventType", () => {
   it("detecta venta directa por nombre", () => {
     expect(resolveCommercialEventType({ name: "Venta Directa Q2" })).toBe("venta_directa");
     expect(resolveCommercialEventType({ name: "Remate 1084", eventType: "remate" })).toBe("remate");
+  });
+});
+
+describe("isVentaDirectaAuctionActive", () => {
+  it("mantiene activo el catálogo compartido aunque la fecha de cierre haya pasado", () => {
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    expect(
+      isVentaDirectaAuctionActive(
+        {
+          id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
+          name: "Venta Directa - Catálogo",
+          date: "2026-05-14",
+          endAt: past,
+          eventType: "venta_directa",
+        },
+        Date.now(),
+      ),
+    ).toBe(true);
+  });
+
+  it("respeta la fecha de cierre en otros eventos de venta directa", () => {
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    expect(
+      isVentaDirectaAuctionActive(
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          name: "Venta Directa temporal",
+          date: "2026-05-14",
+          endAt: past,
+          eventType: "venta_directa",
+        },
+        Date.now(),
+      ),
+    ).toBe(false);
   });
 });
 

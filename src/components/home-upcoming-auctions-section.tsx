@@ -19,7 +19,7 @@ const SECTION_COPY: Record<
   },
   venta_directa: {
     sectionId: "ventas-directas",
-    kicker: "Ventas directas",
+    kicker: "",
     title: "Ventas directas",
     subtitle: "Compra directa, sin esperar remate · Retiro ágil desde nuestra bodega en Pudahuel.",
   },
@@ -30,6 +30,21 @@ type UpcomingAuctionsSectionProps = {
   groups: Array<{ auction: UpcomingAuction; items: CatalogItem[] }>;
   renderCards: (auction: UpcomingAuction, items: CatalogItem[], sectionKey: string) => React.ReactNode;
 };
+
+export function VentaDirectaEmptyHomeState() {
+  return (
+    <section id="ventas-directas" className="section-shell home-section-enter scroll-mt-24">
+      <header className="mb-4">
+        <h2 className="text-2xl font-bold text-slate-900 md:text-3xl">Ventas directas</h2>
+      </header>
+      <div className="rounded-2xl border border-dashed border-cyan-200 bg-cyan-50/40 px-5 py-8 text-center">
+        <p className="text-sm font-medium text-slate-800">
+          Los vehículos en venta directa aparecerán aquí en cuanto estén vinculados al catálogo.
+        </p>
+      </div>
+    </section>
+  );
+}
 
 export function RematesEmptyHomeState() {
   return (
@@ -140,7 +155,7 @@ export function UpcomingAuctionsSection({
     <section id={copy.sectionId} className="section-shell home-section-enter scroll-mt-24">
       <header className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="premium-kicker">{copy.kicker}</p>
+          {copy.kicker ? <p className="premium-kicker">{copy.kicker}</p> : null}
           <h2 className="text-2xl font-bold text-slate-900 md:text-3xl">{copy.title}</h2>
           <p className="mt-1 text-sm text-slate-700">{copy.subtitle}</p>
         </div>

@@ -84,6 +84,7 @@ import { HomeInventorySearch } from "@/components/home-inventory-search";
 import {
   RematesEmptyHomeState,
   UpcomingAuctionsSection,
+  VentaDirectaEmptyHomeState,
 } from "@/components/home-upcoming-auctions-section";
 import {
   VehicleListThumbnailWithSync,
@@ -3324,6 +3325,47 @@ export function CatalogHomeClient({
   }, [initialAdminView, openLoginIfGuest]);
 
   useEffect(() => {
+    if (isBootstrapping || isStandaloneDetailPage) return;
+    if (isAdmin && adminView === "editor") return;
+
+    let cancelled = false;
+    const refreshPublicHome = async () => {
+      try {
+        const [configRes, feedRes] = await Promise.all([
+          fetch("/api/public/editor-config", { cache: "no-store" }),
+          fetch("/api/public/catalog-feed", { cache: "no-store" }),
+        ]);
+        if (cancelled) return;
+        if (configRes.ok) {
+          const payload = (await configRes.json()) as { config?: EditorConfig };
+          if (payload.config) {
+            setConfig(normalizeEditorConfigClient(payload.config));
+          }
+        }
+        if (feedRes.ok) {
+          const payload = (await feedRes.json()) as { items?: CatalogItem[] };
+          if (payload.items) {
+            setLiveFeedItems(payload.items);
+          }
+        }
+      } catch {
+        // ignore transient refresh errors
+      }
+    };
+
+    const interval = window.setInterval(() => void refreshPublicHome(), 45_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshPublicHome();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [adminView, isAdmin, isBootstrapping, isStandaloneDetailPage]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       const rawQuickFilters = window.localStorage.getItem(HOME_QUICK_FILTERS_STORAGE_KEY);
@@ -3871,6 +3913,16 @@ export function CatalogHomeClient({
         (group) => getAuctionEventType(group.auction) === "venta_directa",
       ),
     [visibleUpcomingAuctionGroups],
+  );
+  const visibleUpcomingVentaDirectaGroupsWithVehicles = useMemo(
+    () => visibleUpcomingVentaDirectaGroups.filter((group) => group.items.length > 0),
+    [visibleUpcomingVentaDirectaGroups],
+  );
+  const hasScheduledVentaDirectaWithoutVehicles = useMemo(
+    () =>
+      visibleUpcomingVentaDirectaGroups.length > 0 &&
+      visibleUpcomingVentaDirectaGroupsWithVehicles.length === 0,
+    [visibleUpcomingVentaDirectaGroups, visibleUpcomingVentaDirectaGroupsWithVehicles],
   );
 
   const hasUpcomingRemateCategories = visibleUpcomingRemateGroupsWithVehicles.length > 0;
@@ -10344,6 +10396,20 @@ export function CatalogHomeClient({
         ) : null}
         {resolvedHomeSectionOrder.map((sectionId) => {
           if (hasActiveSearch) return null;
+          if (
+            topSectionFilter !== "all" &&
+            isBaseHomeSectionOrderId(sectionId) &&
+            topSectionFilter !== sectionId
+          ) {
+            return null;
+          }
+          if (
+            topSectionFilter !== "all" &&
+            sectionId.startsWith("managed:") &&
+            (topSectionFilter === "proximos-remates" || topSectionFilter === "ventas-directas")
+          ) {
+            return null;
+          }
           if (isBaseHomeSectionOrderId(sectionId) && hiddenHomeCategoryIds.has(sectionCategoryKey(sectionId))) {
             if (
               sectionId === "proximos-remates" &&
@@ -10423,10 +10489,25 @@ export function CatalogHomeClient({
             );
           }
           if (sectionId === "ventas-directas") {
-            if (ventasDirectas.length === 0 && !hasUpcomingVentaDirectaCategories) return null;
-            const ventaDirectaGroupsWithVehicles = visibleUpcomingVentaDirectaGroups.filter(
-              (group) => group.items.length > 0,
-            );
+            if (
+              ventasDirectas.length === 0 &&
+              !hasUpcomingVentaDirectaCategories &&
+              !hasScheduledVentaDirectaWithoutVehicles &&
+              topSectionFilter !== "ventas-directas"
+            ) {
+              return null;
+            }
+            const ventaDirectaGroupsWithVehicles = visibleUpcomingVentaDirectaGroupsWithVehicles;
+            if (hasScheduledVentaDirectaWithoutVehicles && ventaDirectaGroupsWithVehicles.length === 0) {
+              return <VentaDirectaEmptyHomeState key="public-ventas-directas-empty" />;
+            }
+            if (
+              topSectionFilter === "ventas-directas" &&
+              ventasDirectas.length === 0 &&
+              ventaDirectaGroupsWithVehicles.length === 0
+            ) {
+              return <VentaDirectaEmptyHomeState key="public-ventas-directas-filter-empty" />;
+            }
             return hasUpcomingVentaDirectaCategories && ventaDirectaGroupsWithVehicles.length > 0 ? (
               <UpcomingAuctionsSection
                 key="public-ventas-directas-auctions"

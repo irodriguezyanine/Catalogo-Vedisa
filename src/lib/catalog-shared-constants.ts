@@ -76,6 +76,8 @@ export function ensureDefaultVentaDirectaAuction(
 
 export function isVentaDirectaAuctionActive(auction: UpcomingAuction, nowMs: number): boolean {
   if (resolveCommercialEventType(auction) !== "venta_directa") return false;
+  // Alineado con Tasaciones: el catálogo compartido permanece activo mientras el evento siga abierto.
+  if (auction.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) return true;
   if (!auction.endAt?.trim()) return true;
   const endMs = Date.parse(auction.endAt);
   if (!Number.isFinite(endMs)) return true;
