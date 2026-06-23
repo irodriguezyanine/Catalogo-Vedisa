@@ -2919,6 +2919,8 @@ export function CatalogHomeClient({
   const [rainworxImporting, setRainworxImporting] = useState(false);
   const [detailRainworxUrl, setDetailRainworxUrl] = useState("");
   const [detailRainworxImporting, setDetailRainworxImporting] = useState(false);
+  const [groupRainworxEventUrl, setGroupRainworxEventUrl] = useState("");
+  const [groupRainworxImporting, setGroupRainworxImporting] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const buildVehicleAnalyticsContextRef = useRef<
     (item: CatalogItem, section?: string) => Record<string, unknown>
@@ -6584,12 +6586,14 @@ export function CatalogHomeClient({
     setGroupManageTarget(target);
     setGroupManageSearchTerm("");
     setGroupManageSelectedKeys([]);
+    setGroupRainworxEventUrl("");
   };
 
   const closeGroupManageModal = () => {
     setGroupManageTarget(null);
     setGroupManageSearchTerm("");
     setGroupManageSelectedKeys([]);
+    setGroupRainworxEventUrl("");
   };
 
   const removeVehicleFromGroupTarget = (vehicleKey: string) => {
@@ -7619,6 +7623,53 @@ export function CatalogHomeClient({
     await syncVehicleWithGlo3dAutored(managingVehicleKey);
   }, [managingVehicleKey, syncVehicleWithGlo3dAutored]);
 
+  const refreshEditorConfigAfterRainworx = async () => {
+    const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
+    if (!configRes.ok) return;
+    const payload = (await configRes.json()) as { config?: EditorConfig };
+    if (!payload.config) return;
+    const normalized = normalizeEditorConfigClient(payload.config);
+    setConfig(normalized);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
+    }
+    lastPersistedConfigRef.current = JSON.stringify(normalized);
+  };
+
+  const notifyRainworxEventImportOutcome = (
+    data: {
+      count?: number;
+      editor?: { applied?: string[]; skipped?: { reason: string; lotId?: string }[] };
+    },
+    contextLabel: string,
+  ) => {
+    const applied = data.editor?.applied ?? [];
+    const skipped = data.editor?.skipped ?? [];
+    if (skipped.length > 0) {
+      showSystemNotice(
+        "info",
+        "Importación parcial",
+        skipped.map((s) => s.reason).join(" · "),
+      );
+    }
+    const n = typeof data.count === "number" ? data.count : applied.length;
+    if (applied.length === 0) {
+      showSystemNotice(
+        "info",
+        "Evento procesado",
+        n === 0
+          ? `Ningún lote del evento coincidió con las patentes de ${contextLabel}.`
+          : "No se escribieron cambios en el editor; revisa coincidencia de patentes.",
+      );
+      return;
+    }
+    showSystemNotice(
+      "success",
+      "Evento Rainworx sincronizado",
+      `${n} lote(s) leídos. Fichas actualizadas en ${contextLabel}: ${applied.join(", ")}.`,
+    );
+  };
+
   const importRainworxLot = async () => {
     const url = rainworxLotUrl.trim();
     const isLotUrl = /\/Event\/LotDetails\//i.test(url);
@@ -7669,18 +7720,7 @@ export function CatalogHomeClient({
         showSystemNotice("error", "Importación Rainworx", data.error ?? `Error HTTP ${res.status}`);
         return;
       }
-      const configRes = await fetch("/api/admin/editor-config", { cache: "no-store" });
-      if (configRes.ok) {
-        const payload = (await configRes.json()) as { config?: EditorConfig };
-        if (payload.config) {
-          const normalized = normalizeEditorConfigClient(payload.config);
-          setConfig(normalized);
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
-          }
-          lastPersistedConfigRef.current = JSON.stringify(normalized);
-        }
-      }
+      await refreshEditorConfigAfterRainworx();
       const applied = data.editor?.applied ?? [];
       const skipped = data.editor?.skipped ?? [];
       if (skipped.length > 0) {
@@ -7691,22 +7731,7 @@ export function CatalogHomeClient({
         );
       }
       if (isEventUrl) {
-        const n = typeof data.count === "number" ? data.count : applied.length;
-        if (applied.length === 0) {
-          showSystemNotice(
-            "info",
-            "Evento procesado",
-            n === 0
-              ? "Ningún lote del evento coincidió con las patentes de tu inventario (o Rainworx no publica patente en esas fichas)."
-              : "No se escribieron cambios en el editor; revisa coincidencia de patentes y permisos.",
-          );
-        } else {
-          showSystemNotice(
-            "success",
-            "Evento Rainworx sincronizado",
-            `${n} lote(s) leídos desde el evento. Fichas actualizadas: ${applied.join(", ")}.`,
-          );
-        }
+        notifyRainworxEventImportOutcome(data, "el inventario visible");
       } else {
         showSystemNotice(
           "success",
@@ -7720,6 +7745,56 @@ export function CatalogHomeClient({
       showSystemNotice("error", "Importación Rainworx", "No se pudo completar la solicitud.");
     } finally {
       setRainworxImporting(false);
+    }
+  };
+
+  const importGroupRainworxFromEvent = async () => {
+    if (!groupManageTarget || groupManageTarget.type !== "auction") return;
+    const url = groupRainworxEventUrl.trim();
+    if (!url || !/\/Event\/Details\//i.test(url)) {
+      showSystemNotice(
+        "error",
+        "URL inválida",
+        "Pega la URL del evento Rainworx (…/Event/Details/…).",
+      );
+      return;
+    }
+    const matchInventoryPatentes = collectInventoryPatentesForRainworx(groupManageBaseItems);
+    if (matchInventoryPatentes.length === 0) {
+      showSystemNotice(
+        "error",
+        "Sin patentes en este remate",
+        "Agrega unidades con patente a este remate antes de sincronizar con Rainworx.",
+      );
+      return;
+    }
+    setGroupRainworxImporting(true);
+    try {
+      const res = await fetch("/api/admin/scrape-rainworx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          applyToEditor: true,
+          editorMerge: "rainworx_wins",
+          eventUrl: url,
+          matchInventoryPatentes,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        count?: number;
+        editor?: { applied?: string[]; skipped?: { reason: string; lotId?: string }[] };
+      };
+      if (!res.ok) {
+        showSystemNotice("error", "Importación Rainworx", data.error ?? `Error HTTP ${res.status}`);
+        return;
+      }
+      await refreshEditorConfigAfterRainworx();
+      notifyRainworxEventImportOutcome(data, groupManageTargetLabel || "este remate");
+    } catch {
+      showSystemNotice("error", "Importación Rainworx", "No se pudo completar la solicitud.");
+    } finally {
+      setGroupRainworxImporting(false);
     }
   };
 
@@ -11923,6 +11998,37 @@ export function CatalogHomeClient({
                 Cerrar
               </button>
             </div>
+
+            {groupManageTarget.type === "auction" ? (
+              <div className="mb-3 rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-3">
+                <p className="text-xs font-semibold text-indigo-950">Sincronizar remate con Rainworx</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+                  Pega la URL del evento en vehiculoschocados.cl. Se importará la ficha de Rainworx solo para las{" "}
+                  {groupManageBaseItems.length} patente(s) asignadas a este remate.
+                </p>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <label className="min-w-0 flex-1">
+                    <span className="sr-only">URL del evento Rainworx</span>
+                    <input
+                      type="url"
+                      value={groupRainworxEventUrl}
+                      onChange={(event) => setGroupRainworxEventUrl(event.target.value)}
+                      placeholder="https://www.vehiculoschocados.cl/Event/Details/…"
+                      disabled={groupRainworxImporting}
+                      className="ui-focus w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void importGroupRainworxFromEvent()}
+                    disabled={groupRainworxImporting || groupManageBaseItems.length === 0}
+                    className="ui-focus shrink-0 rounded-md border border-indigo-400 bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {groupRainworxImporting ? "Sincronizando…" : "Importar desde Rainworx"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="mb-3 space-y-2">
               <div className="flex flex-wrap items-center gap-2">
