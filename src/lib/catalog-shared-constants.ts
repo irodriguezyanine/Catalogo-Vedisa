@@ -65,7 +65,15 @@ export function ensureDefaultVentaDirectaAuction(
   },
 ): void {
   const sharedItemCount = options?.sharedItemCount ?? 0;
-  if (ventaDirectaSection.size === 0 && sharedItemCount === 0) return;
+  const hasSharedRow = Boolean(options?.sharedRow);
+  if (
+    ventaDirectaSection.size === 0 &&
+    sharedItemCount === 0 &&
+    !hasSharedRow &&
+    !byId.has(DEFAULT_VENTA_DIRECTA_EVENT_ID)
+  ) {
+    return;
+  }
 
   const sharedRow = options?.sharedRow;
   const existing = byId.get(DEFAULT_VENTA_DIRECTA_EVENT_ID);

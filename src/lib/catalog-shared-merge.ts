@@ -229,9 +229,9 @@ function assignVehicleToAuction(
 }
 
 function isActiveSharedEvent(row: SharedRemateRow, nowMs: number) {
+  if (row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) return true;
   const estado = String(row.estado ?? "").trim().toLowerCase();
   if (estado === "cerrado") return false;
-  if (row.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) return true;
   if (inferEventType(row) === "venta_directa") {
     if (estado === "abierto") return true;
     const endAt = row.fecha_hora_cierre ?? row.fecha_hora_remate;
