@@ -2908,11 +2908,13 @@ export function CatalogHomeClient({
       present: boolean;
       vehicleCount: number;
       sharedItemsCount?: number;
+      needsReconcile?: boolean;
     };
     remateAuctions: number;
     ventaDirectaAuctions: number;
     checkedAt?: string;
   } | null>(null);
+  const autoReconcileInFlightRef = useRef(false);
   const [rainworxLotUrl, setRainworxLotUrl] = useState("");
   const [rainworxCatalogId, setRainworxCatalogId] = useState("");
   const [rainworxImporting, setRainworxImporting] = useState(false);
@@ -3402,7 +3404,12 @@ export function CatalogHomeClient({
             checkedAt: string;
             remateAuctions: number;
             ventaDirectaAuctions: number;
-            ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+            ventaDirectaCatalog: {
+              present: boolean;
+              vehicleCount: number;
+              sharedItemsCount?: number;
+              needsReconcile?: boolean;
+            };
           };
         };
         if (payload.config && !cancelled) {
@@ -3410,6 +3417,29 @@ export function CatalogHomeClient({
         }
         if (payload.status && !cancelled) {
           setSharedSyncStatus(payload.status);
+          const vd = payload.status.ventaDirectaCatalog;
+          if (
+            vd.needsReconcile &&
+            !autoReconcileInFlightRef.current &&
+            !cancelled
+          ) {
+            autoReconcileInFlightRef.current = true;
+            try {
+              const syncRes = await fetch("/api/admin/editor-config/sync", { method: "POST" });
+              if (syncRes.ok && !cancelled) {
+                const syncPayload = (await syncRes.json()) as {
+                  config?: EditorConfig;
+                  syncStatus?: typeof payload.status;
+                };
+                if (syncPayload.config) applyMergedAdminConfig(syncPayload.config);
+                if (syncPayload.syncStatus) setSharedSyncStatus(syncPayload.syncStatus);
+              }
+            } catch {
+              // ignore transient auto-reconcile errors
+            } finally {
+              autoReconcileInFlightRef.current = false;
+            }
+          }
         }
       } catch {
         // ignore transient refresh errors
@@ -7406,7 +7436,12 @@ export function CatalogHomeClient({
           checkedAt: string;
           remateAuctions: number;
           ventaDirectaAuctions: number;
-          ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+          ventaDirectaCatalog: {
+            present: boolean;
+            vehicleCount: number;
+            sharedItemsCount?: number;
+            needsReconcile?: boolean;
+          };
         };
       };
       if (!response.ok || !payload.ok || !payload.config) {
@@ -7415,10 +7450,11 @@ export function CatalogHomeClient({
       applyMergedAdminConfig(payload.config);
       if (payload.syncStatus) setSharedSyncStatus(payload.syncStatus);
       router.refresh();
+      const vd = payload.syncStatus?.ventaDirectaCatalog;
       showSystemNotice(
         "success",
         "Sincronizado con Tasaciones",
-        `Remates: ${payload.syncStatus?.remateAuctions ?? 0} · Ventas directas: ${payload.syncStatus?.ventaDirectaAuctions ?? 0} · Catálogo VD: ${payload.syncStatus?.ventaDirectaCatalog.vehicleCount ?? 0} vehículos.`,
+        `Remates: ${payload.syncStatus?.remateAuctions ?? 0} · VD: ${vd?.vehicleCount ?? 0} editor · ${vd?.sharedItemsCount ?? 0} en Supabase${vd?.needsReconcile ? " (revisar desalineación)" : ""}.`,
       );
     } catch (error) {
       showSystemNotice(
@@ -7446,7 +7482,12 @@ export function CatalogHomeClient({
           checkedAt: string;
           remateAuctions: number;
           ventaDirectaAuctions: number;
-          ventaDirectaCatalog: { present: boolean; vehicleCount: number };
+          ventaDirectaCatalog: {
+            present: boolean;
+            vehicleCount: number;
+            sharedItemsCount?: number;
+            needsReconcile?: boolean;
+          };
         };
       };
       if (!response.ok || !payload.ok || !payload.items) {
@@ -7458,10 +7499,11 @@ export function CatalogHomeClient({
       if (payload.config) applyMergedAdminConfig(payload.config);
       if (payload.syncStatus) setSharedSyncStatus(payload.syncStatus);
       router.refresh();
+      const vd = payload.syncStatus?.ventaDirectaCatalog;
       showSystemNotice(
         "success",
         "Inventario actualizado",
-        `Se cargó inventario (${payload.itemCount ?? payload.items.length} unidades) y se sincronizó con Tasaciones. VD catálogo: ${payload.syncStatus?.ventaDirectaCatalog.vehicleCount ?? 0} vehículos.`,
+        `${payload.itemCount ?? payload.items.length} unidades · VD ${vd?.vehicleCount ?? 0} editor · ${vd?.sharedItemsCount ?? 0} Supabase.`,
       );
     } catch (error) {
       showSystemNotice(
@@ -8485,8 +8527,7 @@ export function CatalogHomeClient({
                 <span
                   className={`rounded-full px-3 py-1 text-xs font-semibold ${
                     sharedSyncStatus?.ventaDirectaCatalog.present &&
-                    (sharedSyncStatus.ventaDirectaCatalog.sharedItemsCount ?? 0) >=
-                      sharedSyncStatus.ventaDirectaCatalog.vehicleCount
+                    !sharedSyncStatus.ventaDirectaCatalog.needsReconcile
                       ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
                       : "border border-amber-200 bg-amber-50 text-amber-800"
                   }`}
@@ -8494,7 +8535,9 @@ export function CatalogHomeClient({
                   {sharedSyncBusy || revalidating
                     ? "Sincronizando Tasaciones..."
                     : sharedSyncStatus?.ventaDirectaCatalog.present
-                      ? `VD: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} editor · ${sharedSyncStatus.ventaDirectaCatalog.sharedItemsCount ?? 0} en Supabase`
+                      ? sharedSyncStatus.ventaDirectaCatalog.needsReconcile
+                        ? `VD desalineado: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} editor · ${sharedSyncStatus.ventaDirectaCatalog.sharedItemsCount ?? 0} Supabase`
+                        : `VD alineado: ${sharedSyncStatus.ventaDirectaCatalog.vehicleCount} vehículos`
                       : "VD Tasaciones: sin catálogo"}
                 </span>
                 <button

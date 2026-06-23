@@ -4,6 +4,13 @@ import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-
 import { appendGlo3dOnlyCatalogItems, getCatalogFeed, isGlo3dCircuitOpen } from "@/lib/catalog";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 import { buildCatalogSharedSyncStatus } from "@/lib/catalog-shared-sync-status";
+import { fetchSharedRemateItems } from "@/lib/catalog-shared-merge";
+import { DEFAULT_VENTA_DIRECTA_EVENT_ID } from "@/lib/catalog-shared-constants";
+
+async function countSharedVentaDirectaItems(): Promise<number> {
+  const rows = await fetchSharedRemateItems([DEFAULT_VENTA_DIRECTA_EVENT_ID]);
+  return rows.filter((row) => String(row.remate_id ?? "") === DEFAULT_VENTA_DIRECTA_EVENT_ID).length;
+}
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,6 +31,7 @@ export async function POST() {
       : await appendGlo3dOnlyCatalogItems(feed.items);
     const reconcile = await reconcileSharedPlatforms(session.email);
     revalidateCatalogSurfaces();
+    const sharedVentaDirectaItemsCount = await countSharedVentaDirectaItems();
 
     return Response.json({
       ok: true,
@@ -32,7 +40,7 @@ export async function POST() {
       syncOk: true,
       persisted: reconcile.persisted,
       config: reconcile.mergedConfig,
-      syncStatus: buildCatalogSharedSyncStatus(reconcile.mergedConfig),
+      syncStatus: buildCatalogSharedSyncStatus(reconcile.mergedConfig, { sharedVentaDirectaItemsCount }),
       itemCount: items.length,
       items,
       revalidatedAt: new Date().toISOString(),

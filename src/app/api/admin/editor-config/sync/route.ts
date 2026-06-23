@@ -2,7 +2,14 @@ import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 import { buildCatalogSharedSyncStatus } from "@/lib/catalog-shared-sync-status";
+import { fetchSharedRemateItems } from "@/lib/catalog-shared-merge";
+import { DEFAULT_VENTA_DIRECTA_EVENT_ID } from "@/lib/catalog-shared-constants";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
+
+async function countSharedVentaDirectaItems(): Promise<number> {
+  const rows = await fetchSharedRemateItems([DEFAULT_VENTA_DIRECTA_EVENT_ID]);
+  return rows.filter((row) => String(row.remate_id ?? "") === DEFAULT_VENTA_DIRECTA_EVENT_ID).length;
+}
 
 export async function POST() {
   const cookieStore = await cookies();
@@ -15,13 +22,14 @@ export async function POST() {
   try {
     const result = await reconcileSharedPlatforms(session.email ?? "admin@catalogo");
     revalidateCatalogSurfaces();
+    const sharedVentaDirectaItemsCount = await countSharedVentaDirectaItems();
     return Response.json({
       ok: true,
       sync: result.sync,
       syncOk: true,
       persisted: result.persisted,
       config: result.mergedConfig,
-      syncStatus: buildCatalogSharedSyncStatus(result.mergedConfig),
+      syncStatus: buildCatalogSharedSyncStatus(result.mergedConfig, { sharedVentaDirectaItemsCount }),
     });
   } catch (error) {
     const message =

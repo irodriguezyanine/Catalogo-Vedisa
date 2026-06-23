@@ -13,6 +13,7 @@ export type CatalogSharedSyncStatus = {
     present: boolean;
     vehicleCount: number;
     sharedItemsCount: number;
+    needsReconcile: boolean;
     visible: boolean;
     eventType: string | null;
   };
@@ -37,6 +38,7 @@ export function buildCatalogSharedSyncStatus(
   const vehicleCount = Object.values(config.vehicleUpcomingAuctionIds ?? {}).filter(
     (auctionId) => auctionId === DEFAULT_VENTA_DIRECTA_EVENT_ID,
   ).length;
+  const sharedItemsCount = options?.sharedVentaDirectaItemsCount ?? 0;
 
   return {
     checkedAt: new Date().toISOString(),
@@ -46,7 +48,8 @@ export function buildCatalogSharedSyncStatus(
       id: DEFAULT_VENTA_DIRECTA_EVENT_ID,
       present: Boolean(catalogAuction),
       vehicleCount,
-      sharedItemsCount: options?.sharedVentaDirectaItemsCount ?? 0,
+      sharedItemsCount,
+      needsReconcile: vehicleCount > sharedItemsCount,
       visible:
         Boolean(catalogAuction) &&
         !hidden.has(`auction:${DEFAULT_VENTA_DIRECTA_EVENT_ID}`) &&
