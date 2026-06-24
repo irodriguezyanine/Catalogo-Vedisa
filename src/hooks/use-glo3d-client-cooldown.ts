@@ -32,14 +32,8 @@ export function useGlo3dClientCooldown(showPauseNotice?: PauseNotice) {
   }, []);
 
   const assertAllowed = useCallback((): boolean => {
-    const remaining = cooldownUntilRef.current - Date.now();
-    if (remaining <= 0) return true;
-    showPauseNotice?.(
-      "Glo3D en pausa",
-      `Espera ${Math.ceil(remaining / 1000)} segundos antes de volver a consultar Glo3D.`,
-    );
-    return false;
-  }, [showPauseNotice]);
+    return true;
+  }, []);
 
   const isOnCooldown = useCallback((): boolean => {
     return cooldownUntilRef.current > Date.now();

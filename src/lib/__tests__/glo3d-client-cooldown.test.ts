@@ -6,9 +6,9 @@ import {
 } from "@/lib/glo3d-client-cooldown";
 
 describe("resolveGlo3dClientCooldownMs", () => {
-  it("respeta el mínimo de 30 segundos", () => {
-    expect(resolveGlo3dClientCooldownMs()).toBe(30_000);
-    expect(resolveGlo3dClientCooldownMs(5_000)).toBe(30_000);
+  it("ya no impone pausa mínima de 30 segundos", () => {
+    expect(resolveGlo3dClientCooldownMs()).toBe(0);
+    expect(resolveGlo3dClientCooldownMs(5_000)).toBe(5_000);
   });
 
   it("usa retryAfter cuando es mayor al mínimo", () => {

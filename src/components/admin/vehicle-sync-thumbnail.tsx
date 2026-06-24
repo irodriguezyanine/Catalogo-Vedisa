@@ -39,9 +39,7 @@ export function VehicleListThumbnailWithSync({
   const needsQuickSync = vehicleNeedsQuickSync(item, vehicleKey, editorConfig, isStaleTitle);
   const isSyncing = syncingVehicleKey === vehicleKey;
   const patente = getCatalogItemPatent(item);
-  const syncTitle = glo3dCooldownLabel
-    ? `Sincronizar ${patente} solo con Autored (Glo3D en pausa)`
-    : "Sincronizar Glo3D + Autored";
+  const syncTitle = "Sincronizar Glo3D + Autored";
 
   return (
     <div className={className}>
@@ -70,7 +68,7 @@ export function VehicleListThumbnailWithSync({
             <VehicleSyncIcon />
           )}
           <span className="text-[9px] font-semibold leading-none">
-            {isSyncing ? "Sync…" : glo3dCooldownLabel ? "Autored" : "Sync"}
+            {isSyncing ? "Sync…" : "Sync"}
           </span>
         </button>
       ) : null}
@@ -100,7 +98,7 @@ export function VehicleQuickSyncButton({
   if (!vehicleNeedsQuickSync(item, vehicleKey, editorConfig, isStaleTitle)) return null;
   const isSyncing = syncingVehicleKey === vehicleKey;
   const patente = getCatalogItemPatent(item);
-  const title = glo3dCooldownLabel ? "Sincronizar solo Autored" : "Sincronizar Glo3D + Autored";
+  const title = "Sincronizar Glo3D + Autored";
 
   if (variant === "icon") {
     return (
@@ -129,7 +127,7 @@ export function VehicleQuickSyncButton({
       className="ui-focus inline-flex items-center gap-1 rounded border border-cyan-300 bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-800 disabled:opacity-60"
       title={title}
     >
-      {isSyncing ? "Sync…" : glo3dCooldownLabel ? "Sync Autored" : "Sync Glo3D"}
+      {isSyncing ? "Sync…" : "Sync Glo3D"}
     </button>
   );
 }

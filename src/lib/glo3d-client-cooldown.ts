@@ -1,7 +1,9 @@
-export const GLO3D_CLIENT_COOLDOWN_MS = 30_000;
-export const GLO3D_MIN_CLIENT_COOLDOWN_MS = 30_000;
+/** Solo informativo en UI; la sync ya no bloquea Glo3D por cooldown de cliente. */
+export const GLO3D_CLIENT_COOLDOWN_MS = 0;
+export const GLO3D_MIN_CLIENT_COOLDOWN_MS = 0;
 export const GLO3D_COOLDOWN_STORAGE_KEY = "vedisa:glo3d-cooldown-until";
-export const GLO3D_BATCH_IMPORT_MAX = 8;
+/** Lote manual al agregar patentes por texto; sync masiva del grupo no usa este tope. */
+export const GLO3D_BATCH_IMPORT_MAX = 50;
 
 export function readPersistedGlo3dCooldownUntil(): number {
   if (typeof window === "undefined") return 0;

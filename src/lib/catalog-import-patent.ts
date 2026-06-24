@@ -1125,13 +1125,28 @@ export async function importVehiclesByPatentsBatch(
   for (let index = 0; index < unique.length; index += 1) {
     const patente = unique[index];
     if (index > 0) await sleepMs(BATCH_IMPORT_DELAY_MS);
-    try {
-      results.push(await importVehicleByPatent(patente, options));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo importar la patente.";
-      errors.push({ patente, error: message });
-      if (error instanceof Glo3dRateLimitError) {
-        rateLimited = true;
+
+    let imported = false;
+    for (let attempt = 0; attempt < 6 && !imported; attempt += 1) {
+      try {
+        results.push(await importVehicleByPatent(patente, options));
+        imported = true;
+      } catch (error) {
+        if (error instanceof Glo3dRateLimitError && attempt < 5) {
+          rateLimited = true;
+          const waitMs = Math.max(
+            BATCH_IMPORT_DELAY_MS,
+            error.retryAfterMs,
+            4_000 * (attempt + 1),
+          );
+          await sleepMs(waitMs);
+          continue;
+        }
+        const message = error instanceof Error ? error.message : "No se pudo importar la patente.";
+        errors.push({ patente, error: message });
+        if (error instanceof Glo3dRateLimitError) {
+          rateLimited = true;
+        }
         break;
       }
     }

@@ -27,9 +27,9 @@ export async function POST(req: Request) {
   if (patentes.length === 0) {
     return Response.json({ ok: false, error: "Debes indicar al menos una patente." }, { status: 400 });
   }
-  if (patentes.length > 12) {
+  if (patentes.length > 200) {
     return Response.json(
-      { ok: false, error: "Máximo 12 patentes por lote para no saturar Glo3D." },
+      { ok: false, error: "Máximo 200 patentes por lote. Usa sincronizar todo el grupo para más unidades." },
       { status: 400 },
     );
   }

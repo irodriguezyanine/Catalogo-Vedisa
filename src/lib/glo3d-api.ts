@@ -1,6 +1,6 @@
-const GLO3D_MIN_INTERVAL_MS = Number(process.env.GLO3D_MIN_INTERVAL_MS ?? "1500");
-const GLO3D_CIRCUIT_COOLDOWN_MS = Number(process.env.GLO3D_CIRCUIT_COOLDOWN_MS ?? "30000");
-const GLO3D_MAX_RETRIES = Number(process.env.GLO3D_MAX_RETRIES ?? "1");
+const GLO3D_MIN_INTERVAL_MS = Number(process.env.GLO3D_MIN_INTERVAL_MS ?? "2000");
+const GLO3D_CIRCUIT_COOLDOWN_MS = Number(process.env.GLO3D_CIRCUIT_COOLDOWN_MS ?? "5000");
+const GLO3D_MAX_RETRIES = Number(process.env.GLO3D_MAX_RETRIES ?? "6");
 
 let lastGlo3dHttpAt = 0;
 let circuitOpenUntil = 0;
@@ -24,7 +24,7 @@ export function openGlo3dCircuit(cooldownMs = GLO3D_CIRCUIT_COOLDOWN_MS): void {
 
 export async function waitForGlo3dSlot(): Promise<void> {
   if (isGlo3dCircuitOpen()) {
-    throw new Glo3dRateLimitError(getGlo3dCircuitRetryAfterMs());
+    await sleep(getGlo3dCircuitRetryAfterMs());
   }
   const elapsed = Date.now() - lastGlo3dHttpAt;
   const wait = GLO3D_MIN_INTERVAL_MS - elapsed;
@@ -66,11 +66,12 @@ export async function fetchGlo3dHttp(
       await waitForGlo3dSlot();
       const response = await fetch(url, init);
       if (response.status === 429) {
-        openGlo3dCircuit();
+        const retryWaitMs = Math.min(15_000, 2_000 * (attempt + 1));
+        openGlo3dCircuit(retryWaitMs);
         if (attempt + 1 >= GLO3D_MAX_RETRIES) {
-          throw new Glo3dRateLimitError(getGlo3dCircuitRetryAfterMs());
+          throw new Glo3dRateLimitError(retryWaitMs);
         }
-        await sleep(1500 * (attempt + 1));
+        await sleep(retryWaitMs);
         continue;
       }
       return response;
