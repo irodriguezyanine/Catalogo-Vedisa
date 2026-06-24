@@ -32,17 +32,8 @@ const baseConfig: EditorConfig = {
 };
 
 describe("vehicleNeedsQuickSync", () => {
-  it("detecta falta de miniatura sin identidad", () => {
-    const item = {
-      ...baseItem,
-      title: "Sin Modelo",
-      raw: { marca: "Sin Marca", modelo: "Sin Modelo" },
-    };
-    expect(vehicleNeedsQuickSync(item, "RHCP68", baseConfig)).toBe(true);
-  });
-
-  it("no requiere sync solo por miniatura si marca y modelo están completos", () => {
-    expect(vehicleNeedsQuickSync(baseItem, "RHCP68", baseConfig)).toBe(false);
+  it("detecta falta de miniatura", () => {
+    expect(vehicleNeedsQuickSync(baseItem, "RHCP68", baseConfig)).toBe(true);
   });
 
   it("no requiere sync con miniatura real", () => {

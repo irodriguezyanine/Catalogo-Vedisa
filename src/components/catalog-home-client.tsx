@@ -6499,18 +6499,40 @@ export function CatalogHomeClient({
       for (const vehicleKey of uniqueKeys) {
         const patentSource = resolveBatchAssignItem(vehicleKey);
         if (!patentSource) continue;
-        const resolvedKey = getVehicleKey(patentSource);
-        if (vehicleHasCompleteAssignFicha(patentSource, resolvedKey, configRef.current)) {
-          continue;
-        }
         const patente = normalizePatentToken(getPatent(patentSource));
-        if (patente && patente !== "—") patentsToEnrich.push(patente);
+        if (patente && patente !== "—" && !patentsToEnrich.includes(patente)) {
+          patentsToEnrich.push(patente);
+        }
       }
 
       if (patentsToEnrich.length > 0) {
         try {
-          for (let index = 0; index < patentsToEnrich.length; index += 1) {
-            const patente = patentsToEnrich[index]!;
+          if (patentsToEnrich.length > 1) {
+            const batch = await importPatentsBatchWithRetries(patentsToEnrich, {
+              estadoRetiro,
+              forceRefresh: true,
+            });
+            for (const row of batch.results ?? []) {
+              if (!row.item) continue;
+              const patente = normalizePatentToken(row.patente ?? getPatent(row.item));
+              const resolvedKey = applyImportedPatentPayload({
+                item: row.item,
+                vehicleDetails: row.vehicleDetails,
+                patente,
+                hasGlo3dViewer: row.hasGlo3dViewer,
+              });
+              enrichedItems.set(resolvedKey, row.item);
+              if (row.vehicleDetails) enrichedDetails[resolvedKey] = row.vehicleDetails;
+            }
+            if ((batch.errors ?? []).length > 0) {
+              showSystemNotice(
+                "info",
+                "Sincronización parcial",
+                `${(batch.results ?? []).length} ok · ${(batch.errors ?? []).length} con error al importar Glo3D/Autored.`,
+              );
+            }
+          } else {
+            const patente = patentsToEnrich[0]!;
             const { payload } = await importPatentWithRetries(patente, {
               estadoRetiro,
               forceRefresh: true,
@@ -6519,12 +6541,10 @@ export function CatalogHomeClient({
               item: payload.item!,
               vehicleDetails: payload.vehicleDetails,
               patente,
+              hasGlo3dViewer: payload.hasGlo3dViewer,
             });
             enrichedItems.set(resolvedKey, payload.item!);
             if (payload.vehicleDetails) enrichedDetails[resolvedKey] = payload.vehicleDetails;
-            if (index + 1 < patentsToEnrich.length) {
-              await sleepMs(CATALOG_SYNC_PATENT_DELAY_MS);
-            }
           }
         } catch (enrichError) {
           throw enrichError;

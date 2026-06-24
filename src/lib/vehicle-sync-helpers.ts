@@ -27,10 +27,14 @@ export function hasRealVehicleThumbnail(
   editorConfig: EditorConfig,
 ): boolean {
   const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const raw = item.raw as Record<string, unknown>;
   const candidate =
     details?.thumbnail ??
     item.thumbnail ??
-    item.images.find((url) => url.startsWith("http"));
+    item.images.find((url) => url.startsWith("http")) ??
+    (typeof raw.thumbnail === "string" ? raw.thumbnail : undefined) ??
+    (typeof raw.imagen_principal === "string" ? raw.imagen_principal : undefined) ??
+    (typeof raw.foto_portada === "string" ? raw.foto_portada : undefined);
   if (!candidate?.trim()) return false;
   if (candidate.includes("placeholder")) return false;
   return candidate.startsWith("http");
@@ -64,17 +68,10 @@ export function vehicleNeedsQuickSync(
   isStaleTitle?: (title: string, patente: string) => boolean,
 ): boolean {
   if (vehicleKey.startsWith("manual-")) return false;
-  if (vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle)) return true;
-  if (hasRealVehicleThumbnail(item, vehicleKey, editorConfig)) return false;
-
-  const details = editorConfig.vehicleDetails?.[vehicleKey];
-  const raw = item.raw as Record<string, unknown>;
-  const brand = (details?.brand ?? String(raw.marca ?? raw.brand ?? "")).trim();
-  const model = (details?.model ?? String(raw.modelo ?? raw.model ?? "")).trim();
-  if (!isPlaceholderVehicleIdentity(brand) && !isPlaceholderVehicleIdentity(model)) {
-    return false;
-  }
-  return true;
+  return (
+    !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) ||
+    vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle)
+  );
 }
 
 export function resolveVehicleThumbnailSrc(item: CatalogItem): string {

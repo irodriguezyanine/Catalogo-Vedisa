@@ -23,6 +23,11 @@ import {
   sanitizeModeloValue,
 } from "@/lib/vehicle-identity";
 import {
+  applyGlo3dImagesToInventarioRow,
+  extractGlo3dInventoryImages,
+  glo3dSourcesHaveUsableImages,
+} from "@/lib/glo3d-images";
+import {
   mapPruebaDesplazamientoToSiNo,
   mapPruebaMotorToSiNo,
 } from "@/lib/prueba-operativa-sino";
@@ -101,6 +106,21 @@ const IMPORT_FORCE_REFRESH_KEYS = new Set([
   "glo3d_campos",
   "autored_campos",
   "imagenes",
+  "fotos_urls",
+  "fotos",
+  "thumbnail",
+  "imagen_principal",
+  "foto_portada",
+  "marca",
+  "modelo",
+  "ano",
+  "version",
+  "vin",
+  "transmision",
+  "cilindrada",
+  "llaves",
+  "aire_acondicionado",
+  "prueba_motor",
   "origen",
   "estado_retiro",
 ]);
@@ -289,83 +309,10 @@ function normalizeImageList(value: unknown): string[] {
 }
 
 function extractGlo3dImages(glo3d: Glo3dInventoryEntry): string[] {
-  const urls: string[] = [];
-  const push = (value?: string) => {
-    if (value?.startsWith("http")) urls.push(value);
-  };
-  const pushMany = (value: unknown) => {
-    for (const url of normalizeImageList(value)) push(url);
-  };
-
-  const merged = { ...glo3d.raw, ...glo3d.technicalFields };
-  for (const key of [
-    "thumb",
-    "thumbnail",
-    "thumbnail_url",
-    "image",
-    "image_url",
-    "foto",
-    "foto_portada",
-    "imagen_principal",
-    "main_image",
-    "main_frame",
-    "cover",
-  ]) {
-    push(pickString(merged, [key]));
-  }
-
-  pushMany(merged.imagenes);
-  pushMany(merged.images);
-  pushMany(merged.photos);
-  pushMany(merged.fotos);
-  pushMany(merged.galeria);
-  pushMany(merged.gallery);
-  pushMany(merged.frames);
-  pushMany(merged.main_frame);
-  pushMany(merged.gallery_images);
-  pushMany(glo3d.raw.frames);
-  pushMany(glo3d.raw.main_frame);
-  pushMany(glo3d.raw.gallery_images);
-
-  for (const key of ["src_with_params", "src", "iframe_with_params"]) {
-    const candidate = pickString(merged, [key]) ?? pickString(glo3d.raw, [key]);
-    if (candidate?.startsWith("http") && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(candidate)) {
-      push(candidate);
-    }
-  }
-
-  const frames = merged.frames ?? glo3d.raw.frames;
-  if (Array.isArray(frames)) {
-    for (const frame of frames) {
-      if (typeof frame === "string") push(frame);
-      else if (frame && typeof frame === "object" && !Array.isArray(frame)) {
-        push(
-          pickString(frame as Record<string, unknown>, [
-            "url",
-            "image_url",
-            "thumb",
-            "thumbnail",
-            "src",
-            "image",
-          ]),
-        );
-      }
-    }
-  }
-
-  const gallery = merged.gallery ?? glo3d.raw.gallery;
-  if (gallery && typeof gallery === "object" && !Array.isArray(gallery)) {
-    for (const section of Object.values(gallery as Record<string, unknown>)) {
-      if (!section || typeof section !== "object" || Array.isArray(section)) continue;
-      const record = section as Record<string, unknown>;
-      pushMany(record.image_url);
-      pushMany(record.url);
-      pushMany(record.thumb);
-      pushMany(record.thumbnail);
-    }
-  }
-
-  return [...new Set(urls)];
+  return extractGlo3dInventoryImages({
+    raw: glo3d.raw,
+    technicalFields: glo3d.technicalFields,
+  });
 }
 
 function extractAutoredImages(autored?: Record<string, unknown> | null): string[] {
@@ -851,20 +798,23 @@ function buildCatalogRow(
   const autoredImages = extractAutoredImages(autored);
   const imagenes = [...new Set([...glo3dImages, ...autoredImages, ...normalizeImageList(base.imagenes)])];
   const primaryImage = imagenes[0] ?? pickString(base, ["thumbnail", "imagen_principal", "foto_portada"]);
-  return {
-    ...base,
-    patente,
-    glo3d: glo3d?.raw ?? base.glo3d ?? null,
-    glo3d_url: glo3d?.view3dUrl ?? base.glo3d_url ?? base.url_3d ?? null,
-    url_3d: glo3d?.view3dUrl ?? base.url_3d ?? base.glo3d_url ?? null,
-    imagenes: imagenes.length > 0 ? imagenes : null,
-    thumbnail: primaryImage ?? base.thumbnail ?? null,
-    imagen_principal: primaryImage ?? base.imagen_principal ?? null,
-    foto_portada: primaryImage ?? base.foto_portada ?? null,
-    fotos_urls: imagenes.length > 0 ? imagenes : base.fotos_urls ?? null,
-    fotos: imagenes.length > 0 ? imagenes : base.fotos ?? null,
-    autored: autored ?? base.autored ?? null,
-  };
+  const withMedia = applyGlo3dImagesToInventarioRow(
+    {
+      ...base,
+      patente,
+      glo3d: glo3d?.raw ?? base.glo3d ?? null,
+      glo3d_url: glo3d?.view3dUrl ?? base.glo3d_url ?? base.url_3d ?? null,
+      url_3d: glo3d?.view3dUrl ?? base.url_3d ?? base.glo3d_url ?? null,
+      autored: autored ?? base.autored ?? null,
+    },
+    imagenes.length > 0 ? imagenes : primaryImage ? [primaryImage] : [],
+  );
+  if (!withMedia.thumbnail && primaryImage) {
+    withMedia.thumbnail = primaryImage;
+    withMedia.imagen_principal = primaryImage;
+    withMedia.foto_portada = primaryImage;
+  }
+  return withMedia;
 }
 
 function resolveImportSource(
@@ -879,9 +829,16 @@ function resolveImportSource(
 }
 
 function inventarioRowHasCompleteGlo3d(row: Record<string, unknown>): boolean {
-  const hasViewer = Boolean(pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]));
+  const entry = buildGlo3dEntryFromInventarioRow(row);
+  if (!entry) return false;
+  const hasViewer = Boolean(
+    entry.view3dUrl ?? pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]),
+  );
   const hasRaw = row.glo3d_campos != null || row.glo3d != null;
-  return hasViewer && hasRaw;
+  const storedThumb = pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]);
+  const hasStoredThumb = Boolean(storedThumb?.startsWith("http"));
+  const hasExtractedImages = glo3dSourcesHaveUsableImages(entry.raw, entry.technicalFields);
+  return hasViewer && hasRaw && (hasStoredThumb || hasExtractedImages);
 }
 
 function inventarioRowHasCompleteAutored(row: Record<string, unknown>): boolean {

@@ -21,6 +21,11 @@ import {
   sanitizeModeloValue,
 } from "@/lib/vehicle-identity";
 import {
+  applyGlo3dImagesToInventarioRow,
+  extractGlo3dInventoryImages,
+  glo3dSourcesHaveUsableImages,
+} from "@/lib/glo3d-images";
+import {
   mapPruebaDesplazamientoToSiNo,
   mapPruebaMotorToSiNo,
 } from "@/lib/prueba-operativa-sino";
@@ -189,6 +194,10 @@ export function hydrateInventarioRowForCatalog(row: Record<string, unknown>): Re
 
   let merged: Record<string, unknown> = { ...row };
   if (glo3d) {
+    const glo3dImages = extractGlo3dInventoryImages({
+      raw: glo3d.raw,
+      technicalFields: glo3d.technicalFields,
+    });
     merged = {
       ...merged,
       ...glo3d.technicalFields,
@@ -197,6 +206,19 @@ export function hydrateInventarioRowForCatalog(row: Record<string, unknown>): Re
       url_3d: glo3d.view3dUrl ?? merged.url_3d ?? merged.glo3d_url,
       visor_3d_url: glo3d.view3dUrl ?? merged.visor_3d_url ?? merged.glo3d_url,
     };
+    if (glo3dImages.length > 0) {
+      merged = applyGlo3dImagesToInventarioRow(merged, glo3dImages);
+    }
+  } else {
+    const rawCandidate = row.glo3d_campos ?? row.glo3d;
+    if (rawCandidate && typeof rawCandidate === "object" && !Array.isArray(rawCandidate)) {
+      const fallbackImages = extractGlo3dInventoryImages({
+        raw: rawCandidate as Record<string, unknown>,
+      });
+      if (fallbackImages.length > 0) {
+        merged = applyGlo3dImagesToInventarioRow(merged, fallbackImages);
+      }
+    }
   }
   if (autored) {
     merged = { ...merged, ...autored, autored };
@@ -1155,11 +1177,9 @@ function stampGlo3dEntryPatent(entry: Glo3dInventoryEntry, patente: string): Glo
 function glo3dEntryToCatalogRow(patente: string, entry: Glo3dInventoryEntry): Record<string, unknown> {
   const fields = entry.technicalFields;
   const raw = entry.raw as Record<string, unknown>;
-  const thumb =
-    pickString(raw, ["thumb", "thumbnail_url", "image", "image_url", "foto", "thumbnail"]) ??
-    pickString(fields, ["thumb", "thumbnail_url", "image", "image_url", "foto"]);
-  const imagenes = thumb && thumb.startsWith("http") ? [thumb] : [];
-  return {
+  const imagenes = extractGlo3dInventoryImages({ raw, technicalFields: fields });
+  const thumb = imagenes[0];
+  const baseRow = {
     patente,
     stock_number: patente,
     PPU: patente,
@@ -1171,15 +1191,16 @@ function glo3dEntryToCatalogRow(patente: string, entry: Glo3dInventoryEntry): Re
     version: pickString(fields, ["version", "trim", "ver"]),
     kilometraje: pickString(fields, ["kilometraje", "km", "odometro", "odometer"]),
     descripcion: pickString(fields, ["descripcion", "description"]),
-    imagenes: imagenes.length > 0 ? imagenes : null,
     glo3d_url: entry.view3dUrl ?? null,
     url_3d: entry.view3dUrl ?? null,
     visor_3d_url: entry.view3dUrl ?? null,
+    glo3d_campos: raw,
     glo3d: raw,
     origen: "glo3d",
     estado_retiro: "en_tasacion",
     categoria: (pickString(fields, ["categoria", "tipo_vehiculo", "tipo_de_vehiculo"]) ?? "vehiculo_liviano").toLowerCase(),
   };
+  return applyGlo3dImagesToInventarioRow(baseRow, imagenes.length > 0 ? imagenes : thumb ? [thumb] : []);
 }
 
 function buildGlo3dEntryFromRaw(item: Record<string, unknown>): Glo3dInventoryEntry | null {
@@ -1302,10 +1323,6 @@ function resolveGlo3dEntryFromPageItems(
     const entry = buildGlo3dEntryFromRaw(item);
     if (entry) return stampGlo3dEntryPatent(entry, target);
   }
-  if (items.length === 1) {
-    const entry = buildGlo3dEntryFromRaw(items[0]);
-    if (entry) return stampGlo3dEntryPatent(entry, target);
-  }
   return null;
 }
 
@@ -1351,6 +1368,25 @@ async function fetchGlo3dByPatentScan(
     const found = resolveGlo3dEntryFromPayload(searchPayload.data, target);
     if (found) return { entry: found, rateLimited: false };
   }
+
+  for (let page = 0; page < GLO3D_MAX_PAGES; page += 1) {
+    if (page > 0) await sleepMs(700);
+    const payload = await fetchGlo3dInventoryPage(page);
+    if (payload.rateLimited) {
+      openGlo3dCircuit();
+      return { entry: null, rateLimited: true };
+    }
+    if (!payload.ok) break;
+
+    const found = resolveGlo3dEntryFromPayload(payload.data, target);
+    if (found) return { entry: found, rateLimited: false };
+
+    if (payload.remaining <= 0 || payload.data.length === 0) break;
+  }
+
+  const stockLookup = await fetchGlo3dByStocks([target]);
+  const fromStockScan = stockLookup.get(target);
+  if (fromStockScan) return { entry: fromStockScan, rateLimited: false };
 
   return { entry: null, rateLimited: false };
 }
@@ -1520,7 +1556,14 @@ async function enrichWithGlo3dInventory(items: CatalogItem[]): Promise<CatalogIt
           const hasMedia =
             Boolean(item.view3dUrl) ||
             Boolean(item.thumbnail?.startsWith("http") && !item.thumbnail.includes("placeholder"));
-          return !hasMedia;
+          const raw = item.raw as Record<string, unknown>;
+          const nestedGlo3d = raw.glo3d_campos ?? raw.glo3d;
+          const nestedHasImages =
+            nestedGlo3d &&
+            typeof nestedGlo3d === "object" &&
+            !Array.isArray(nestedGlo3d) &&
+            glo3dSourcesHaveUsableImages(nestedGlo3d as Record<string, unknown>);
+          return !hasMedia && !nestedHasImages;
         })
         .map(getItemStock)
         .filter((value): value is string => !!value),
@@ -1537,13 +1580,29 @@ async function enrichWithGlo3dInventory(items: CatalogItem[]): Promise<CatalogIt
     const glo3d = glo3dMap.get(stock);
     if (!glo3d) return item;
     const raw = item.raw as Record<string, unknown>;
+    const images = extractGlo3dInventoryImages({
+      raw: glo3d.raw,
+      technicalFields: glo3d.technicalFields,
+    });
+    const thumbnail =
+      item.thumbnail?.startsWith("http") && !item.thumbnail.includes("placeholder")
+        ? item.thumbnail
+        : images[0];
+    const mergedRaw = applyGlo3dImagesToInventarioRow(
+      {
+        ...mergeRawPreferPrimary(raw, glo3d.technicalFields),
+        glo3d: glo3d.raw,
+        glo3d_url: item.view3dUrl ?? glo3d.view3dUrl ?? raw.glo3d_url,
+        url_3d: item.view3dUrl ?? glo3d.view3dUrl ?? raw.url_3d,
+      },
+      images,
+    );
     return {
       ...item,
       view3dUrl: item.view3dUrl ?? glo3d.view3dUrl,
-      raw: {
-        ...mergeRawPreferPrimary(raw, glo3d.technicalFields),
-        glo3d: glo3d.raw,
-      },
+      thumbnail: thumbnail ?? item.thumbnail,
+      images: item.images.length > 0 ? item.images : images,
+      raw: mergedRaw,
     };
   });
 }
