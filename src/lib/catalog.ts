@@ -1955,7 +1955,26 @@ export async function fetchAutoredRecordByPatent(
   return record;
 }
 
-export async function fetchTasacionesInventarioRows(): Promise<Record<string, unknown>[]> {
+function inventarioRowHasSharedInventoryData(row: Record<string, unknown>): boolean {
+  const hasGlo3d = Boolean(row.glo3d_campos ?? row.glo3d ?? pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]));
+  const hasAutored = Boolean(row.autored_campos ?? row.autored);
+  const hasIdentity = Boolean(pickString(row, ["marca", "brand"]) && pickString(row, ["modelo", "model"]));
+  return hasGlo3d || hasAutored || hasIdentity;
+}
+
+export async function fetchSharedInventarioRecordByPatent(
+  patent: string,
+): Promise<Record<string, unknown> | null> {
+  const row = await fetchInventarioRowByPatent(patent);
+  if (!row || !inventarioRowHasSharedInventoryData(row)) return null;
+  return normalizeTasacionesPatentRow(row);
+}
+
+export async function fetchTasacionesInventarioRows(options?: {
+  incluirHistoricos?: boolean;
+  estado?: string | null;
+  limit?: number;
+}): Promise<Record<string, unknown>[]> {
   const apiBase = process.env.CATALOG_SOURCE_API_URL;
   if (!apiBase) return [];
 
@@ -1965,12 +1984,18 @@ export async function fetchTasacionesInventarioRows(): Promise<Record<string, un
       ? new URL(apiBase)
       : new URL("/api/inventario-publico", apiBase);
 
-  endpoint.searchParams.set("limit", process.env.CATALOG_SOURCE_API_LIMIT ?? "500");
+  endpoint.searchParams.set(
+    "limit",
+    String(options?.limit ?? Number(process.env.CATALOG_SOURCE_API_LIMIT ?? "2000")),
+  );
   endpoint.searchParams.set(
     "incluir_historicos",
-    process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
+    String(options?.incluirHistoricos ?? process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS !== "false"),
   );
-  const estadoFilter = process.env.CATALOG_SOURCE_API_ESTADO?.trim();
+  const estadoFilter =
+    options?.estado === null
+      ? null
+      : (options?.estado ?? process.env.CATALOG_SOURCE_API_ESTADO?.trim());
   if (estadoFilter) endpoint.searchParams.set("estado", estadoFilter);
 
   const response = await fetch(endpoint.toString(), {
@@ -1993,13 +2018,19 @@ export async function fetchTasacionesInventarioRows(): Promise<Record<string, un
 }
 
 export async function fetchTasacionesInventarioMap(): Promise<Map<string, Record<string, unknown>>> {
-  const rows = await fetchTasacionesInventarioRows();
   const map = new Map<string, Record<string, unknown>>();
-  for (const row of rows) {
-    const key = normalizeStock(
-      String(row.patente ?? row.PPU ?? row.stock_number ?? row.ppu ?? ""),
-    );
-    if (key) map.set(key, row);
+  const ingest = (rows: Record<string, unknown>[]) => {
+    for (const row of rows) {
+      const key = normalizeStock(
+        String(row.patente ?? row.PPU ?? row.stock_number ?? row.ppu ?? ""),
+      );
+      if (key) map.set(key, row);
+    }
+  };
+
+  ingest(await fetchTasacionesInventarioRows({ incluirHistoricos: true, estado: null }));
+  if (map.size === 0) {
+    ingest(await fetchTasacionesInventarioRows({ incluirHistoricos: true }));
   }
   return map;
 }
@@ -2019,24 +2050,25 @@ function normalizeTasacionesPatentRow(match: Record<string, unknown>): Record<st
 export async function fetchTasacionesRecordByPatent(
   patent: string,
 ): Promise<Record<string, unknown> | null> {
-  const apiBase = process.env.CATALOG_SOURCE_API_URL;
-  if (!apiBase) return null;
   const normalized = normalizeStock(patent);
   if (!normalized) return null;
+
+  const fromSupabase = await fetchSharedInventarioRecordByPatent(normalized);
+  if (fromSupabase) return fromSupabase;
+
+  const apiBase = process.env.CATALOG_SOURCE_API_URL;
+  if (!apiBase) return null;
 
   const token = process.env.CATALOG_SOURCE_API_TOKEN;
   const baseEndpoint = apiBase.includes("/api/")
     ? new URL(apiBase)
     : new URL("/api/inventario-publico", apiBase);
 
-  for (const paramName of ["patente", "ppu", "PPU", "plate"]) {
+  for (const paramName of ["patente", "ppu", "PPU", "plate", "stock_number", "q", "search"]) {
     const endpoint = new URL(baseEndpoint.toString());
     endpoint.searchParams.set(paramName, normalized);
-    endpoint.searchParams.set("limit", "1");
-    endpoint.searchParams.set(
-      "incluir_historicos",
-      process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
-    );
+    endpoint.searchParams.set("limit", "50");
+    endpoint.searchParams.set("incluir_historicos", "true");
 
     const response = await fetch(endpoint.toString(), {
       method: "GET",
@@ -2060,13 +2092,18 @@ export async function fetchTasacionesRecordByPatent(
     const match =
       rows.find(
         (row) =>
-          normalizeStock(String(row.patente ?? row.PPU ?? row.stock_number ?? "")) === normalized,
+          normalizeStock(String(row.patente ?? row.PPU ?? row.stock_number ?? row.ppu ?? "")) ===
+          normalized,
       ) ?? rows[0];
-    const autoredNode = match.autored_campos ?? match.autored;
-    if (autoredNode && typeof autoredNode === "object" && !Array.isArray(autoredNode)) {
-      return normalizeTasacionesPatentRow(match);
-    }
-    return normalizeTasacionesPatentRow({ ...match, origen: "tasaciones" });
+    return normalizeTasacionesPatentRow(match);
+  }
+
+  try {
+    const bulkMap = await fetchTasacionesInventarioMap();
+    const fromBulk = bulkMap.get(normalized);
+    if (fromBulk) return normalizeTasacionesPatentRow(fromBulk);
+  } catch {
+    // noop
   }
 
   return null;

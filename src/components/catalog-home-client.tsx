@@ -7276,6 +7276,7 @@ export function CatalogHomeClient({
           estadoRetiro,
           syncMode: "tasaciones-first",
           forceRefresh: true,
+          seedInventarioRow: currentItem.raw as Record<string, unknown>,
         });
         if (payload.syncDiagnostics?.syncComplete === false) {
           ({ payload } = await importPatentWithRetries(patente, {
@@ -7283,6 +7284,7 @@ export function CatalogHomeClient({
             syncMode: "external",
             forceExternalApis: true,
             forceRefresh: true,
+            seedInventarioRow: currentItem.raw as Record<string, unknown>,
           }));
         }
 
@@ -7337,6 +7339,9 @@ export function CatalogHomeClient({
               : "Sincronización parcial",
           `${patente} actualizado.${tasacionesNote}${glo3dNote}${autoredNote}${diagNote}`,
         );
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+        void persistEditorConfigRef.current(configRef.current);
+        router.refresh();
       } catch (error) {
         const message =
           error instanceof DOMException && error.name === "TimeoutError"
@@ -7361,6 +7366,7 @@ export function CatalogHomeClient({
       managingVehicleKey,
       showSystemNotice,
       sortedUpcomingAuctions,
+      router,
     ],
   );
 
@@ -7439,6 +7445,7 @@ export function CatalogHomeClient({
     setGroupSyncAllState({ running: true, current: 0, total: targets.length });
     let okCount = 0;
     let processed = 0;
+    let appliedCount = 0;
     const failed: string[] = [];
     const incomplete: string[] = [];
 
@@ -7456,24 +7463,46 @@ export function CatalogHomeClient({
         });
 
         try {
-          const batch =
-            chunk.length > 1
-              ? await importPatentsBatchWithRetries(
-                  chunk.map((entry) => entry.patente),
-                  { estadoRetiro, syncMode: "tasaciones-first", forceRefresh: true },
-                )
-              : null;
+          const resolveSeedRow = (patente: string) => {
+            const item =
+              groupManageBaseItems.find(
+                (entry) => normalizePatentToken(getPatent(entry)) === patente,
+              ) ?? itemsByKey.get(patente);
+            return item ? (item.raw as Record<string, unknown>) : undefined;
+          };
 
-          const rows =
-            batch?.results ??
-            (await (async () => {
-              const single = await importPatentWithRetries(chunk[0]!.patente, {
-                estadoRetiro,
-                syncMode: "tasaciones-first",
-                forceRefresh: true,
-              });
-              return [single.payload];
-            })());
+          const importOne = async (patente: string, external: boolean) => {
+            const { payload } = await importPatentWithRetries(patente, {
+              estadoRetiro,
+              syncMode: external ? "external" : "tasaciones-first",
+              forceExternalApis: external,
+              forceRefresh: true,
+              seedInventarioRow: resolveSeedRow(patente),
+            });
+            return payload;
+          };
+
+          const importChunk = async (external: boolean) => {
+            if (chunk.length > 1) {
+              const batch = await importPatentsBatchWithRetries(
+                chunk.map((entry) => entry.patente),
+                {
+                  estadoRetiro,
+                  syncMode: external ? "external" : "tasaciones-first",
+                  forceExternalApis: external,
+                  forceRefresh: true,
+                },
+              );
+              return batch.results ?? [];
+            }
+            return [await importOne(chunk[0]!.patente, external)];
+          };
+
+          let rows = await importChunk(false);
+          const stillIncomplete = rows.filter((row) => row.syncDiagnostics?.syncComplete === false);
+          if (stillIncomplete.length > 0) {
+            rows = await importChunk(true);
+          }
 
           for (const row of rows) {
             if (!row.item) continue;
@@ -7484,17 +7513,14 @@ export function CatalogHomeClient({
               patente: row.patente ?? target.patente,
               hasGlo3dViewer: row.hasGlo3dViewer,
             });
+            appliedCount += 1;
             if (row.syncDiagnostics?.syncComplete === false) {
               incomplete.push(
-                `${row.patente ?? target.patente}: ${row.syncDiagnostics.warnings[0] ?? "sin miniatura Glo3D"}`,
+                `${row.patente ?? target.patente}: ${row.syncDiagnostics.warnings[0] ?? "ficha incompleta"}`,
               );
             } else {
               okCount += 1;
             }
-          }
-
-          for (const err of batch?.errors ?? []) {
-            failed.push(`${err.patente}: ${err.error}`);
           }
         } catch (error) {
           for (const entry of chunk) {
@@ -7541,7 +7567,7 @@ export function CatalogHomeClient({
       }
     } finally {
       setGroupSyncAllState(null);
-      if (okCount > 0) {
+      if (appliedCount > 0) {
         await new Promise((resolve) => window.setTimeout(resolve, 100));
         void persistEditorConfigRef.current(configRef.current);
         router.refresh();
@@ -7553,6 +7579,7 @@ export function CatalogHomeClient({
     groupManageBaseItems,
     groupSyncAllState?.running,
     isStaleEditorDraftValue,
+    itemsByKey,
     router,
     showSystemNotice,
     sortedUpcomingAuctions,

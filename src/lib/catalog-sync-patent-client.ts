@@ -15,12 +15,11 @@ export const CATALOG_SYNC_BATCH_TIMEOUT_MS = 130_000;
 
 export type ImportPatentClientOptions = {
   estadoRetiro?: string;
-  /** Refresca desde Tasaciones (default true en import normal). */
   forceRefresh?: boolean;
-  /** Plan B: fuerza Glo3D + Autored directos. */
   forceExternalApis?: boolean;
   syncMode?: ImportPatentSyncMode;
   skipGlo3dFetch?: boolean;
+  seedInventarioRow?: Record<string, unknown>;
 };
 
 export type ImportPatentApiPayload = {
@@ -76,6 +75,7 @@ function buildImportPatentBody(patente: string, options: ImportPatentClientOptio
     forceExternalApis: options.forceExternalApis ?? syncMode === "external",
     syncMode,
     skipGlo3dFetch: options.skipGlo3dFetch ?? false,
+    seedInventarioRow: options.seedInventarioRow,
   };
 }
 
