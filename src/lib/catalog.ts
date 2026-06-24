@@ -26,6 +26,10 @@ import {
   glo3dSourcesHaveUsableImages,
 } from "@/lib/glo3d-images";
 import {
+  extractAutoredImagesFromRecord,
+  mergeVehicleImageSources,
+} from "@/lib/catalog-sync-images";
+import {
   mapPruebaDesplazamientoToSiNo,
   mapPruebaMotorToSiNo,
 } from "@/lib/prueba-operativa-sino";
@@ -193,8 +197,10 @@ export function hydrateInventarioRowForCatalog(row: Record<string, unknown>): Re
       : null;
 
   let merged: Record<string, unknown> = { ...row };
+  let glo3dImages: string[] = [];
+
   if (glo3d) {
-    const glo3dImages = extractGlo3dInventoryImages({
+    glo3dImages = extractGlo3dInventoryImages({
       raw: glo3d.raw,
       technicalFields: glo3d.technicalFields,
     });
@@ -206,23 +212,44 @@ export function hydrateInventarioRowForCatalog(row: Record<string, unknown>): Re
       url_3d: glo3d.view3dUrl ?? merged.url_3d ?? merged.glo3d_url,
       visor_3d_url: glo3d.view3dUrl ?? merged.visor_3d_url ?? merged.glo3d_url,
     };
-    if (glo3dImages.length > 0) {
-      merged = applyGlo3dImagesToInventarioRow(merged, glo3dImages);
-    }
   } else {
     const rawCandidate = row.glo3d_campos ?? row.glo3d;
     if (rawCandidate && typeof rawCandidate === "object" && !Array.isArray(rawCandidate)) {
-      const fallbackImages = extractGlo3dInventoryImages({
+      glo3dImages = extractGlo3dInventoryImages({
         raw: rawCandidate as Record<string, unknown>,
       });
-      if (fallbackImages.length > 0) {
-        merged = applyGlo3dImagesToInventarioRow(merged, fallbackImages);
-      }
     }
   }
+
   if (autored) {
-    merged = { ...merged, ...autored, autored };
+    const {
+      imagenes: _imagenes,
+      fotos: _fotos,
+      fotos_urls: _fotosUrls,
+      thumbnail: _thumbnail,
+      imagen_principal: _imagenPrincipal,
+      foto_portada: _fotoPortada,
+      ...autoredIdentity
+    } = autored as Record<string, unknown>;
+    merged = { ...merged, ...autoredIdentity, autored: autoredRaw };
   }
+
+  const autoredImages = extractAutoredImagesFromRecord(
+    autoredRaw && typeof autoredRaw === "object" && !Array.isArray(autoredRaw)
+      ? (autoredRaw as Record<string, unknown>)
+      : null,
+  );
+  const inventarioImages = [
+    ...normalizeImageList(row.imagenes),
+    ...normalizeImageList(row.fotos_urls),
+    pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]),
+  ].filter((url): url is string => typeof url === "string" && url.startsWith("http"));
+
+  const imageMerge = mergeVehicleImageSources({ glo3dImages, autoredImages, inventarioImages });
+  if (imageMerge.images.length > 0) {
+    merged = applyGlo3dImagesToInventarioRow(merged, imageMerge.images);
+  }
+
   return merged;
 }
 

@@ -21,6 +21,10 @@ export function getCatalogItemModel(item: CatalogItem): string {
   return item.title?.trim() || "Sin modelo";
 }
 
+function thumbnailLooksLikeGlo3d(url: string): boolean {
+  return /glo3d|firebasestorage|storage\.googleapis|googleusercontent/i.test(url);
+}
+
 export function hasRealVehicleThumbnail(
   item: CatalogItem,
   vehicleKey: string,
@@ -68,10 +72,27 @@ export function vehicleNeedsQuickSync(
   isStaleTitle?: (title: string, patente: string) => boolean,
 ): boolean {
   if (vehicleKey.startsWith("manual-")) return false;
-  return (
-    !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) ||
-    vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle)
-  );
+
+  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const raw = item.raw as Record<string, unknown>;
+  const view3dUrl =
+    details?.view3dUrl ??
+    (typeof raw.glo3d_url === "string" ? raw.glo3d_url : undefined) ??
+    (typeof raw.url_3d === "string" ? raw.url_3d : undefined);
+
+  const hasThumb = hasRealVehicleThumbnail(item, vehicleKey, editorConfig);
+  if (!hasThumb) return true;
+
+  if (view3dUrl?.includes("glo3d")) {
+    const thumb =
+      details?.thumbnail ??
+      item.thumbnail ??
+      item.images.find((url) => url.startsWith("http")) ??
+      (typeof raw.thumbnail === "string" ? raw.thumbnail : undefined);
+    if (thumb && !thumbnailLooksLikeGlo3d(thumb)) return true;
+  }
+
+  return vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle);
 }
 
 export function resolveVehicleThumbnailSrc(item: CatalogItem): string {

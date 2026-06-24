@@ -7321,15 +7321,25 @@ export function CatalogHomeClient({
             : payload.autoredReason === "no_record"
               ? " Tasaciones/Autored no tienen ficha para esta patente."
               : " Autored respondió sin marca/modelo útiles para esta patente.";
+        const diagNote =
+          payload.syncDiagnostics?.warnings.length && !payload.syncDiagnostics.syncComplete
+            ? ` ${payload.syncDiagnostics.warnings.join(" ")}`
+            : "";
         const glo3dNote = payload.hasGlo3dViewer
-          ? " Visor 3D actualizado."
+          ? payload.syncDiagnostics?.thumbnailSource === "glo3d"
+            ? " Visor 3D + miniatura Glo3D."
+            : " Visor 3D OK; miniatura aún sin Glo3D."
           : !payload.item!.thumbnail && !(payload.item!.images?.length ?? 0)
             ? " Sin miniatura Glo3D: revisa la patente en Glo3D o pega fotos en Editar ficha."
             : "";
         showSystemNotice(
-          payload.autoredSynced ? "success" : "info",
-          payload.autoredSynced ? "Unidad sincronizada" : "Sincronización parcial",
-          `${patente} actualizado.${glo3dNote}${autoredNote}`,
+          payload.syncDiagnostics?.syncComplete === false || !payload.autoredSynced ? "info" : "success",
+          payload.syncDiagnostics?.syncComplete === false
+            ? "Sincronización incompleta"
+            : payload.autoredSynced
+              ? "Unidad sincronizada"
+              : "Sincronización parcial",
+          `${patente} actualizado.${glo3dNote}${autoredNote}${diagNote}`,
         );
       } catch (error) {
         const message =
@@ -7358,6 +7368,51 @@ export function CatalogHomeClient({
     ],
   );
 
+  const showPatentDiagnosis = useCallback(
+    async (rawPatente: string) => {
+      const patente = normalizePatentToken(rawPatente);
+      if (!patente || patente === "—") return;
+      try {
+        const response = await fetch(
+          `/api/admin/diagnose-patent?patente=${encodeURIComponent(patente)}`,
+          { cache: "no-store" },
+        );
+        const data = (await response.json()) as {
+          ok?: boolean;
+          error?: string;
+          diagnosis?: {
+            glo3d: { found: boolean; imageCount: number; view3dUrl?: string };
+            autored: { found: boolean; marca?: string; modelo?: string; imageCount: number };
+            merge: { thumbnailSource: string };
+            warnings: string[];
+            recommendation: string;
+          };
+        };
+        if (!response.ok || !data.ok || !data.diagnosis) {
+          throw new Error(data.error ?? "No se pudo diagnosticar.");
+        }
+        const d = data.diagnosis;
+        const body = [
+          `Glo3D: ${d.glo3d.found ? `${d.glo3d.imageCount} imagen(es), visor ${d.glo3d.view3dUrl ? "OK" : "ausente"}` : "NO encontrado"}`,
+          `Autored: ${d.autored.found ? `${d.autored.marca ?? "?"} ${d.autored.modelo ?? ""} (${d.autored.imageCount} fotos)`.trim() : "sin ficha"}`,
+          `Miniatura priorizada: ${d.merge.thumbnailSource}`,
+          ...d.warnings,
+          d.recommendation,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        showSystemNotice(d.warnings.length > 0 ? "info" : "success", `Diagnóstico ${patente}`, body);
+      } catch (error) {
+        showSystemNotice(
+          "error",
+          "Diagnóstico fallido",
+          error instanceof Error ? error.message : "Error desconocido",
+        );
+      }
+    },
+    [showSystemNotice],
+  );
+
   const syncAllGroupVehicles = useCallback(async () => {
     if (groupSyncAllState?.running || syncingVehicleKey) return;
 
@@ -7382,6 +7437,7 @@ export function CatalogHomeClient({
     let okCount = 0;
     let processed = 0;
     const failed: string[] = [];
+    const incomplete: string[] = [];
 
     try {
       for (let index = 0; index < targets.length; index += CATALOG_SYNC_BATCH_CHUNK_SIZE) {
@@ -7424,7 +7480,13 @@ export function CatalogHomeClient({
               patente: row.patente ?? target.patente,
               hasGlo3dViewer: row.hasGlo3dViewer,
             });
-            okCount += 1;
+            if (row.syncDiagnostics?.syncComplete === false) {
+              incomplete.push(
+                `${row.patente ?? target.patente}: ${row.syncDiagnostics.warnings[0] ?? "sin miniatura Glo3D"}`,
+              );
+            } else {
+              okCount += 1;
+            }
           }
 
           for (const err of batch?.errors ?? []) {
@@ -7450,18 +7512,26 @@ export function CatalogHomeClient({
         }
       }
 
-      if (failed.length === 0) {
+      if (failed.length === 0 && incomplete.length === 0) {
         showSystemNotice(
           "success",
           "Grupo sincronizado",
           `${okCount} unidad(es) actualizadas con Glo3D + Autored.`,
         );
       } else {
+        const incompleteNote =
+          incomplete.length > 0
+            ? ` ${incomplete.length} incompleta(s): ${incomplete.slice(0, 3).join(" · ")}${
+                incomplete.length > 3 ? "… (clic en Sin sync → diagnóstico)" : ""
+              }`
+            : "";
         showSystemNotice(
           okCount > 0 ? "info" : "error",
           okCount > 0 ? "Sincronización parcial" : "Sincronización fallida",
-          `${okCount} ok · ${failed.length} con error. ${failed.slice(0, 3).join(" · ")}${
-            failed.length > 3 ? "…" : ""
+          `${okCount} ok · ${failed.length} error(es) · ${incomplete.length} incompleta(s).${incompleteNote}${
+            failed.length > 0
+              ? ` Errores: ${failed.slice(0, 2).join(" · ")}${failed.length > 2 ? "…" : ""}`
+              : ""
           }`,
         );
       }
@@ -8787,9 +8857,14 @@ export function CatalogHomeClient({
                               {hidden ? "Oculto" : "Visible"}
                             </span>
                             {needsQuickSync ? (
-                              <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800">
+                              <button
+                                type="button"
+                                onClick={() => void showPatentDiagnosis(getPatent(item))}
+                                className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800 underline decoration-amber-400/70 underline-offset-2 hover:bg-amber-200"
+                                title="Ver diagnóstico Glo3D + Autored"
+                              >
                                 Sin sync
-                              </span>
+                              </button>
                             ) : null}
                           </p>
                           <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">
@@ -12090,9 +12165,14 @@ export function CatalogHomeClient({
                             {hidden ? "Oculto" : "Visible"}
                           </span>
                           {needsQuickSync ? (
-                            <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800">
+                            <button
+                              type="button"
+                              onClick={() => void showPatentDiagnosis(getPatent(item))}
+                              className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800 underline decoration-amber-400/70 underline-offset-2 hover:bg-amber-200"
+                              title="Ver diagnóstico Glo3D + Autored"
+                            >
                               Sin sync
-                            </span>
+                            </button>
                           ) : null}
                         </p>
                         <p className="line-clamp-1 text-sm font-semibold leading-tight text-slate-900">

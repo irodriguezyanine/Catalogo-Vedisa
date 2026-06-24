@@ -28,6 +28,15 @@ export type ImportPatentApiPayload = {
   skippedGlo3dFetch?: boolean;
   retryAfterMs?: number;
   rateLimited?: boolean;
+  syncDiagnostics?: {
+    glo3dFound: boolean;
+    glo3dImageCount: number;
+    glo3dViewer: boolean;
+    thumbnailSource: "glo3d" | "autored" | "inventario" | "none";
+    autoredSynced: boolean;
+    syncComplete: boolean;
+    warnings: string[];
+  };
 };
 
 export type ImportPatentsBatchApiPayload = {

@@ -170,7 +170,36 @@ export function extractGlo3dImagesFromSources(
     }
   }
 
+  deepCollectImageUrls(raw, urls, 0);
+  deepCollectImageUrls(technicalFields, urls, 0);
+
   return urls;
+}
+
+const MAX_DEEP_SCAN_DEPTH = 8;
+const IMAGE_URL_PATTERN =
+  /^https?:\/\/[^\s"'<>]+\.(jpe?g|png|webp|gif|avif)(\?[^\s"'<>]*)?$/i;
+const STORAGE_URL_PATTERN =
+  /^https?:\/\/[^\s"'<>]*(firebasestorage|storage\.googleapis|cloudinary|glo3d)[^\s"'<>]*/i;
+
+function deepCollectImageUrls(node: unknown, urls: string[], depth: number) {
+  if (depth > MAX_DEEP_SCAN_DEPTH || node == null) return;
+  if (typeof node === "string") {
+    const normalized = normalizeCatalogImageUrl(node);
+    if (normalized && (IMAGE_URL_PATTERN.test(normalized) || STORAGE_URL_PATTERN.test(normalized))) {
+      pushUnique(urls, normalized);
+    }
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const entry of node) deepCollectImageUrls(entry, urls, depth + 1);
+    return;
+  }
+  if (typeof node === "object") {
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      deepCollectImageUrls(value, urls, depth + 1);
+    }
+  }
 }
 
 export function extractGlo3dInventoryImages(entry: Glo3dImageEntry): string[] {

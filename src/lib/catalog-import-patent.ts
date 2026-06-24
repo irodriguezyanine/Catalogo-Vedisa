@@ -28,6 +28,11 @@ import {
   glo3dSourcesHaveUsableImages,
 } from "@/lib/glo3d-images";
 import {
+  extractAutoredImagesFromRecord,
+  mergeVehicleImageSources,
+  type CatalogThumbnailSource,
+} from "@/lib/catalog-sync-images";
+import {
   mapPruebaDesplazamientoToSiNo,
   mapPruebaMotorToSiNo,
 } from "@/lib/prueba-operativa-sino";
@@ -59,6 +64,15 @@ export type ImportPatentResult = {
   autoredConfigured?: boolean;
   autoredReason?: "synced" | "not_configured" | "no_record" | "no_identity";
   retryAfterMs?: number;
+  syncDiagnostics?: {
+    glo3dFound: boolean;
+    glo3dImageCount: number;
+    glo3dViewer: boolean;
+    thumbnailSource: CatalogThumbnailSource;
+    autoredSynced: boolean;
+    syncComplete: boolean;
+    warnings: string[];
+  };
 };
 
 function resolveAutoredSyncReason(
@@ -316,19 +330,60 @@ function extractGlo3dImages(glo3d: Glo3dInventoryEntry): string[] {
 }
 
 function extractAutoredImages(autored?: Record<string, unknown> | null): string[] {
-  if (!autored) return [];
-  const merged = buildMergedRecord(autored);
-  const candidates = [
-    ...normalizeImageList(merged.imagenes),
-    ...normalizeImageList(merged.fotos),
-    ...normalizeImageList(merged.fotos_urls),
-    ...normalizeImageList(merged.images),
-    ...normalizeImageList(merged.photos),
-    ...normalizeImageList(merged.galeria),
-    ...normalizeImageList(merged.galeria_fotos),
-    pickString(merged, ["thumbnail", "imagen_principal", "foto_portada", "foto_principal"]),
-  ].filter(Boolean) as string[];
-  return [...new Set(candidates.filter((url) => url.startsWith("http")))];
+  return extractAutoredImagesFromRecord(autored);
+}
+
+function resolveMergedVehicleImages(
+  glo3d: Glo3dInventoryEntry | null | undefined,
+  autored: Record<string, unknown> | null | undefined,
+  row?: Record<string, unknown>,
+) {
+  const glo3dImages = glo3d ? extractGlo3dImages(glo3d) : [];
+  const autoredImages = extractAutoredImagesFromRecord(autored);
+  const inventarioImages = row ? normalizeImageList(row.imagenes) : [];
+  const rowThumb = row ? pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]) : undefined;
+  if (rowThumb?.startsWith("http")) inventarioImages.unshift(rowThumb);
+  return mergeVehicleImageSources({ glo3dImages, autoredImages, inventarioImages });
+}
+
+function buildSyncDiagnostics(
+  patente: string,
+  glo3d: Glo3dInventoryEntry | null,
+  autored: Record<string, unknown> | null,
+  merged: ReturnType<typeof mergeVehicleImageSources>,
+  hasGlo3dViewer: boolean,
+): NonNullable<ImportPatentResult["syncDiagnostics"]> {
+  const warnings: string[] = [];
+  const glo3dImageCount = glo3d ? extractGlo3dImages(glo3d).length : 0;
+
+  if (!glo3d) {
+    warnings.push("Glo3D: patente no encontrada en la API.");
+  } else if (glo3dImageCount === 0) {
+    warnings.push("Glo3D: registro sin miniaturas extraíbles (revisa captura en Glo3D).");
+  }
+  if (hasGlo3dViewer && merged.thumbnailSource === "autored") {
+    warnings.push("Miniatura viene de Autored; se esperaba imagen Glo3D.");
+  }
+  if (!merged.thumbnail) {
+    warnings.push("Sin miniatura utilizable tras la fusión Glo3D + Autored.");
+  }
+  if (!autoredRecordHasIdentity(autored, patente)) {
+    warnings.push("Autored/Tasaciones: sin marca/modelo para esta patente.");
+  }
+
+  const syncComplete =
+    Boolean(merged.thumbnail) &&
+    (!hasGlo3dViewer || merged.thumbnailSource === "glo3d" || glo3dImageCount === 0);
+
+  return {
+    glo3dFound: Boolean(glo3d),
+    glo3dImageCount,
+    glo3dViewer: hasGlo3dViewer,
+    thumbnailSource: merged.thumbnailSource,
+    autoredSynced: autoredRecordHasIdentity(autored, patente),
+    syncComplete,
+    warnings,
+  };
 }
 
 function normalizeAutoredImportRecord(
@@ -503,7 +558,9 @@ function buildVehicleDetailsFromSources(
   const glo3dFields = glo3d?.technicalFields ?? {};
   const autoredMerged = autored ? buildMergedRecord(normalizeAutoredImportRecord(autored) ?? autored) : {};
   const rowMerged = buildMergedRecord(row);
-  const merged = mergePreferMeaningful(autoredMerged, mergePreferMeaningful(glo3dFields, rowMerged));
+  const identity = mergePreferMeaningful(autoredMerged, mergePreferMeaningful(glo3dFields, rowMerged));
+  const technical = mergePreferMeaningful(glo3dFields, autoredMerged);
+  const merged = { ...technical, ...identity };
 
   const marca = sanitizeIdentityValue(
     pickString(merged, ["marca", "brand", "make", "vehicle_brand", "vehiculo_marca"]),
@@ -734,8 +791,12 @@ function buildInventarioPayloadFromSources(
     ) ?? null;
   const estadoAirbags = pickString(technical, ["estado_airbags", "eda"]);
   const glo3dImages = glo3d ? extractGlo3dImages(glo3d) : [];
-  const autoredImages = extractAutoredImages(autored);
-  const imagenes = [...new Set([...glo3dImages, ...autoredImages])];
+  const mergedImages = mergeVehicleImageSources({
+    glo3dImages,
+    autoredImages: extractAutoredImagesFromRecord(autored),
+    inventarioImages: [],
+  });
+  const imagenes = mergedImages.images;
   const nombreVehiculo = [marca, modelo, ano].filter((part) => !isPlaceholderVehicleLabel(part)).join(" ").trim();
 
   return {
@@ -774,9 +835,9 @@ function buildInventarioPayloadFromSources(
     estado_airbags: estadoAirbags ?? null,
     eda: estadoAirbags ?? null,
     imagenes: imagenes.length > 0 ? imagenes : null,
-    thumbnail: imagenes[0] ?? null,
-    imagen_principal: imagenes[0] ?? null,
-    foto_portada: imagenes[0] ?? null,
+    thumbnail: mergedImages.thumbnail ?? null,
+    imagen_principal: mergedImages.thumbnail ?? null,
+    foto_portada: mergedImages.thumbnail ?? null,
     fotos_urls: imagenes.length > 0 ? imagenes : null,
     glo3d_url: glo3d?.view3dUrl ?? null,
     url_3d: glo3d?.view3dUrl ?? null,
@@ -794,10 +855,9 @@ function buildCatalogRow(
   glo3d?: Glo3dInventoryEntry | null,
   autored?: Record<string, unknown> | null,
 ): Record<string, unknown> {
-  const glo3dImages = extractGlo3dImages(glo3d ?? { raw: base, technicalFields: {} });
-  const autoredImages = extractAutoredImages(autored);
-  const imagenes = [...new Set([...glo3dImages, ...autoredImages, ...normalizeImageList(base.imagenes)])];
-  const primaryImage = imagenes[0] ?? pickString(base, ["thumbnail", "imagen_principal", "foto_portada"]);
+  const mergedImages = resolveMergedVehicleImages(glo3d, autored, base);
+  const imagenes = mergedImages.images;
+  const primaryImage = mergedImages.thumbnail ?? pickString(base, ["thumbnail", "imagen_principal", "foto_portada"]);
   const withMedia = applyGlo3dImagesToInventarioRow(
     {
       ...base,
@@ -1016,13 +1076,11 @@ export async function importVehicleByPatent(
       ? await persistInventarioRow(patente, payload, existingRow, options)
       : { row: mergePreferMeaningful(payload, existingRow), created: false };
     const mergedRow = buildCatalogRow(patente, persisted.row, glo3d, autored);
-    const images = [
-      ...extractGlo3dImages(glo3d ?? { raw: mergedRow, technicalFields: {} }),
-      ...extractAutoredImages(autored),
-      ...normalizeImageList(mergedRow.imagenes),
-    ];
+    const mergedImages = resolveMergedVehicleImages(glo3d, autored, mergedRow);
+    const images = mergedImages.images;
     const item = catalogRowToItem(mergedRow);
     if (!item) throw new Error(`No se pudo normalizar el inventario para ${patente}.`);
+    const hasGlo3dViewer = Boolean(glo3d?.view3dUrl ?? mergedRow.glo3d_url ?? mergedRow.url_3d);
 
     return buildImportPatentResult({
       item,
@@ -1032,13 +1090,14 @@ export async function importVehicleByPatent(
       patente,
       requestedPatente,
       correctedPatente,
-      hasGlo3dViewer: Boolean(glo3d?.view3dUrl ?? mergedRow.glo3d_url ?? mergedRow.url_3d),
+      hasGlo3dViewer,
       skippedGlo3dFetch,
       skippedAutoredFetch,
       glo3dRateLimited,
       autoredSynced,
       autored,
       retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
+      syncDiagnostics: buildSyncDiagnostics(patente, glo3d, autored, mergedImages, hasGlo3dViewer),
     });
   }
 
@@ -1067,13 +1126,11 @@ export async function importVehicleByPatent(
 
   const persisted = await persistInventarioRow(patente, payload, null, options);
   const row = buildCatalogRow(patente, persisted.row, glo3d, autored);
-  const images = [
-    ...(glo3d ? extractGlo3dImages(glo3d) : []),
-    ...extractAutoredImages(autored),
-    ...normalizeImageList(row.imagenes),
-  ];
+  const mergedImages = resolveMergedVehicleImages(glo3d, autored, row);
+  const images = mergedImages.images;
   const item = catalogRowToItem(row);
   if (!item) throw new Error(`No se pudo normalizar la unidad importada ${patente}.`);
+  const hasGlo3dViewer = Boolean(glo3d?.view3dUrl);
 
   return buildImportPatentResult({
     item,
@@ -1083,13 +1140,14 @@ export async function importVehicleByPatent(
     patente,
     requestedPatente,
     correctedPatente,
-    hasGlo3dViewer: Boolean(glo3d?.view3dUrl),
+    hasGlo3dViewer,
     skippedGlo3dFetch,
     skippedAutoredFetch,
     glo3dRateLimited,
     autoredSynced,
     autored,
     retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
+    syncDiagnostics: buildSyncDiagnostics(patente, glo3d, autored, mergedImages, hasGlo3dViewer),
   });
 }
 
