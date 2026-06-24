@@ -95,6 +95,7 @@ import {
 import {
   VehicleListThumbnailWithSync,
   VehicleQuickSyncButton,
+  VehicleSyncIcon,
 } from "@/components/admin/vehicle-sync-thumbnail";
 import {
   resolveVehicleThumbnailSrc,
@@ -12010,25 +12011,24 @@ export function CatalogHomeClient({
                   type="button"
                   onClick={() => void syncAllGroupVehicles()}
                   disabled={Boolean(groupSyncAllState?.running || syncingVehicleKey || groupManageBaseItems.length === 0)}
-                  className="ui-focus inline-flex h-9 items-center gap-1.5 rounded border border-cyan-300 bg-cyan-50 px-2.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  title="Sincronizar Glo3D + Autored de todas las unidades del grupo (lento, sin límite)"
-                  aria-label="Sincronizar todas las unidades del grupo"
+                  className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded border border-cyan-300 bg-cyan-50 text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  title={
+                    groupSyncAllState?.running
+                      ? `Sincronizando ${groupSyncAllState.current}/${groupSyncAllState.total}${
+                          groupSyncAllState.patente ? ` · ${groupSyncAllState.patente}` : ""
+                        }`
+                      : "Sincronizar Glo3D + Autored de todas las unidades del grupo"
+                  }
+                  aria-label={
+                    groupSyncAllState?.running
+                      ? `Sincronizando ${groupSyncAllState.current} de ${groupSyncAllState.total} unidades`
+                      : "Sincronizar todas las unidades del grupo con Glo3D y Autored"
+                  }
                 >
                   {groupSyncAllState?.running ? (
-                    <>
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-300 border-t-cyan-700" />
-                      <span>
-                        {groupSyncAllState.current}/{groupSyncAllState.total}
-                        {groupSyncAllState.patente ? ` · ${groupSyncAllState.patente}` : ""}
-                      </span>
-                    </>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-300 border-t-cyan-700" />
                   ) : (
-                    <>
-                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                        <path d="M4.5 3A1.5 1.5 0 0 0 3 4.5v2.879a1 1 0 0 0 .293.707l2.122 2.122a1 1 0 0 0 1.414-1.414L5.414 7.5H7.5A1.5 1.5 0 0 0 9 6V4.5A1.5 1.5 0 0 0 7.5 3h-3ZM13 3A1.5 1.5 0 0 0 11.5 4.5V6a1.5 1.5 0 0 0 1.5 1.5h2.086l-1.415 1.415a1 1 0 1 0 1.414 1.414l2.122-2.122A1 1 0 0 0 17 7.379V4.5A1.5 1.5 0 0 0 15.5 3H13Zm-8 10A1.5 1.5 0 0 0 3.5 14.5V17a1.5 1.5 0 0 0 1.5 1.5h3A1.5 1.5 0 0 0 9 17v-1.5A1.5 1.5 0 0 0 7.5 14H5.414l1.415 1.415a1 1 0 0 1-1.414 1.414L3.293 14.707A1 1 0 0 1 3 14V11.5A1.5 1.5 0 0 1 4.5 10h.5v1.5A1.5 1.5 0 0 1 6.5 13H7v1.5A1.5 1.5 0 0 1 5.5 16h-2Zm11-1.5A1.5 1.5 0 0 0 15 14.5V17a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 17v-1.5a1.5 1.5 0 0 1 1.5-1.5h2.086l-1.415-1.415a1 1 0 1 1 1.414-1.414l2.122 2.122a1 1 0 0 1 .293.707V17a1.5 1.5 0 0 0 1.5 1.5h.5v-1.5A1.5 1.5 0 0 0 15.5 13H15v-1.5A1.5 1.5 0 0 0 13.5 10h2Z" />
-                      </svg>
-                      <span className="text-[11px] font-semibold">Sync todo</span>
-                    </>
+                    <VehicleSyncIcon className="h-4 w-4" />
                   )}
                 </button>
                 <button
