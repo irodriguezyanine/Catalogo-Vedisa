@@ -771,6 +771,21 @@ function buildInventarioPayloadFromSources(
   const transmision = pickString(merged, ["transmision", "caja", "tipo_caja", "transmission"]);
   const cilindrada = pickString(merged, ["cilindrada", "cc", "motor_cc"]);
   const tipoVehiculo = pickString(merged, ["tipo_vehiculo", "tipo_de_vehiculo", "vehicle_type", "tipo"]);
+  const llaves = pickString(technical, ["llaves", "keys", "lla"]);
+  const aireAcondicionado = pickString(technical, ["aire_acondicionado", "ac"]);
+  const unicoPropietario = pickString(technical, ["unico_propietario"]);
+  const condicionado = pickString(technical, ["condicionado", "acondicionado"]);
+  const multas = pickString(technical, ["multas", "mul"]);
+  const tag = pickString(technical, ["tag"]);
+  const pruebaMotor =
+    mapPruebaMotorToSiNo(
+      pickString(technical, ["prueba_motor", "pdm", "prueba_motor_arranca", "motor_arranca"]),
+    ) ?? null;
+  const pruebaDesplazamiento =
+    mapPruebaDesplazamientoToSiNo(
+      pickString(technical, ["prueba_desplazamiento", "pdd", "se_desplaza"]),
+    ) ?? null;
+  const estadoAirbags = pickString(technical, ["estado_airbags", "eda"]);
   const glo3dImages = glo3d ? extractGlo3dImages(glo3d) : [];
   const autoredImages = extractAutoredImages(autored);
   const imagenes = [...new Set([...glo3dImages, ...autoredImages])];
@@ -799,6 +814,18 @@ function buildInventarioPayloadFromSources(
     caja: transmision ?? null,
     cilindrada: cilindrada ?? null,
     tipo_vehiculo: tipoVehiculo ?? null,
+    llaves: llaves ?? null,
+    aire_acondicionado: aireAcondicionado ?? null,
+    unico_propietario: unicoPropietario ?? null,
+    condicionado: condicionado ?? null,
+    multas: multas ?? null,
+    tag: tag ?? null,
+    prueba_motor: pruebaMotor,
+    pdm: pruebaMotor,
+    prueba_desplazamiento: pruebaDesplazamiento,
+    pdd: pruebaDesplazamiento,
+    estado_airbags: estadoAirbags ?? null,
+    eda: estadoAirbags ?? null,
     imagenes: imagenes.length > 0 ? imagenes : null,
     thumbnail: imagenes[0] ?? null,
     imagen_principal: imagenes[0] ?? null,

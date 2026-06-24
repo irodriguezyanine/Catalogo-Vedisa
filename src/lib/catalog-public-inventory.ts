@@ -1,6 +1,7 @@
 import type { VehicleCommercialEventBadge } from "@/components/catalog-card";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { EditorConfig, EditorVehicleDetails, ManualPublication, UpcomingAuction } from "@/types/editor";
+import { applyCatalogDetailsOverride } from "@/lib/catalog-details-override";
 import { resolveCommercialEventType } from "@/lib/catalog-shared-constants";
 import {
   extractEstadoRetiro,
@@ -147,13 +148,6 @@ export function resolveVehiclePriceRaw(
   ]);
 }
 
-function parseImagesCsv(value?: string): string[] {
-  return (value ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.startsWith("http"));
-}
-
 function getEditorOverrideForItem(
   item: CatalogItem,
   vehicleDetails: Record<string, EditorVehicleDetails>,
@@ -173,38 +167,7 @@ function getEditorOverrideForItem(
   return fromPatentKey ?? fromId;
 }
 
-function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails): CatalogItem {
-  if (!override) return item;
-  const images = parseImagesCsv(override.imagesCsv);
-  return {
-    ...item,
-    title: override.title ?? item.title,
-    subtitle: override.subtitle ?? item.subtitle,
-    status: override.status ?? item.status,
-    location: override.location ?? item.location,
-    lot: override.lot ?? item.lot,
-    auctionDate: override.auctionDate ?? item.auctionDate,
-    thumbnail: override.thumbnail ?? item.thumbnail,
-    view3dUrl: override.view3dUrl ?? item.view3dUrl,
-    images: images.length > 0 ? images : item.images,
-    raw: {
-      ...item.raw,
-      ...(override.patente ? { patente: override.patente, PPU: override.patente } : {}),
-      ...(override.nSiniestro
-        ? {
-            n_de_siniestro: override.nSiniestro,
-            numero_siniestro: override.nSiniestro,
-            n_s: override.nSiniestro,
-            ns: override.nSiniestro,
-          }
-        : {}),
-      ...(override.description ? { descripcion: override.description, description: override.description } : {}),
-      ...(override.brand ? { marca: override.brand, brand: override.brand } : {}),
-      ...(override.model ? { modelo: override.model, model: override.model } : {}),
-      ...(override.year ? { ano: override.year, anio: override.year, year: override.year } : {}),
-    },
-  };
-}
+export { getEditorOverrideForItem };
 
 function mapManualPublicationToCatalogItem(entry: ManualPublication): CatalogItem {
   const images = (entry.images ?? []).filter((url) => url.startsWith("http"));
@@ -327,7 +290,7 @@ export function getVisibleCatalogItems(feed: CatalogFeed, config: EditorConfig):
   const soldSet = new Set(config.soldVehicleIds ?? []);
 
   const items = [...feed.items, ...manualItems].map((item) =>
-    applyDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
+    applyCatalogDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
   );
 
   return items.filter((item) => {

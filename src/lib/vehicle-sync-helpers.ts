@@ -64,10 +64,17 @@ export function vehicleNeedsQuickSync(
   isStaleTitle?: (title: string, patente: string) => boolean,
 ): boolean {
   if (vehicleKey.startsWith("manual-")) return false;
-  return (
-    !hasRealVehicleThumbnail(item, vehicleKey, editorConfig) ||
-    vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle)
-  );
+  if (vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle)) return true;
+  if (hasRealVehicleThumbnail(item, vehicleKey, editorConfig)) return false;
+
+  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const raw = item.raw as Record<string, unknown>;
+  const brand = (details?.brand ?? String(raw.marca ?? raw.brand ?? "")).trim();
+  const model = (details?.model ?? String(raw.modelo ?? raw.model ?? "")).trim();
+  if (!isPlaceholderVehicleIdentity(brand) && !isPlaceholderVehicleIdentity(model)) {
+    return false;
+  }
+  return true;
 }
 
 export function resolveVehicleThumbnailSrc(item: CatalogItem): string {

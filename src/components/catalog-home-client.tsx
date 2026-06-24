@@ -46,7 +46,8 @@ import {
   maskPatentForPdf,
   shouldShowPatentsToViewer,
 } from "@/lib/catalog-patent-visibility";
-import { getVisibleCatalogItems } from "@/lib/catalog-public-inventory";
+import { getVisibleCatalogItems, getEditorOverrideForItem } from "@/lib/catalog-public-inventory";
+import { applyCatalogDetailsOverride } from "@/lib/catalog-details-override";
 import { isCatalogPublishedVehicle } from "@/lib/catalog-publication-rules";
 import { clearPublicationBlocksForVehicleKeys } from "@/lib/editor-publication-unblock";
 import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
@@ -1043,25 +1044,6 @@ function isBaseHomeSectionOrderId(value: string): value is SectionId {
   return (BASE_HOME_SECTION_ORDER as string[]).includes(value);
 }
 
-/** Combina overrides guardados bajo `vehicleDetails[item.id]` y bajo la patente (p. ej. import Rainworx). */
-function getEditorOverrideForItem(
-  item: CatalogItem,
-  vehicleDetails: Record<string, EditorVehicleDetails>,
-): EditorVehicleDetails | undefined {
-  const fromId = vehicleDetails[item.id];
-  const raw = item.raw as Record<string, unknown>;
-  const rawPatente = [raw.patente, raw.PATENTE, raw.PPU, raw.stock_number].find(
-    (v) => typeof v === "string" && v.trim(),
-  ) as string | undefined;
-  const patentKey = rawPatente
-    ? rawPatente.toUpperCase().replace(/\s+/g, "").replace(/-/g, "")
-    : fromId?.patente?.trim()
-      ? fromId.patente.toUpperCase().replace(/\s+/g, "").replace(/-/g, "")
-      : "";
-  const fromPatentKey = patentKey ? vehicleDetails[patentKey] : undefined;
-  if (fromId && fromPatentKey) return { ...fromId, ...fromPatentKey };
-  return fromPatentKey ?? fromId;
-}
 
 function getVehicleKey(item: CatalogItem): string {
   const raw = item.raw as Record<string, unknown>;
@@ -2208,138 +2190,6 @@ function sanitizeDetails(details: EditorVehicleDetails): EditorVehicleDetails | 
 
   if (Object.values(clean).every((value) => !value)) return undefined;
   return clean;
-}
-
-function applyDetailsOverride(item: CatalogItem, override?: EditorVehicleDetails): CatalogItem {
-  if (!override) return item;
-  const patente = getPatent(item);
-  const overrideCopy = { ...override };
-  for (const key of ["brand", "model", "title", "year", "subtitle"] as const) {
-    if (isStaleEditorDraftValue(overrideCopy[key], patente)) {
-      delete overrideCopy[key];
-    }
-  }
-  const imagesFromCsv = parseImagesCsv(overrideCopy.imagesCsv);
-  const syncedThumbnail = overrideCopy.thumbnail?.trim();
-  const hasSyncedThumbnail = Boolean(
-    syncedThumbnail?.startsWith("http") && !syncedThumbnail.includes("placeholder"),
-  );
-  const mergedImages = [
-    ...new Set([
-      ...imagesFromCsv,
-      ...(hasSyncedThumbnail && syncedThumbnail ? [syncedThumbnail] : []),
-      ...item.images.filter((url) => url.startsWith("http") && !url.includes("placeholder")),
-    ]),
-  ];
-  const thumbnail =
-    (hasSyncedThumbnail ? syncedThumbnail : undefined) ?? mergedImages[0] ?? item.thumbnail;
-  const resolvedTitle =
-    resolveIdentityDraftField(overrideCopy.title, item.title, patente) ||
-    buildAutoVehicleTitle({
-      ...overrideCopy,
-      brand: resolveIdentityDraftField(overrideCopy.brand, String((item.raw as Record<string, unknown>).marca ?? ""), patente),
-      model: resolveIdentityDraftField(
-        overrideCopy.model,
-        String((item.raw as Record<string, unknown>).modelo ?? ""),
-        patente,
-      ),
-      year: resolveIdentityDraftField(
-        overrideCopy.year,
-        String((item.raw as Record<string, unknown>).ano ?? (item.raw as Record<string, unknown>).anio ?? ""),
-        patente,
-      ),
-      patente,
-    }) ||
-    item.title;
-  const resolvedModel = resolveIdentityDraftField(
-    overrideCopy.model,
-    String((item.raw as Record<string, unknown>).modelo ?? (item.raw as Record<string, unknown>).model ?? ""),
-    patente,
-  );
-  const resolvedBrand = resolveIdentityDraftField(
-    overrideCopy.brand,
-    String((item.raw as Record<string, unknown>).marca ?? (item.raw as Record<string, unknown>).brand ?? ""),
-    patente,
-  );
-  return {
-    ...item,
-    title: resolvedTitle,
-    subtitle: overrideCopy.subtitle ?? item.subtitle,
-    status: overrideCopy.status ?? item.status,
-    location: overrideCopy.location ?? item.location,
-    lot: overrideCopy.lot ?? item.lot,
-    auctionDate: overrideCopy.auctionDate ?? item.auctionDate,
-    thumbnail,
-    view3dUrl: overrideCopy.view3dUrl ?? item.view3dUrl,
-    images: mergedImages.length > 0 ? mergedImages : item.images,
-    raw: {
-      ...item.raw,
-      ...(overrideCopy.patente ? { patente: overrideCopy.patente, PPU: overrideCopy.patente } : {}),
-      ...(overrideCopy.patenteVerifier ? { patente_verifier: overrideCopy.patenteVerifier, ppu_dv: overrideCopy.patenteVerifier, dv: overrideCopy.patenteVerifier } : {}),
-      ...(overrideCopy.vin ? { vin: overrideCopy.vin } : {}),
-      ...(overrideCopy.nChasis ? { n_de_chasis: overrideCopy.nChasis, numero_chasis: overrideCopy.nChasis, nro_chasis: overrideCopy.nChasis, chasis: overrideCopy.nChasis } : {}),
-      ...(overrideCopy.nMotor ? { n_de_motor: overrideCopy.nMotor, numero_motor: overrideCopy.nMotor, ndm: overrideCopy.nMotor } : {}),
-      ...(overrideCopy.nSerie ? { n_de_serie: overrideCopy.nSerie, numero_serie: overrideCopy.nSerie, nds: overrideCopy.nSerie } : {}),
-      ...(overrideCopy.nSiniestro ? { n_de_siniestro: overrideCopy.nSiniestro, numero_siniestro: overrideCopy.nSiniestro, n_s: overrideCopy.nSiniestro, ns: overrideCopy.nSiniestro } : {}),
-      ...(overrideCopy.version ? { version: overrideCopy.version, ver: overrideCopy.version, trim: overrideCopy.version } : {}),
-      ...(overrideCopy.tipo ? { tipo: overrideCopy.tipo, type: overrideCopy.tipo } : {}),
-      ...(overrideCopy.tipoVehiculo ? { tipo_de_vehiculo: overrideCopy.tipoVehiculo, tipo_vehiculo: overrideCopy.tipoVehiculo, vehicle_type: overrideCopy.tipoVehiculo } : {}),
-      ...(overrideCopy.vehicleCondition
-        ? {
-            condicion: overrideCopy.vehicleCondition,
-            condicion_vehiculo: overrideCopy.vehicleCondition,
-            estado_vehiculo: overrideCopy.vehicleCondition,
-          }
-        : {}),
-      ...(overrideCopy.description ? { descripcion: overrideCopy.description, description: overrideCopy.description } : {}),
-      ...(overrideCopy.extendedDescription
-        ? { descripcion_ampliada: overrideCopy.extendedDescription, observaciones: overrideCopy.extendedDescription }
-        : {}),
-      ...(resolvedBrand ? { marca: resolvedBrand, brand: resolvedBrand } : {}),
-      ...(resolvedModel ? { modelo: resolvedModel, model: resolvedModel } : {}),
-      ...(overrideCopy.year ? { ano: overrideCopy.year, anio: overrideCopy.year, year: overrideCopy.year } : {}),
-      ...(overrideCopy.category ? { categoria: overrideCopy.category } : {}),
-      ...(overrideCopy.kilometraje ? { kilometraje: overrideCopy.kilometraje, km: overrideCopy.kilometraje } : {}),
-      ...(overrideCopy.color ? { color: overrideCopy.color } : {}),
-      ...(overrideCopy.combustible ? { combustible: overrideCopy.combustible } : {}),
-      ...(overrideCopy.transmision ? { transmision: overrideCopy.transmision, caja: overrideCopy.transmision } : {}),
-      ...(overrideCopy.traccion ? { traccion: overrideCopy.traccion } : {}),
-      ...(overrideCopy.aro ? { aro: overrideCopy.aro } : {}),
-      ...(overrideCopy.cilindrada ? { cilindrada: overrideCopy.cilindrada } : {}),
-      ...(overrideCopy.location ? { ubicacion: overrideCopy.location } : {}),
-      ...(overrideCopy.ubicacionFisica ? { ubicacion_fisica: overrideCopy.ubicacionFisica, ubi: overrideCopy.ubicacionFisica } : {}),
-      ...(overrideCopy.transportista ? { transportista: overrideCopy.transportista, tra: overrideCopy.transportista } : {}),
-      ...(overrideCopy.taller ? { taller: overrideCopy.taller, tal: overrideCopy.taller } : {}),
-      ...(overrideCopy.llaves ? { llaves: overrideCopy.llaves } : {}),
-      ...(overrideCopy.aireAcondicionado ? { aire_acondicionado: overrideCopy.aireAcondicionado } : {}),
-      ...(overrideCopy.unicoPropietario ? { unico_propietario: overrideCopy.unicoPropietario } : {}),
-      ...(overrideCopy.condicionado ? { condicionado: overrideCopy.condicionado } : {}),
-      ...(overrideCopy.multas ? { multas: overrideCopy.multas, mul: overrideCopy.multas } : {}),
-      ...(overrideCopy.tag ? { tag: overrideCopy.tag } : {}),
-      ...(overrideCopy.vencRevisionTecnica ? { vencimiento_revision_tecnica: overrideCopy.vencRevisionTecnica, vrt: overrideCopy.vencRevisionTecnica } : {}),
-      ...(overrideCopy.vencPermisoCirculacion ? { vencimiento_permiso_circulacion: overrideCopy.vencPermisoCirculacion, vpc: overrideCopy.vencPermisoCirculacion } : {}),
-      ...(overrideCopy.vencSeguroObligatorio ? { vencimiento_seguro_obligatorio: overrideCopy.vencSeguroObligatorio, vso: overrideCopy.vencSeguroObligatorio } : {}),
-      ...(overrideCopy.pruebaMotor ? { prueba_motor: overrideCopy.pruebaMotor, pdm: overrideCopy.pruebaMotor } : {}),
-      ...(overrideCopy.pruebaDesplazamiento ? { prueba_desplazamiento: overrideCopy.pruebaDesplazamiento, pdd: overrideCopy.pruebaDesplazamiento } : {}),
-      ...(overrideCopy.estadoAirbags ? { estado_airbags: overrideCopy.estadoAirbags, eda: overrideCopy.estadoAirbags } : {}),
-      ...(overrideCopy.lotDocumentsJson
-        ? { documentos_lote_json: overrideCopy.lotDocumentsJson, lot_documents_json: overrideCopy.lotDocumentsJson }
-        : {}),
-      ...(override.nombrePropietarioAnterior ? { nombre_propietario_anterior: override.nombrePropietarioAnterior, npa: override.nombrePropietarioAnterior } : {}),
-      ...(override.rutPropietarioAnterior ? { rut_propietario_anterior: override.rutPropietarioAnterior, rpa: override.rutPropietarioAnterior } : {}),
-      ...(override.rutVerificador ? { rut_verificador: override.rutVerificador, verifier_rut: override.rutVerificador } : {}),
-      ...(mergedImages.length > 0
-        ? {
-            imagenes: mergedImages,
-            fotos_urls: mergedImages,
-            fotos: mergedImages,
-            thumbnail,
-            imagen_principal: thumbnail,
-            foto_portada: thumbnail,
-          }
-        : {}),
-    },
-  };
 }
 
 type FeaturedStripProps = {
@@ -3625,7 +3475,7 @@ export function CatalogHomeClient({
       ...importedInventoryItems,
     ]);
     return merged.map((item) =>
-      applyDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
+      applyCatalogDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
     );
   }, [rawItems, manualItems, importedInventoryItems, config.vehicleDetails]);
 
@@ -4289,8 +4139,11 @@ export function CatalogHomeClient({
   );
 
   const selectedVehicleOverride = useMemo(
-    () => (selectedVehicleKey ? config.vehicleDetails[selectedVehicleKey] : undefined),
-    [config.vehicleDetails, selectedVehicleKey],
+    () =>
+      selectedVehicle
+        ? getEditorOverrideForItem(selectedVehicle, config.vehicleDetails)
+        : undefined,
+    [config.vehicleDetails, selectedVehicle],
   );
 
   const selectedVehiclePriceLabel = useMemo(
@@ -6379,7 +6232,7 @@ export function CatalogHomeClient({
         ? mergeImportedVehicleDetails(undefined, importedVehicleDetails)
         : undefined;
       const enrichedItem = mergedVehicleDetails
-        ? applyDetailsOverride(payload.item, mergedVehicleDetails)
+        ? applyCatalogDetailsOverride(payload.item, mergedVehicleDetails)
         : payload.item;
       setImportedInventoryItems((prev) => {
         const next = prev.filter((entry) => getVehicleKey(entry) !== vehicleKey);
@@ -7436,7 +7289,7 @@ export function CatalogHomeClient({
           editingVehicleKey &&
           (editingVehicleKey === vehicleKey || editingVehicleKey === resolvedKey)
         ) {
-          const syncedItem = applyDetailsOverride(payload.item!, payload.vehicleDetails);
+          const syncedItem = applyCatalogDetailsOverride(payload.item!, payload.vehicleDetails);
           setEditingVehicleKey(resolvedKey);
           setEditingDetails(mergeSyncedVehicleDetails(syncedItem, payload.vehicleDetails));
         }
@@ -7594,6 +7447,11 @@ export function CatalogHomeClient({
       }
     } finally {
       setGroupSyncAllState(null);
+      if (okCount > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+        void persistEditorConfigRef.current(configRef.current);
+        router.refresh();
+      }
     }
   }, [
     applyImportedPatentPayload,
@@ -7601,6 +7459,7 @@ export function CatalogHomeClient({
     groupManageBaseItems,
     groupSyncAllState?.running,
     isStaleEditorDraftValue,
+    router,
     showSystemNotice,
     sortedUpcomingAuctions,
     syncingVehicleKey,

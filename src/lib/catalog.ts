@@ -16,6 +16,7 @@ import {
 } from "@/lib/autored-api";
 import {
   autoredRecordHasIdentity,
+  isPlaceholderVehicleIdentity,
   sanitizeMarcaValue,
   sanitizeModeloValue,
 } from "@/lib/vehicle-identity";
@@ -177,30 +178,57 @@ function buildVehicleTitleFromRow(row: Record<string, unknown>): string | undefi
   return composed || undefined;
 }
 
+/** Expande glo3d_campos / autored_campos guardados en inventario al shape que usa el catálogo. */
+export function hydrateInventarioRowForCatalog(row: Record<string, unknown>): Record<string, unknown> {
+  const glo3d = buildGlo3dEntryFromInventarioRow(row);
+  const autoredRaw = row.autored_campos ?? row.autored;
+  const autored =
+    autoredRaw && typeof autoredRaw === "object" && !Array.isArray(autoredRaw)
+      ? normalizeAutoredTechnicalFields(autoredRaw as Record<string, unknown>)
+      : null;
+
+  let merged: Record<string, unknown> = { ...row };
+  if (glo3d) {
+    merged = {
+      ...merged,
+      ...glo3d.technicalFields,
+      glo3d: glo3d.raw,
+      glo3d_url: glo3d.view3dUrl ?? merged.glo3d_url ?? merged.url_3d,
+      url_3d: glo3d.view3dUrl ?? merged.url_3d ?? merged.glo3d_url,
+      visor_3d_url: glo3d.view3dUrl ?? merged.visor_3d_url ?? merged.glo3d_url,
+    };
+  }
+  if (autored) {
+    merged = { ...merged, ...autored, autored };
+  }
+  return merged;
+}
+
 export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | null {
+  const hydratedRow = hydrateInventarioRowForCatalog(row);
   const id =
-    getStringFromKeys(row, ["id", "uuid", "vehicle_id", "inventario_id"]) ??
+    getStringFromKeys(hydratedRow, ["id", "uuid", "vehicle_id", "inventario_id"]) ??
     crypto.randomUUID();
 
-  const patenteKey = getStringFromKeys(row, ["patente", "PPU", "ppu", "stock_number"]);
-  const rawModelo = getStringFromKeys(row, ["modelo", "model", "model2"]);
+  const patenteKey = getStringFromKeys(hydratedRow, ["patente", "PPU", "ppu", "stock_number"]);
+  const rawModelo = getStringFromKeys(hydratedRow, ["modelo", "model", "model2"]);
   const modeloLooksLikePatente =
     rawModelo &&
     patenteKey &&
     normalizeStock(rawModelo) === normalizeStock(patenteKey);
   const title =
-    getStringFromKeys(row, [
+    getStringFromKeys(hydratedRow, [
       "titulo",
       "nombre",
       "nombre_vehiculo",
       "vehiculo",
       "marca_modelo",
     ]) ??
-    buildVehicleTitleFromRow(row) ??
+    buildVehicleTitleFromRow(hydratedRow) ??
     (rawModelo && !modeloLooksLikePatente && !isPlaceholderVehicleLabel(rawModelo) ? rawModelo : undefined) ??
     (patenteKey ? `Unidad ${patenteKey}` : `Vehículo ${id.slice(0, 8)}`);
 
-  const subtitle = getStringFromKeys(row, [
+  const subtitle = getStringFromKeys(hydratedRow, [
     "patente",
     "anio",
     "categoria",
@@ -208,35 +236,35 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
     "descripcion",
   ]);
 
-  const lot = getStringFromKeys(row, [
+  const lot = getStringFromKeys(hydratedRow, [
     "lote",
     "numero_lote",
     "lot",
     "numero_remate",
   ]);
 
-  const status = getStringFromKeys(row, ["estado_remate", "estado", "status"]);
-  const location = getStringFromKeys(row, [
+  const status = getStringFromKeys(hydratedRow, ["estado_remate", "estado", "status"]);
+  const location = getStringFromKeys(hydratedRow, [
     "sucursal",
     "ciudad",
     "direccion",
     "ubicacion",
   ]);
-  const auctionDate = getStringFromKeys(row, [
+  const auctionDate = getStringFromKeys(hydratedRow, [
     "fecha_remate",
     "fecha_publicacion",
     "auction_date",
   ]);
 
   const imageCandidates = [
-    row.fotos_urls,
-    row.fotos,
-    row.galeria,
-    row.galeria_fotos,
-    row.images,
-    row.imagenes,
-    row.photos,
-    row.photo_urls,
+    hydratedRow.fotos_urls,
+    hydratedRow.fotos,
+    hydratedRow.galeria,
+    hydratedRow.galeria_fotos,
+    hydratedRow.images,
+    hydratedRow.imagenes,
+    hydratedRow.photos,
+    hydratedRow.photo_urls,
   ];
 
   const images = imageCandidates.flatMap((candidate) =>
@@ -244,7 +272,7 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
   );
 
   const thumbnail =
-    getStringFromKeys(row, [
+    getStringFromKeys(hydratedRow, [
       "thumbnail",
       "imagen_principal",
       "foto_portada",
@@ -257,7 +285,7 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
     ]) ??
     images[0];
 
-  const view3dRaw = getStringFromKeys(row, [
+  const view3dRaw = getStringFromKeys(hydratedRow, [
     "url_3d",
     "link_3d",
     "visor_3d_url",
@@ -277,7 +305,7 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
       ? normalizeGlo3dUrl(parsed3d)
       : undefined;
 
-  const estadoRetiro = getStringFromKeys(row, ["estado_retiro"]);
+  const estadoRetiro = getStringFromKeys(hydratedRow, ["estado_retiro"]);
   const enBodega = estadoRetiro
     ? estadoRetiro.startsWith("en_bodega")
     : undefined;
@@ -294,7 +322,7 @@ export function catalogRowToItem(row: Record<string, unknown>): CatalogItem | nu
     thumbnail,
     view3dUrl,
     enBodega,
-    raw: row,
+    raw: hydratedRow,
   };
 }
 
@@ -1534,6 +1562,7 @@ function isMeaningfulValue(value: unknown): boolean {
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
     if (!normalized) return false;
+    if (isPlaceholderVehicleIdentity(value)) return false;
     if (
       [
         "-",
@@ -1982,54 +2011,41 @@ function filterEnBodega(items: CatalogItem[]): CatalogItem[] {
 }
 
 export async function getCatalogFeed(): Promise<CatalogFeed> {
-  let resolvedSource: CatalogSource = "empty";
+  const supabaseItems = await fetchFromSupabase().catch(() => [] as CatalogItem[]);
+  const awsItems = await fetchFromAwsInventory().catch(() => [] as CatalogItem[]);
 
+  let apiItems: CatalogItem[] | null = null;
   try {
-    const apiItems = await fetchFromTasacionesApi();
-    if (apiItems && apiItems.length > 0) {
-      resolvedSource = "tasaciones-api";
-      const awsItems = await fetchFromAwsInventory().catch(() => []);
-      const mergedItems = mergeCatalogItems(apiItems, awsItems);
-      const enrichedItems = await enrichWithAutoredFallback(mergedItems);
-      const glo3dEnrichedItems = await enrichWithGlo3dInventory(enrichedItems);
-      const filtered = filterEnBodega(glo3dEnrichedItems);
-
-      return {
-        source: resolvedSource,
-        items: filtered,
-      };
-    }
+    apiItems = await fetchFromTasacionesApi();
   } catch (error) {
     console.warn("[catalog] Fallo origen API Tasaciones:", error);
   }
 
-  try {
-    const supabaseItems = await fetchFromSupabase();
-    const awsItems = await fetchFromAwsInventory().catch(() => []);
-    const mergedItems = mergeCatalogItems(supabaseItems, awsItems);
-    const enrichedItems = await enrichWithAutoredFallback(mergedItems);
+  const baseItems =
+    apiItems && apiItems.length > 0
+      ? mergeCatalogItems(supabaseItems, apiItems)
+      : supabaseItems;
 
-    const glo3dEnrichedItems = await enrichWithGlo3dInventory(enrichedItems);
-    const filtered = filterEnBodega(glo3dEnrichedItems);
+  const mergedItems = mergeCatalogItems(baseItems, awsItems);
+  const enrichedItems = await enrichWithAutoredFallback(mergedItems);
+  const glo3dEnrichedItems = await enrichWithGlo3dInventory(enrichedItems);
+  const filtered = filterEnBodega(glo3dEnrichedItems);
 
-    return {
-      source: filtered.length > 0 ? "supabase" : "empty",
-      items: filtered,
-      warning:
-        filtered.length === 0
-          ? "No hay inventario disponible por ahora."
-          : undefined,
-    };
-  } catch (error) {
-    return {
-      source: "empty",
-      items: [],
-      warning:
-        error instanceof Error
-          ? `No fue posible cargar inventario en este momento. ${error.message}`
-          : "No fue posible cargar inventario.",
-    };
-  }
+  const resolvedSource: CatalogSource =
+    apiItems && apiItems.length > 0
+      ? "tasaciones-api"
+      : filtered.length > 0
+        ? "supabase"
+        : "empty";
+
+  return {
+    source: resolvedSource,
+    items: filtered,
+    warning:
+      filtered.length === 0
+        ? "No hay inventario disponible por ahora."
+        : undefined,
+  };
 }
 
 export function sourceLabel(source: CatalogSource): string {
