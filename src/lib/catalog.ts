@@ -26,6 +26,10 @@ import {
   glo3dSourcesHaveUsableImages,
 } from "@/lib/glo3d-images";
 import {
+  shouldSkipCatalogFeedEnrichment,
+  slimCatalogFeed,
+} from "@/lib/catalog-feed-slim";
+import {
   extractAutoredImagesFromRecord,
   mergeVehicleImageSources,
 } from "@/lib/catalog-sync-images";
@@ -450,9 +454,8 @@ async function fetchFromTasacionesApi(): Promise<CatalogItem[] | null> {
   });
 
   if (!response.ok) {
-    throw new Error(
-      `CATALOG_SOURCE_API_URL respondió ${response.status}`,
-    );
+    console.warn(`[catalog] CATALOG_SOURCE_API_URL respondió ${response.status}`);
+    return null;
   }
 
   const payload = (await response.json()) as unknown;
@@ -1986,7 +1989,7 @@ export async function fetchTasacionesInventarioRows(options?: {
 
   endpoint.searchParams.set(
     "limit",
-    String(options?.limit ?? Number(process.env.CATALOG_SOURCE_API_LIMIT ?? "2000")),
+    String(options?.limit ?? Number(process.env.CATALOG_SOURCE_API_LIMIT ?? "500")),
   );
   endpoint.searchParams.set(
     "incluir_historicos",
@@ -2028,9 +2031,15 @@ export async function fetchTasacionesInventarioMap(): Promise<Map<string, Record
     }
   };
 
-  ingest(await fetchTasacionesInventarioRows({ incluirHistoricos: true, estado: null }));
+  ingest(await fetchTasacionesInventarioRows({ incluirHistoricos: true, limit: 500 }));
   if (map.size === 0) {
-    ingest(await fetchTasacionesInventarioRows({ incluirHistoricos: true }));
+    ingest(
+      await fetchTasacionesInventarioRows({
+        incluirHistoricos: true,
+        estado: null,
+        limit: 500,
+      }),
+    );
   }
   return map;
 }
@@ -2221,9 +2230,13 @@ export async function getCatalogFeed(): Promise<CatalogFeed> {
       : supabaseItems;
 
   const mergedItems = mergeCatalogItems(baseItems, awsItems);
-  const enrichedItems = await enrichWithAutoredFallback(mergedItems);
-  const glo3dEnrichedItems = await enrichWithGlo3dInventory(enrichedItems);
-  const filtered = filterEnBodega(glo3dEnrichedItems);
+  let displayItems = mergedItems;
+  if (!shouldSkipCatalogFeedEnrichment()) {
+    displayItems = await enrichWithGlo3dInventory(
+      await enrichWithAutoredFallback(mergedItems),
+    );
+  }
+  const filtered = filterEnBodega(displayItems);
 
   const resolvedSource: CatalogSource =
     apiItems && apiItems.length > 0
@@ -2232,14 +2245,14 @@ export async function getCatalogFeed(): Promise<CatalogFeed> {
         ? "supabase"
         : "empty";
 
-  return {
+  return slimCatalogFeed({
     source: resolvedSource,
     items: filtered,
     warning:
       filtered.length === 0
         ? "No hay inventario disponible por ahora."
         : undefined,
-  };
+  });
 }
 
 export function sourceLabel(source: CatalogSource): string {
