@@ -1580,10 +1580,21 @@ async function enrichWithGlo3dInventory(items: CatalogItem[]): Promise<CatalogIt
     new Set(
       items
         .filter((item) => {
+          const raw = item.raw as Record<string, unknown>;
+          if (raw.glo3d_campos || raw.glo3d) {
+            const nested = raw.glo3d_campos ?? raw.glo3d;
+            if (
+              nested &&
+              typeof nested === "object" &&
+              !Array.isArray(nested) &&
+              (item.view3dUrl || pickString(raw, ["glo3d_url", "url_3d"]))
+            ) {
+              return false;
+            }
+          }
           const hasMedia =
             Boolean(item.view3dUrl) ||
             Boolean(item.thumbnail?.startsWith("http") && !item.thumbnail.includes("placeholder"));
-          const raw = item.raw as Record<string, unknown>;
           const nestedGlo3d = raw.glo3d_campos ?? raw.glo3d;
           const nestedHasImages =
             nestedGlo3d &&
@@ -1944,6 +1955,67 @@ export async function fetchAutoredRecordByPatent(
   return record;
 }
 
+export async function fetchTasacionesInventarioRows(): Promise<Record<string, unknown>[]> {
+  const apiBase = process.env.CATALOG_SOURCE_API_URL;
+  if (!apiBase) return [];
+
+  const token = process.env.CATALOG_SOURCE_API_TOKEN;
+  const endpoint =
+    apiBase.includes("/api/")
+      ? new URL(apiBase)
+      : new URL("/api/inventario-publico", apiBase);
+
+  endpoint.searchParams.set("limit", process.env.CATALOG_SOURCE_API_LIMIT ?? "500");
+  endpoint.searchParams.set(
+    "incluir_historicos",
+    process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "true",
+  );
+  const estadoFilter = process.env.CATALOG_SOURCE_API_ESTADO?.trim();
+  if (estadoFilter) endpoint.searchParams.set("estado", estadoFilter);
+
+  const response = await fetch(endpoint.toString(), {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token
+        ? {
+            "x-api-key": token,
+            Authorization: `Bearer ${token}`,
+          }
+        : {}),
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) return [];
+  const payload = (await response.json()) as unknown;
+  return extractRowsFromPayload(payload);
+}
+
+export async function fetchTasacionesInventarioMap(): Promise<Map<string, Record<string, unknown>>> {
+  const rows = await fetchTasacionesInventarioRows();
+  const map = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const key = normalizeStock(
+      String(row.patente ?? row.PPU ?? row.stock_number ?? row.ppu ?? ""),
+    );
+    if (key) map.set(key, row);
+  }
+  return map;
+}
+
+function normalizeTasacionesPatentRow(match: Record<string, unknown>): Record<string, unknown> {
+  const autoredNode = match.autored_campos ?? match.autored;
+  if (autoredNode && typeof autoredNode === "object" && !Array.isArray(autoredNode)) {
+    return {
+      ...(autoredNode as Record<string, unknown>),
+      ...match,
+      origen: "tasaciones+autored",
+    };
+  }
+  return { ...match, origen: "tasaciones" };
+}
+
 export async function fetchTasacionesRecordByPatent(
   patent: string,
 ): Promise<Record<string, unknown> | null> {
@@ -1992,13 +2064,9 @@ export async function fetchTasacionesRecordByPatent(
       ) ?? rows[0];
     const autoredNode = match.autored_campos ?? match.autored;
     if (autoredNode && typeof autoredNode === "object" && !Array.isArray(autoredNode)) {
-      return {
-        ...(autoredNode as Record<string, unknown>),
-        ...match,
-        origen: "tasaciones+autored",
-      };
+      return normalizeTasacionesPatentRow(match);
     }
-    return { ...match, origen: "tasaciones" };
+    return normalizeTasacionesPatentRow({ ...match, origen: "tasaciones" });
   }
 
   return null;
@@ -2011,10 +2079,13 @@ async function enrichWithAutoredFallback(
 
   const candidates = items
     .map((item) => ({ item, stock: getItemStock(item) }))
-    .filter(
-      (entry): entry is { item: CatalogItem; stock: string } =>
-        !!entry.stock && itemNeedsTechnicalFallback(entry.item),
-    );
+    .filter((entry): entry is { item: CatalogItem; stock: string } => {
+      if (!entry.stock) return false;
+      const raw = entry.item.raw as Record<string, unknown>;
+      if (raw.glo3d_campos || raw.autored_campos || raw.autored) return false;
+      if (String(raw.origen ?? "").includes("tasaciones")) return false;
+      return itemNeedsTechnicalFallback(entry.item);
+    });
   const limitedCandidates =
     AUTORED_MAX_LOOKUPS > 0 ? candidates.slice(0, AUTORED_MAX_LOOKUPS) : candidates;
 
@@ -2109,7 +2180,7 @@ export async function getCatalogFeed(): Promise<CatalogFeed> {
 
   const baseItems =
     apiItems && apiItems.length > 0
-      ? mergeCatalogItems(supabaseItems, apiItems)
+      ? mergeCatalogItems(apiItems, supabaseItems)
       : supabaseItems;
 
   const mergedItems = mergeCatalogItems(baseItems, awsItems);

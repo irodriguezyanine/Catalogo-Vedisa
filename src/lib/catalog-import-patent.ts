@@ -5,6 +5,7 @@ import {
   fetchAutoredRecordByPatent,
   fetchGlo3dRecordByPatent,
   fetchInventarioRowByPatent,
+  fetchTasacionesInventarioMap,
   fetchTasacionesRecordByPatent,
   invalidateAutoredPatentCache,
   invalidateGlo3dPatentCache,
@@ -13,6 +14,15 @@ import {
   resolveCanonicalPatentFromGlo3dEntry,
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
+import {
+  assessTasacionesRecordCompleteness,
+  buildAutoredFromTasacionesRow,
+  buildGlo3dFromTasacionesRow,
+  getCachedTasacionesInventarioMap,
+  inventarioRowIsTasacionesComplete,
+  resolveTasacionesRowFromMap,
+  setCachedTasacionesInventarioMap,
+} from "@/lib/catalog-tasaciones-import";
 import { sleepMs } from "@/lib/glo3d-api";
 import { fetchAutoredPublicationAveragePrice, isAutoredApiConfigured } from "@/lib/autored-api";
 import { buildDefaultVentaDirectaExtendedDescription } from "@/lib/venta-directa-description";
@@ -39,13 +49,28 @@ import {
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
 
-export type ImportPatentSource = "inventario" | "glo3d" | "glo3d+autored" | "autored";
+export type ImportPatentSource =
+  | "inventario"
+  | "tasaciones"
+  | "tasaciones+glo3d"
+  | "glo3d"
+  | "glo3d+autored"
+  | "autored";
+
+export type ImportPatentSyncMode = "tasaciones-first" | "external";
 
 export type ImportPatentOptions = {
   estadoRetiro?: string;
+  /** Refresca datos desde Tasaciones/inventario compartido (default true). */
   forceRefresh?: boolean;
-  /** Omite consulta a Glo3D (útil si la API está saturada) y sincroniza Autored + inventario local. */
+  /** Plan B: fuerza consulta directa a APIs Glo3D y Autored aunque Tasaciones esté completo. */
+  forceExternalApis?: boolean;
+  /** Estrategia de sync: tasaciones-first (default) o external (solo APIs). */
+  syncMode?: ImportPatentSyncMode;
+  /** Omite consulta a Glo3D (útil si la API está saturada). */
   skipGlo3dFetch?: boolean;
+  /** Mapa precargado de inventario Tasaciones (import por lote). */
+  tasacionesMap?: Map<string, Record<string, unknown>>;
 };
 
 export type ImportPatentResult = {
@@ -65,6 +90,9 @@ export type ImportPatentResult = {
   autoredReason?: "synced" | "not_configured" | "no_record" | "no_identity";
   retryAfterMs?: number;
   syncDiagnostics?: {
+    tasacionesFound: boolean;
+    tasacionesComplete: boolean;
+    usedExternalApis: boolean;
     glo3dFound: boolean;
     glo3dImageCount: number;
     glo3dViewer: boolean;
@@ -352,23 +380,33 @@ function buildSyncDiagnostics(
   autored: Record<string, unknown> | null,
   merged: ReturnType<typeof mergeVehicleImageSources>,
   hasGlo3dViewer: boolean,
+  tasaciones: {
+    found: boolean;
+    complete: boolean;
+    usedExternalApis: boolean;
+  },
 ): NonNullable<ImportPatentResult["syncDiagnostics"]> {
   const warnings: string[] = [];
   const glo3dImageCount = glo3d ? extractGlo3dImages(glo3d).length : 0;
 
-  if (!glo3d) {
-    warnings.push("Glo3D: patente no encontrada en la API.");
-  } else if (glo3dImageCount === 0) {
-    warnings.push("Glo3D: registro sin miniaturas extraíbles (revisa captura en Glo3D).");
+  if (!tasaciones.found) {
+    warnings.push("Tasaciones: patente no encontrada en inventario compartido.");
+  } else if (!tasaciones.complete && !tasaciones.usedExternalApis) {
+    warnings.push("Tasaciones: ficha incompleta; se intentará plan B (APIs externas).");
+  }
+  if (!glo3d && tasaciones.usedExternalApis) {
+    warnings.push("Glo3D API: patente no encontrada en consulta directa.");
+  } else if (glo3d && glo3dImageCount === 0 && tasaciones.usedExternalApis) {
+    warnings.push("Glo3D API: registro sin miniaturas extraíbles.");
   }
   if (hasGlo3dViewer && merged.thumbnailSource === "autored") {
-    warnings.push("Miniatura viene de Autored; se esperaba imagen Glo3D.");
+    warnings.push("Miniatura viene de Autored; se esperaba imagen Glo3D embebida.");
   }
   if (!merged.thumbnail) {
-    warnings.push("Sin miniatura utilizable tras la fusión Glo3D + Autored.");
+    warnings.push("Sin miniatura utilizable tras la fusión.");
   }
   if (!autoredRecordHasIdentity(autored, patente)) {
-    warnings.push("Autored/Tasaciones: sin marca/modelo para esta patente.");
+    warnings.push("Sin marca/modelo útiles para esta patente.");
   }
 
   const syncComplete =
@@ -376,6 +414,9 @@ function buildSyncDiagnostics(
     (!hasGlo3dViewer || merged.thumbnailSource === "glo3d" || glo3dImageCount === 0);
 
   return {
+    tasacionesFound: tasaciones.found,
+    tasacionesComplete: tasaciones.complete,
+    usedExternalApis: tasaciones.usedExternalApis,
     glo3dFound: Boolean(glo3d),
     glo3dImageCount,
     glo3dViewer: hasGlo3dViewer,
@@ -881,11 +922,29 @@ function resolveImportSource(
   glo3d: Glo3dInventoryEntry | null,
   autored: Record<string, unknown> | null,
   fromExistingInventory: boolean,
+  fromTasaciones: boolean,
+  usedExternalApis: boolean,
 ): ImportPatentSource {
+  if (fromExistingInventory && !fromTasaciones && !usedExternalApis) return "inventario";
+  if (fromTasaciones && !usedExternalApis) {
+    if (glo3d && autored) return "tasaciones+glo3d";
+    return "tasaciones";
+  }
   if (fromExistingInventory) return "inventario";
   if (glo3d && autored) return "glo3d+autored";
   if (glo3d) return "glo3d";
   return "autored";
+}
+
+async function resolveTasacionesRowForImport(
+  patente: string,
+  options?: ImportPatentOptions,
+): Promise<Record<string, unknown> | null> {
+  const fromMap = resolveTasacionesRowFromMap(patente, options?.tasacionesMap);
+  if (fromMap) {
+    return buildAutoredFromTasacionesRow(fromMap);
+  }
+  return fetchTasacionesRecordByPatent(patente);
 }
 
 function inventarioRowHasCompleteGlo3d(row: Record<string, unknown>): boolean {
@@ -977,7 +1036,12 @@ export async function importVehicleByPatent(
     throw new Error("Patente inválida. Usa un formato como TJSX73.");
   }
 
-  if (options?.forceRefresh) {
+  const syncMode = options?.syncMode ?? "tasaciones-first";
+  const forceExternalApis =
+    options?.forceExternalApis === true || syncMode === "external";
+  const refreshSources = options?.forceRefresh !== false;
+
+  if (forceExternalApis && refreshSources) {
     invalidateGlo3dPatentCache(requestedPatente);
     invalidateAutoredPatentCache(requestedPatente);
   }
@@ -986,20 +1050,71 @@ export async function importVehicleByPatent(
   let skippedGlo3dFetch = false;
   let skippedAutoredFetch = false;
   let glo3dRateLimited = false;
+  let usedExternalApis = false;
+  let fromTasaciones = false;
 
-  let glo3d: Glo3dInventoryEntry | null = null;
-  if (existingRowEarly && inventarioRowHasCompleteGlo3d(existingRowEarly)) {
-    glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
-    skippedGlo3dFetch = true;
+  // ── 1) Tasaciones (fuente primaria) ─────────────────────────────────────
+  let tasacionesRow: Record<string, unknown> | null = null;
+  if (
+    refreshSources ||
+    !existingRowEarly ||
+    !inventarioRowIsTasacionesComplete(existingRowEarly, requestedPatente)
+  ) {
+    tasacionesRow = await resolveTasacionesRowForImport(requestedPatente, options);
+  } else if (existingRowEarly) {
+    tasacionesRow = buildAutoredFromTasacionesRow(existingRowEarly);
   }
 
-  const shouldFetchGlo3dFromApi =
-    !options?.skipGlo3dFetch && (options?.forceRefresh || !glo3d);
-  if (shouldFetchGlo3dFromApi) {
+  fromTasaciones = Boolean(tasacionesRow);
+  let tasacionesCompleteness = assessTasacionesRecordCompleteness(
+    tasacionesRow,
+    requestedPatente,
+  );
+
+  let glo3d: Glo3dInventoryEntry | null = tasacionesRow
+    ? buildGlo3dFromTasacionesRow(tasacionesRow)
+    : null;
+  let autored: Record<string, unknown> | null = tasacionesRow
+    ? normalizeAutoredImportRecord(buildAutoredFromTasacionesRow(tasacionesRow))
+    : null;
+
+  if (glo3d) skippedGlo3dFetch = true;
+  if (autoredRecordHasIdentity(autored, requestedPatente)) skippedAutoredFetch = true;
+
+  // Cache local si Tasaciones no respondió pero inventario catálogo está completo
+  if (!tasacionesCompleteness.complete && existingRowEarly) {
+    if (inventarioRowHasCompleteGlo3d(existingRowEarly) && !glo3d) {
+      glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
+      skippedGlo3dFetch = true;
+    }
+    if (inventarioRowHasCompleteAutored(existingRowEarly) && !autoredRecordHasIdentity(autored, requestedPatente)) {
+      const stored = existingRowEarly.autored_campos ?? existingRowEarly.autored;
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+        autored = normalizeAutoredImportRecord(stored as Record<string, unknown>);
+        skippedAutoredFetch = Boolean(autored);
+      }
+    }
+    tasacionesCompleteness = assessTasacionesRecordCompleteness(
+      tasacionesRow ?? existingRowEarly,
+      requestedPatente,
+    );
+  }
+
+  // ── 2) Plan B: APIs externas solo si falta info o se fuerza ─────────────
+  const needsExternalGlo3d =
+    forceExternalApis ||
+    (!options?.skipGlo3dFetch &&
+      !tasacionesCompleteness.hasGlo3dViewer &&
+      !glo3d?.view3dUrl);
+  const needsExternalAutored =
+    forceExternalApis || !autoredRecordHasIdentity(autored, requestedPatente);
+
+  if (needsExternalGlo3d && !options?.skipGlo3dFetch) {
+    usedExternalApis = true;
     skippedGlo3dFetch = false;
     try {
       const fetched = await fetchGlo3dRecordByPatent(requestedPatente, {
-        forceRefresh: options?.forceRefresh,
+        forceRefresh: forceExternalApis,
       });
       glo3d = fetched ?? glo3d;
     } catch (error) {
@@ -1009,15 +1124,20 @@ export async function importVehicleByPatent(
         if (!glo3d && existingRowEarly) {
           glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
         }
-      } else {
+      } else if (!glo3d) {
         throw error;
       }
     }
-  } else if (options?.skipGlo3dFetch) {
-    skippedGlo3dFetch = true;
-    if (!glo3d && existingRowEarly) {
-      glo3d = buildGlo3dEntryFromInventarioRow(existingRowEarly);
-    }
+  }
+
+  if (needsExternalAutored) {
+    usedExternalApis = true;
+    skippedAutoredFetch = false;
+    autored =
+      (await fetchAutoredRecordByPatent(requestedPatente, {
+        forceRefresh: forceExternalApis,
+      })) ?? autored;
+    autored = normalizeAutoredImportRecord(autored);
   }
 
   const canonicalPatente = glo3d
@@ -1031,35 +1151,17 @@ export async function importVehicleByPatent(
     existingRowEarly ??
     (correctedPatente ? await fetchInventarioRowByPatent(requestedPatente) : null);
 
-  let autored: Record<string, unknown> | null = null;
-  if (!options?.forceRefresh && existingRow && inventarioRowHasCompleteAutored(existingRow)) {
-    const stored = existingRow.autored_campos ?? existingRow.autored;
-    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-      autored = normalizeAutoredImportRecord(stored as Record<string, unknown>);
-      skippedAutoredFetch = Boolean(autored);
-    }
-  }
-  const rowMarca = existingRow ? pickString(existingRow, ["marca", "brand"]) : undefined;
-  const rowModelo = existingRow ? pickString(existingRow, ["modelo", "model"]) : undefined;
-  const needsAutoredRefresh =
-    options?.forceRefresh ||
-    !autored ||
-    (existingRow && isDerivedPlaceholderIdentity(rowMarca, rowModelo, patente));
-
-  if (needsAutoredRefresh) {
-    skippedAutoredFetch = false;
-    autored =
-      (await fetchAutoredRecordByPatent(patente, { forceRefresh: options?.forceRefresh })) ??
-      (await fetchTasacionesRecordByPatent(patente));
-    autored = normalizeAutoredImportRecord(autored);
-    if (!autored && options?.forceRefresh) {
-      console.warn(`[import-patent] Autored/Tasaciones sin datos para ${patente}`);
-    }
-  }
-
   const autoredSynced = autoredRecordHasIdentity(autored, patente);
 
   let payload = buildInventarioPayloadFromSources(patente, glo3d, autored, options);
+  if (tasacionesRow) {
+    payload = mergePreferMeaningful(payload, tasacionesRow);
+    payload.glo3d_campos =
+      payload.glo3d_campos ?? tasacionesRow.glo3d_campos ?? tasacionesRow.glo3d ?? null;
+    payload.autored_campos =
+      payload.autored_campos ?? tasacionesRow.autored_campos ?? tasacionesRow.autored ?? null;
+    payload.origen = usedExternalApis ? "tasaciones+external" : "tasaciones";
+  }
   payload.patente = patente;
   payload.PPU = patente;
   payload.stock_number = patente;
@@ -1069,24 +1171,35 @@ export async function importVehicleByPatent(
   if (!sanitizeMarcaValue(String(payload.marca ?? ""))) {
     payload.marca = "Sin Marca";
   }
-  const shouldPersist = Boolean(glo3d || autored || options?.forceRefresh);
+  const shouldPersist = Boolean(glo3d || autored || tasacionesRow || options?.forceRefresh);
 
-  if (existingRow) {
-    const persisted = shouldPersist
-      ? await persistInventarioRow(patente, payload, existingRow, options)
-      : { row: mergePreferMeaningful(payload, existingRow), created: false };
-    const mergedRow = buildCatalogRow(patente, persisted.row, glo3d, autored);
+  const buildResult = (
+    row: Record<string, unknown>,
+    created: boolean,
+    fromExistingInventory: boolean,
+  ): ImportPatentResult => {
+    const mergedRow = buildCatalogRow(patente, row, glo3d, autored);
     const mergedImages = resolveMergedVehicleImages(glo3d, autored, mergedRow);
     const images = mergedImages.images;
     const item = catalogRowToItem(mergedRow);
     if (!item) throw new Error(`No se pudo normalizar el inventario para ${patente}.`);
     const hasGlo3dViewer = Boolean(glo3d?.view3dUrl ?? mergedRow.glo3d_url ?? mergedRow.url_3d);
+    const completeness = assessTasacionesRecordCompleteness(
+      tasacionesRow ?? mergedRow,
+      patente,
+    );
 
     return buildImportPatentResult({
       item,
       vehicleDetails: buildVehicleDetailsFromSources(patente, mergedRow, glo3d, autored, images),
-      source: resolveImportSource(glo3d, autored, true),
-      created: persisted.created,
+      source: resolveImportSource(
+        glo3d,
+        autored,
+        fromExistingInventory,
+        fromTasaciones,
+        usedExternalApis,
+      ),
+      created,
       patente,
       requestedPatente,
       correctedPatente,
@@ -1097,26 +1210,27 @@ export async function importVehicleByPatent(
       autoredSynced,
       autored,
       retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
-      syncDiagnostics: buildSyncDiagnostics(patente, glo3d, autored, mergedImages, hasGlo3dViewer),
+      syncDiagnostics: buildSyncDiagnostics(patente, glo3d, autored, mergedImages, hasGlo3dViewer, {
+        found: fromTasaciones,
+        complete: completeness.complete,
+        usedExternalApis,
+      }),
     });
+  };
+
+  if (existingRow) {
+    const persisted = shouldPersist
+      ? await persistInventarioRow(patente, payload, existingRow, options)
+      : { row: mergePreferMeaningful(payload, existingRow), created: false };
+    return buildResult(persisted.row, persisted.created, true);
   }
 
-  if (!glo3d && !autoredSynced) {
+  if (!glo3d && !autoredSynced && !fromTasaciones) {
     if (glo3dRateLimited) {
       throw new Glo3dRateLimitError(getGlo3dCircuitRetryAfterMs());
     }
-    const hasGlo3dCredentials = Boolean(
-      process.env.GLO3D_API_USERNAME ??
-        process.env.VITE_GLO3D_API_USERNAME ??
-        process.env.NEXT_PUBLIC_GLO3D_API_USERNAME,
-    );
-    if (!hasGlo3dCredentials) {
-      throw new Error(
-        `No se pudo consultar Glo3D para ${patente}. Configura GLO3D_API_USERNAME y GLO3D_API_PASSWORD en Vercel.`,
-      );
-    }
     throw new Error(
-      `No se encontró ${requestedPatente} en Glo3D ni datos útiles en Autored. Verifica la patente exacta (ej. TJSX32).`,
+      `No se encontró ${requestedPatente} en Tasaciones ni en APIs externas. Verifica la patente en TasacionesVedisa1.`,
     );
   }
 
@@ -1125,72 +1239,62 @@ export async function importVehicleByPatent(
   }
 
   const persisted = await persistInventarioRow(patente, payload, null, options);
-  const row = buildCatalogRow(patente, persisted.row, glo3d, autored);
-  const mergedImages = resolveMergedVehicleImages(glo3d, autored, row);
-  const images = mergedImages.images;
-  const item = catalogRowToItem(row);
-  if (!item) throw new Error(`No se pudo normalizar la unidad importada ${patente}.`);
-  const hasGlo3dViewer = Boolean(glo3d?.view3dUrl);
-
-  return buildImportPatentResult({
-    item,
-    vehicleDetails: buildVehicleDetailsFromSources(patente, row, glo3d, autored, images),
-    source: glo3d ? resolveImportSource(glo3d, autored, false) : "autored",
-    created: persisted.created,
-    patente,
-    requestedPatente,
-    correctedPatente,
-    hasGlo3dViewer,
-    skippedGlo3dFetch,
-    skippedAutoredFetch,
-    glo3dRateLimited,
-    autoredSynced,
-    autored,
-    retryAfterMs: glo3dRateLimited ? getGlo3dCircuitRetryAfterMs() : undefined,
-    syncDiagnostics: buildSyncDiagnostics(patente, glo3d, autored, mergedImages, hasGlo3dViewer),
-  });
+  return buildResult(persisted.row, persisted.created, false);
 }
 
-const BATCH_IMPORT_DELAY_MS = Number(process.env.GLO3D_BATCH_DELAY_MS ?? "900");
+const TASACIONES_BATCH_DELAY_MS = Number(process.env.TASACIONES_BATCH_DELAY_MS ?? "0");
+const EXTERNAL_API_BATCH_DELAY_MS = Number(process.env.EXTERNAL_API_BATCH_DELAY_MS ?? "900");
+
+export async function preloadTasacionesMapForImport(
+  options?: ImportPatentOptions,
+): Promise<Map<string, Record<string, unknown>>> {
+  const cached = getCachedTasacionesInventarioMap();
+  if (cached && !options?.forceExternalApis) return cached;
+  const map = await fetchTasacionesInventarioMap();
+  setCachedTasacionesInventarioMap(map);
+  return map;
+}
 
 export async function importVehiclesByPatentsBatch(
   rawPatents: string[],
   options?: ImportPatentOptions,
 ): Promise<ImportPatentsBatchResult> {
-  const unique = Array.from(
-    new Set(rawPatents.map((value) => normalizePatent(value)).filter((value) => /^[A-Z0-9]{5,10}$/.test(value))),
-  );
+  const patentes = rawPatents
+    .map((value) => normalizePatent(value))
+    .filter((value) => /^[A-Z0-9]{5,10}$/.test(value));
+  const uniquePatentes = [...new Set(patentes)];
+
+  const tasacionesMap =
+    options?.tasacionesMap ??
+    (await preloadTasacionesMapForImport(options).catch(() => new Map()));
+
   const results: ImportPatentResult[] = [];
   const errors: Array<{ patente: string; error: string }> = [];
   let rateLimited = false;
 
-  for (let index = 0; index < unique.length; index += 1) {
-    const patente = unique[index];
-    if (index > 0) await sleepMs(BATCH_IMPORT_DELAY_MS);
+  for (let index = 0; index < uniquePatentes.length; index += 1) {
+    const patente = uniquePatentes[index]!;
+    try {
+      results.push(
+        await importVehicleByPatent(patente, {
+          ...options,
+          tasacionesMap,
+          forceRefresh: options?.forceRefresh ?? true,
+          syncMode: options?.syncMode ?? "tasaciones-first",
+        }),
+      );
+    } catch (error) {
+      if (error instanceof Glo3dRateLimitError) rateLimited = true;
+      errors.push({
+        patente,
+        error: error instanceof Error ? error.message : "Error desconocido",
+      });
+    }
 
-    let imported = false;
-    for (let attempt = 0; attempt < 6 && !imported; attempt += 1) {
-      try {
-        results.push(await importVehicleByPatent(patente, options));
-        imported = true;
-      } catch (error) {
-        if (error instanceof Glo3dRateLimitError && attempt < 5) {
-          rateLimited = true;
-          const waitMs = Math.max(
-            BATCH_IMPORT_DELAY_MS,
-            error.retryAfterMs,
-            4_000 * (attempt + 1),
-          );
-          await sleepMs(waitMs);
-          continue;
-        }
-        const message = error instanceof Error ? error.message : "No se pudo importar la patente.";
-        errors.push({ patente, error: message });
-        if (error instanceof Glo3dRateLimitError) {
-          rateLimited = true;
-        }
-        break;
-      }
+    if (index + 1 < uniquePatentes.length) {
+      const lastUsedExternal = results[results.length - 1]?.syncDiagnostics?.usedExternalApis;
+      const delayMs = lastUsedExternal ? EXTERNAL_API_BATCH_DELAY_MS : TASACIONES_BATCH_DELAY_MS;
+      if (delayMs > 0) await sleepMs(delayMs);
     }
   }
 

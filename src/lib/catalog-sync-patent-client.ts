@@ -1,16 +1,27 @@
 import { isGlo3dRateLimitResponse } from "@/lib/glo3d-client-cooldown";
+import type { ImportPatentSyncMode } from "@/lib/catalog-import-patent";
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
 
 const CHILE_TIME_ZONE = "America/Santiago";
 
-/** Pausa entre lotes en sincronización masiva. */
+/** Pausa entre lotes cuando se usan APIs externas (plan B). */
 export const CATALOG_SYNC_PATENT_DELAY_MS = 1_200;
 export const CATALOG_SYNC_PATENT_MAX_RETRIES = 4;
 export const CATALOG_SYNC_PATENT_RETRY_BASE_MS = 3_000;
 export const CATALOG_SYNC_PATENT_TIMEOUT_MS = 120_000;
-export const CATALOG_SYNC_BATCH_CHUNK_SIZE = 4;
+export const CATALOG_SYNC_BATCH_CHUNK_SIZE = 8;
 export const CATALOG_SYNC_BATCH_TIMEOUT_MS = 130_000;
+
+export type ImportPatentClientOptions = {
+  estadoRetiro?: string;
+  /** Refresca desde Tasaciones (default true en import normal). */
+  forceRefresh?: boolean;
+  /** Plan B: fuerza Glo3D + Autored directos. */
+  forceExternalApis?: boolean;
+  syncMode?: ImportPatentSyncMode;
+  skipGlo3dFetch?: boolean;
+};
 
 export type ImportPatentApiPayload = {
   ok?: boolean;
@@ -29,6 +40,9 @@ export type ImportPatentApiPayload = {
   retryAfterMs?: number;
   rateLimited?: boolean;
   syncDiagnostics?: {
+    tasacionesFound?: boolean;
+    tasacionesComplete?: boolean;
+    usedExternalApis?: boolean;
     glo3dFound: boolean;
     glo3dImageCount: number;
     glo3dViewer: boolean;
@@ -53,30 +67,35 @@ export function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function buildImportPatentBody(patente: string, options: ImportPatentClientOptions) {
+  const syncMode = options.syncMode ?? (options.forceExternalApis ? "external" : "tasaciones-first");
+  return {
+    patente,
+    estadoRetiro: options.estadoRetiro,
+    forceRefresh: options.forceRefresh ?? true,
+    forceExternalApis: options.forceExternalApis ?? syncMode === "external",
+    syncMode,
+    skipGlo3dFetch: options.skipGlo3dFetch ?? false,
+  };
+}
+
 function shouldRetryImportPatent(
   response: Response,
   payload: ImportPatentApiPayload,
 ): boolean {
   if (payload.ok && payload.item) return false;
+  if (payload.syncDiagnostics?.usedExternalApis === false) return false;
   return isGlo3dRateLimitResponse(response, payload) || Boolean(payload.glo3dRateLimited);
 }
 
 export async function postImportPatent(
   patente: string,
-  options: {
-    estadoRetiro?: string;
-    forceRefresh?: boolean;
-  },
+  options: ImportPatentClientOptions = {},
 ): Promise<{ response: Response; payload: ImportPatentApiPayload }> {
   const response = await fetch("/api/admin/import-patent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      patente,
-      estadoRetiro: options.estadoRetiro,
-      forceRefresh: options.forceRefresh ?? true,
-      skipGlo3dFetch: false,
-    }),
+    body: JSON.stringify(buildImportPatentBody(patente, options)),
     signal: AbortSignal.timeout(CATALOG_SYNC_PATENT_TIMEOUT_MS),
   });
   const payload = (await response.json().catch(() => ({}))) as ImportPatentApiPayload;
@@ -85,10 +104,7 @@ export async function postImportPatent(
 
 export async function importPatentWithRetries(
   patente: string,
-  options: {
-    estadoRetiro?: string;
-    forceRefresh?: boolean;
-  },
+  options: ImportPatentClientOptions = {},
 ): Promise<{ response: Response; payload: ImportPatentApiPayload }> {
   let lastPayload: ImportPatentApiPayload | undefined;
 
@@ -120,11 +136,9 @@ export async function importPatentWithRetries(
 
 export async function postImportPatentsBatch(
   patentes: string[],
-  options: {
-    estadoRetiro?: string;
-    forceRefresh?: boolean;
-  },
+  options: ImportPatentClientOptions = {},
 ): Promise<{ response: Response; payload: ImportPatentsBatchApiPayload }> {
+  const syncMode = options.syncMode ?? (options.forceExternalApis ? "external" : "tasaciones-first");
   const response = await fetch("/api/admin/import-patents-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -132,7 +146,9 @@ export async function postImportPatentsBatch(
       patentes,
       estadoRetiro: options.estadoRetiro,
       forceRefresh: options.forceRefresh ?? true,
-      skipGlo3dFetch: false,
+      forceExternalApis: options.forceExternalApis ?? syncMode === "external",
+      syncMode,
+      skipGlo3dFetch: options.skipGlo3dFetch ?? false,
     }),
     signal: AbortSignal.timeout(CATALOG_SYNC_BATCH_TIMEOUT_MS),
   });
@@ -142,10 +158,7 @@ export async function postImportPatentsBatch(
 
 export async function importPatentsBatchWithRetries(
   patentes: string[],
-  options: {
-    estadoRetiro?: string;
-    forceRefresh?: boolean;
-  },
+  options: ImportPatentClientOptions = {},
 ): Promise<ImportPatentsBatchApiPayload> {
   let lastPayload: ImportPatentsBatchApiPayload | undefined;
 

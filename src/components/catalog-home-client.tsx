@@ -3228,7 +3228,7 @@ export function CatalogHomeClient({
       }
     };
 
-    const interval = window.setInterval(() => void refreshPublicHome(), 45_000);
+    const interval = window.setInterval(() => void refreshPublicHome(), 300_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") void refreshPublicHome();
     };
@@ -3277,29 +3277,6 @@ export function CatalogHomeClient({
         }
         if (payload.status && !cancelled) {
           setSharedSyncStatus(payload.status);
-          const vd = payload.status.ventaDirectaCatalog;
-          if (
-            vd.needsReconcile &&
-            !autoReconcileInFlightRef.current &&
-            !cancelled
-          ) {
-            autoReconcileInFlightRef.current = true;
-            try {
-              const syncRes = await fetch("/api/admin/editor-config/sync", { method: "POST" });
-              if (syncRes.ok && !cancelled) {
-                const syncPayload = (await syncRes.json()) as {
-                  config?: EditorConfig;
-                  syncStatus?: typeof payload.status;
-                };
-                if (syncPayload.config) applyMergedAdminConfig(syncPayload.config);
-                if (syncPayload.syncStatus) setSharedSyncStatus(syncPayload.syncStatus);
-              }
-            } catch {
-              // ignore transient auto-reconcile errors
-            } finally {
-              autoReconcileInFlightRef.current = false;
-            }
-          }
         }
       } catch {
         // ignore transient refresh errors
@@ -3307,7 +3284,7 @@ export function CatalogHomeClient({
     };
 
     void refreshAdminSharedConfig();
-    const interval = window.setInterval(() => void refreshAdminSharedConfig(), 20_000);
+    const interval = window.setInterval(() => void refreshAdminSharedConfig(), 180_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") void refreshAdminSharedConfig();
     };
@@ -6325,7 +6302,10 @@ export function CatalogHomeClient({
     try {
       for (let index = 0; index < patentTokens.length; index += 1) {
         const patente = patentTokens[index]!;
-        const { payload } = await importPatentWithRetries(patente, { forceRefresh: true });
+        const { payload } = await importPatentWithRetries(patente, {
+          syncMode: "tasaciones-first",
+          forceRefresh: true,
+        });
         const key = applyImportedPatentPayload({
           item: payload.item!,
           vehicleDetails: payload.vehicleDetails,
@@ -6342,7 +6322,7 @@ export function CatalogHomeClient({
       showSystemNotice(
         "success",
         "Importación lista",
-        `${importedKeys.length} unidad(es) sincronizada(s) con Glo3D/Autored.`,
+        `${importedKeys.length} unidad(es) importada(s) desde Tasaciones (sin APIs externas duplicadas).`,
       );
 
       setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...importedKeys])));
@@ -6510,6 +6490,7 @@ export function CatalogHomeClient({
           if (patentsToEnrich.length > 1) {
             const batch = await importPatentsBatchWithRetries(patentsToEnrich, {
               estadoRetiro,
+              syncMode: "tasaciones-first",
               forceRefresh: true,
             });
             for (const row of batch.results ?? []) {
@@ -6528,13 +6509,14 @@ export function CatalogHomeClient({
               showSystemNotice(
                 "info",
                 "Sincronización parcial",
-                `${(batch.results ?? []).length} ok · ${(batch.errors ?? []).length} con error al importar Glo3D/Autored.`,
+                `${(batch.results ?? []).length} ok · ${(batch.errors ?? []).length} con error al importar desde Tasaciones.`,
               );
             }
           } else {
             const patente = patentsToEnrich[0]!;
             const { payload } = await importPatentWithRetries(patente, {
               estadoRetiro,
+              syncMode: "tasaciones-first",
               forceRefresh: true,
             });
             const resolvedKey = applyImportedPatentPayload({
@@ -7290,10 +7272,19 @@ export function CatalogHomeClient({
           config,
           sortedUpcomingAuctions,
         );
-        const { payload } = await importPatentWithRetries(patente, {
+        let { payload } = await importPatentWithRetries(patente, {
           estadoRetiro,
+          syncMode: "tasaciones-first",
           forceRefresh: true,
         });
+        if (payload.syncDiagnostics?.syncComplete === false) {
+          ({ payload } = await importPatentWithRetries(patente, {
+            estadoRetiro,
+            syncMode: "external",
+            forceExternalApis: true,
+            forceRefresh: true,
+          }));
+        }
 
         const resolvedKey = applyImportedPatentPayload({
           item: payload.item!,
@@ -7314,6 +7305,11 @@ export function CatalogHomeClient({
           setEditingDetails(mergeSyncedVehicleDetails(syncedItem, payload.vehicleDetails));
         }
 
+        const tasacionesNote = payload.syncDiagnostics?.tasacionesFound
+          ? payload.syncDiagnostics.usedExternalApis
+            ? " Tasaciones + plan B (APIs externas)."
+            : " Importado desde Tasaciones (sin duplicar APIs)."
+          : " Sin registro en Tasaciones.";
         const autoredNote = payload.autoredSynced
           ? " Autored aplicado."
           : payload.autoredReason === "not_configured"
@@ -7339,7 +7335,7 @@ export function CatalogHomeClient({
             : payload.autoredSynced
               ? "Unidad sincronizada"
               : "Sincronización parcial",
-          `${patente} actualizado.${glo3dNote}${autoredNote}${diagNote}`,
+          `${patente} actualizado.${tasacionesNote}${glo3dNote}${autoredNote}${diagNote}`,
         );
       } catch (error) {
         const message =
@@ -7381,8 +7377,9 @@ export function CatalogHomeClient({
           ok?: boolean;
           error?: string;
           diagnosis?: {
-            glo3d: { found: boolean; imageCount: number; view3dUrl?: string };
-            autored: { found: boolean; marca?: string; modelo?: string; imageCount: number };
+            tasaciones: { found: boolean; complete: boolean; missing: string[]; marca?: string; modelo?: string };
+            glo3d: { found: boolean; source: string; imageCount: number; view3dUrl?: string };
+            autored: { found: boolean; source: string; marca?: string; modelo?: string; imageCount: number };
             merge: { thumbnailSource: string };
             warnings: string[];
             recommendation: string;
@@ -7393,9 +7390,10 @@ export function CatalogHomeClient({
         }
         const d = data.diagnosis;
         const body = [
-          `Glo3D: ${d.glo3d.found ? `${d.glo3d.imageCount} imagen(es), visor ${d.glo3d.view3dUrl ? "OK" : "ausente"}` : "NO encontrado"}`,
-          `Autored: ${d.autored.found ? `${d.autored.marca ?? "?"} ${d.autored.modelo ?? ""} (${d.autored.imageCount} fotos)`.trim() : "sin ficha"}`,
-          `Miniatura priorizada: ${d.merge.thumbnailSource}`,
+          `Tasaciones: ${d.tasaciones.found ? (d.tasaciones.complete ? "ficha completa" : `incompleta (${d.tasaciones.missing.join(", ")})`) : "NO encontrada"}`,
+          `Glo3D (${d.glo3d.source}): ${d.glo3d.found ? `${d.glo3d.imageCount} img, visor ${d.glo3d.view3dUrl ? "OK" : "ausente"}` : "NO"}`,
+          `Autored (${d.autored.source}): ${d.autored.found ? `${d.autored.marca ?? "?"} ${d.autored.modelo ?? ""}`.trim() : "sin ficha"}`,
+          `Miniatura: ${d.merge.thumbnailSource}`,
           ...d.warnings,
           d.recommendation,
         ]
@@ -7426,10 +7424,15 @@ export function CatalogHomeClient({
         return { key, patente, needsSync };
       })
       .filter((entry): entry is { key: string; patente: string; needsSync: boolean } => Boolean(entry))
+      .filter((entry) => entry.needsSync)
       .sort((a, b) => Number(b.needsSync) - Number(a.needsSync));
 
     if (targets.length === 0) {
-      showSystemNotice("info", "Sin unidades", "No hay patentes sincronizables en este grupo.");
+      showSystemNotice(
+        "success",
+        "Grupo al día",
+        "Todas las unidades del grupo ya tienen ficha completa desde Tasaciones.",
+      );
       return;
     }
 
@@ -7457,7 +7460,7 @@ export function CatalogHomeClient({
             chunk.length > 1
               ? await importPatentsBatchWithRetries(
                   chunk.map((entry) => entry.patente),
-                  { estadoRetiro, forceRefresh: true },
+                  { estadoRetiro, syncMode: "tasaciones-first", forceRefresh: true },
                 )
               : null;
 
@@ -7466,6 +7469,7 @@ export function CatalogHomeClient({
             (await (async () => {
               const single = await importPatentWithRetries(chunk[0]!.patente, {
                 estadoRetiro,
+                syncMode: "tasaciones-first",
                 forceRefresh: true,
               });
               return [single.payload];
@@ -7516,7 +7520,7 @@ export function CatalogHomeClient({
         showSystemNotice(
           "success",
           "Grupo sincronizado",
-          `${okCount} unidad(es) actualizadas con Glo3D + Autored.`,
+          `${okCount} unidad(es) actualizadas desde Tasaciones (sin APIs externas duplicadas).`,
         );
       } else {
         const incompleteNote =

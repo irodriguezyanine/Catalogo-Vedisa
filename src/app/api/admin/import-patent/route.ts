@@ -20,6 +20,8 @@ export async function POST(req: Request) {
     patente?: string;
     estadoRetiro?: string;
     forceRefresh?: boolean;
+    forceExternalApis?: boolean;
+    syncMode?: "tasaciones-first" | "external";
     skipGlo3dFetch?: boolean;
   };
   const patente = String(body.patente ?? "").trim();
@@ -30,7 +32,9 @@ export async function POST(req: Request) {
   try {
     const result = await importVehicleByPatent(patente, {
       estadoRetiro: body.estadoRetiro,
-      forceRefresh: body.forceRefresh,
+      forceRefresh: body.forceRefresh ?? true,
+      forceExternalApis: body.forceExternalApis,
+      syncMode: body.syncMode,
       skipGlo3dFetch: body.skipGlo3dFetch,
     });
     revalidateCatalogSurfaces();

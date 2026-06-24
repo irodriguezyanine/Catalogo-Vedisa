@@ -19,6 +19,8 @@ export async function POST(req: Request) {
     patentes?: string[];
     estadoRetiro?: string;
     forceRefresh?: boolean;
+    forceExternalApis?: boolean;
+    syncMode?: "tasaciones-first" | "external";
     skipGlo3dFetch?: boolean;
   };
   const patentes = Array.isArray(body.patentes)
@@ -37,7 +39,9 @@ export async function POST(req: Request) {
   try {
     const batch = await importVehiclesByPatentsBatch(patentes, {
       estadoRetiro: body.estadoRetiro,
-      forceRefresh: body.forceRefresh,
+      forceRefresh: body.forceRefresh ?? true,
+      forceExternalApis: body.forceExternalApis,
+      syncMode: body.syncMode ?? "tasaciones-first",
       skipGlo3dFetch: body.skipGlo3dFetch,
     });
     revalidateCatalogSurfaces();

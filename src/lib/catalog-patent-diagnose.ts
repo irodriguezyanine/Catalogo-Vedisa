@@ -2,8 +2,13 @@ import {
   fetchAutoredRecordByPatent,
   fetchGlo3dRecordByPatent,
   fetchInventarioRowByPatent,
+  fetchTasacionesRecordByPatent,
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
+import {
+  assessTasacionesRecordCompleteness,
+  buildGlo3dFromTasacionesRow,
+} from "@/lib/catalog-tasaciones-import";
 import { extractGlo3dInventoryImages } from "@/lib/glo3d-images";
 import {
   extractAutoredImagesFromRecord,
@@ -13,17 +18,26 @@ import { autoredRecordHasIdentity } from "@/lib/vehicle-identity";
 
 export type PatentSyncDiagnosis = {
   patente: string;
+  tasaciones: {
+    found: boolean;
+    complete: boolean;
+    missing: string[];
+    view3dUrl?: string;
+    imageCount: number;
+    marca?: string;
+    modelo?: string;
+  };
   glo3d: {
     found: boolean;
+    source: "tasaciones" | "api" | "none";
     view3dUrl?: string;
     imageCount: number;
     sampleImageUrls: string[];
-    rawTopLevelKeys: string[];
-    stockNumber?: string;
     error?: string;
   };
   autored: {
     found: boolean;
+    source: "tasaciones" | "api" | "none";
     hasIdentity: boolean;
     marca?: string;
     modelo?: string;
@@ -64,24 +78,50 @@ export async function diagnosePatentSync(rawPatente: string): Promise<PatentSync
   const warnings: string[] = [];
 
   const inventarioRow = await fetchInventarioRowByPatent(patente);
+  const tasacionesRow = await fetchTasacionesRecordByPatent(patente);
+  const tasacionesCompleteness = assessTasacionesRecordCompleteness(tasacionesRow, patente);
 
-  let glo3d: Glo3dInventoryEntry | null = null;
-  let glo3dError: string | undefined;
-  try {
-    glo3d = await fetchGlo3dRecordByPatent(patente, { forceRefresh: true });
-  } catch (error) {
-    glo3dError = error instanceof Error ? error.message : "Error consultando Glo3D";
-    warnings.push(`Glo3D API: ${glo3dError}`);
+  const tasacionesGlo3d = tasacionesRow ? buildGlo3dFromTasacionesRow(tasacionesRow) : null;
+  const tasacionesGlo3dImages = tasacionesGlo3d
+    ? extractGlo3dInventoryImages({
+        raw: tasacionesGlo3d.raw,
+        technicalFields: tasacionesGlo3d.technicalFields,
+      })
+    : [];
+  const tasacionesAutoredImages = extractAutoredImagesFromRecord(tasacionesRow);
+
+  let glo3dApi: Glo3dInventoryEntry | null = null;
+  let glo3dApiError: string | undefined;
+  if (!tasacionesCompleteness.complete) {
+    try {
+      glo3dApi = await fetchGlo3dRecordByPatent(patente, { forceRefresh: true });
+    } catch (error) {
+      glo3dApiError = error instanceof Error ? error.message : "Error consultando Glo3D API";
+    }
   }
 
-  let autored: Record<string, unknown> | null = null;
-  let autoredError: string | undefined;
-  try {
-    autored = await fetchAutoredRecordByPatent(patente, { forceRefresh: true });
-  } catch (error) {
-    autoredError = error instanceof Error ? error.message : "Error consultando Autored";
-    warnings.push(`Autored API: ${autoredError}`);
+  let autoredApi: Record<string, unknown> | null = null;
+  let autoredApiError: string | undefined;
+  if (!tasacionesCompleteness.hasIdentity) {
+    try {
+      autoredApi = await fetchAutoredRecordByPatent(patente, { forceRefresh: true });
+    } catch (error) {
+      autoredApiError = error instanceof Error ? error.message : "Error consultando Autored API";
+    }
   }
+
+  const glo3d = tasacionesGlo3d ?? glo3dApi;
+  const glo3dSource: PatentSyncDiagnosis["glo3d"]["source"] = tasacionesGlo3d
+    ? "tasaciones"
+    : glo3dApi
+      ? "api"
+      : "none";
+  const autoredSource: PatentSyncDiagnosis["autored"]["source"] = tasacionesRow
+    ? "tasaciones"
+    : autoredApi
+      ? "api"
+      : "none";
+  const autored = tasacionesRow ?? autoredApi;
 
   const glo3dImages = glo3d
     ? extractGlo3dInventoryImages({ raw: glo3d.raw, technicalFields: glo3d.technicalFields })
@@ -95,60 +135,67 @@ export async function diagnosePatentSync(rawPatente: string): Promise<PatentSync
     : [];
 
   const merged = mergeVehicleImageSources({
-    glo3dImages,
-    autoredImages,
+    glo3dImages: glo3dImages.length > 0 ? glo3dImages : tasacionesGlo3dImages,
+    autoredImages: autoredImages.length > 0 ? autoredImages : tasacionesAutoredImages,
     inventarioImages,
   });
 
-  if (!glo3d) {
-    warnings.push("Glo3D: patente no encontrada en inventario Glo3D (búsqueda + paginación).");
-  } else if (!glo3d.view3dUrl) {
-    warnings.push("Glo3D: registro encontrado pero sin URL de visor 3D.");
+  if (!tasacionesRow) {
+    warnings.push("Tasaciones: patente no encontrada en inventario compartido (TasacionesVedisa1).");
+  } else if (!tasacionesCompleteness.complete) {
+    warnings.push(`Tasaciones: ficha incompleta (${tasacionesCompleteness.missing.join(", ")}).`);
   }
-  if (glo3d && glo3dImages.length === 0) {
-    warnings.push(
-      "Glo3D: sin miniaturas extraíbles. Revisa frames/main_frame en glo3d_campos o captura en la app Glo3D.",
-    );
+  if (glo3dSource === "api" && !glo3dApi) {
+    warnings.push(`Glo3D API (plan B): ${glo3dApiError ?? "no encontrada"}.`);
   }
-  if (merged.thumbnailSource === "autored" && glo3d) {
-    warnings.push(
-      "La miniatura actual vendría de Autored porque Glo3D no entregó imagen HTTP. El catálogo prioriza Glo3D cuando existe.",
-    );
+  if (autoredSource === "api" && !autoredRecordHasIdentity(autoredApi, patente)) {
+    warnings.push(`Autored API (plan B): ${autoredApiError ?? "sin identidad"}.`);
   }
-  if (!autoredRecordHasIdentity(autored, patente)) {
-    warnings.push("Autored/Tasaciones: sin marca/modelo útiles para esta patente.");
+  if (!merged.thumbnail) {
+    warnings.push("Sin miniatura utilizable tras fusionar fuentes.");
   }
 
-  let recommendation = "Sync completado correctamente.";
-  if (!glo3d) {
+  let recommendation = "Ficha lista desde Tasaciones.";
+  if (!tasacionesRow) {
     recommendation =
-      "Verifica que la patente en Glo3D coincida exactamente con el stock number (ej. TSTZ49).";
-  } else if (glo3dImages.length === 0) {
+      "Verifica que la unidad exista en TasacionesVedisa1 con glo3d_campos y autored_campos.";
+  } else if (!tasacionesCompleteness.complete) {
     recommendation =
-      "Abre la unidad en Glo3D, confirma que tenga captura publicada, y vuelve a sincronizar con forceRefresh.";
-  } else if (merged.thumbnailSource !== "glo3d") {
-    recommendation = "Re-sincroniza; si persiste, revisa el diagnóstico en /api/admin/diagnose-patent.";
+      "Completa la ficha en Tasaciones (visor 3D + fotos). El catálogo usará plan B solo para lo que falte.";
+  } else if (merged.thumbnailSource !== "glo3d" && tasacionesCompleteness.hasGlo3dViewer) {
+    recommendation = "Tasaciones tiene visor pero miniatura no es Glo3D; revisa glo3d_campos en Tasaciones.";
   }
 
   return {
     patente,
+    tasaciones: {
+      found: Boolean(tasacionesRow),
+      complete: tasacionesCompleteness.complete,
+      missing: tasacionesCompleteness.missing,
+      view3dUrl:
+        tasacionesGlo3d?.view3dUrl ??
+        pickString(tasacionesRow ?? {}, ["glo3d_url", "url_3d"]),
+      imageCount: tasacionesGlo3dImages.length,
+      marca: pickString(tasacionesRow ?? {}, ["marca", "brand"]),
+      modelo: pickString(tasacionesRow ?? {}, ["modelo", "model"]),
+    },
     glo3d: {
       found: Boolean(glo3d),
+      source: glo3dSource,
       view3dUrl: glo3d?.view3dUrl,
-      imageCount: glo3dImages.length,
-      sampleImageUrls: glo3dImages.slice(0, 5),
-      rawTopLevelKeys: glo3d ? Object.keys(glo3d.raw).slice(0, 40) : [],
-      stockNumber: pickString(glo3d?.raw ?? {}, ["stock_number", "stock", "PPU", "patente"]),
-      error: glo3dError,
+      imageCount: glo3dImages.length || tasacionesGlo3dImages.length,
+      sampleImageUrls: (glo3dImages.length > 0 ? glo3dImages : tasacionesGlo3dImages).slice(0, 5),
+      error: glo3dApiError,
     },
     autored: {
       found: Boolean(autored),
+      source: autoredSource,
       hasIdentity: autoredRecordHasIdentity(autored, patente),
       marca: pickString(autored ?? {}, ["marca", "brand"]),
       modelo: pickString(autored ?? {}, ["modelo", "model"]),
       ano: pickString(autored ?? {}, ["ano", "anio", "year"]),
-      imageCount: autoredImages.length,
-      error: autoredError,
+      imageCount: autoredImages.length || tasacionesAutoredImages.length,
+      error: autoredApiError,
     },
     inventario: {
       found: Boolean(inventarioRow),
