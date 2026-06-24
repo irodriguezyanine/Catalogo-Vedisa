@@ -6,7 +6,7 @@ import { importVehicleByPatent } from "@/lib/catalog-import-patent";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   const cookieStore = await cookies();

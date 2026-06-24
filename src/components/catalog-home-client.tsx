@@ -71,8 +71,10 @@ import {
   isGlo3dRateLimitMessage,
 } from "@/lib/glo3d-client-cooldown";
 import {
+  CATALOG_SYNC_BATCH_CHUNK_SIZE,
   CATALOG_SYNC_PATENT_DELAY_MS,
   importPatentWithRetries,
+  importPatentsBatchWithRetries,
   sleepMs,
 } from "@/lib/catalog-sync-patent-client";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
@@ -1311,26 +1313,21 @@ function formatAuctionDateLabel(value?: string): string {
 }
 
 function formatAuctionWindowLabel(auction: UpcomingAuction): string {
+  const CHILE_TIME_ZONE = "America/Santiago";
   const inicio = auction.startAt ? new Date(auction.startAt) : null;
   const cierre = auction.endAt ? new Date(auction.endAt) : null;
   if (inicio && cierre && !Number.isNaN(inicio.getTime()) && !Number.isNaN(cierre.getTime())) {
-    const ini = inicio.toLocaleString("es-CL", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-    const fin = cierre.toLocaleString("es-CL", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-    return `${ini} → ${fin}`;
+    const fmt = (date: Date) =>
+      date.toLocaleString("es-CL", {
+        timeZone: CHILE_TIME_ZONE,
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+    return `${fmt(inicio)} → ${fmt(cierre)}`;
   }
   return formatAuctionDateLabel(auction.date);
 }
@@ -7496,53 +7493,85 @@ export function CatalogHomeClient({
         if (key.startsWith("manual-")) return null;
         const patente = normalizePatentToken(getPatent(item));
         if (!patente || patente === "—") return null;
-        return { key, patente };
+        const needsSync = vehicleNeedsQuickSync(item, key, config, isStaleEditorDraftValue);
+        return { key, patente, needsSync };
       })
-      .filter((entry): entry is { key: string; patente: string } => Boolean(entry));
+      .filter((entry): entry is { key: string; patente: string; needsSync: boolean } => Boolean(entry))
+      .sort((a, b) => Number(b.needsSync) - Number(a.needsSync));
 
     if (targets.length === 0) {
       showSystemNotice("info", "Sin unidades", "No hay patentes sincronizables en este grupo.");
       return;
     }
 
-    const estadoRetiro = groupManageTarget
-      ? resolveEstadoRetiroForVehicleKey(targets[0]!.key, config, sortedUpcomingAuctions)
-      : undefined;
-
     setGroupSyncAllState({ running: true, current: 0, total: targets.length });
     let okCount = 0;
+    let processed = 0;
     const failed: string[] = [];
 
     try {
-      for (let index = 0; index < targets.length; index += 1) {
-        const { key, patente } = targets[index]!;
+      for (let index = 0; index < targets.length; index += CATALOG_SYNC_BATCH_CHUNK_SIZE) {
+        const chunk = targets.slice(index, index + CATALOG_SYNC_BATCH_CHUNK_SIZE);
+        const estadoRetiro =
+          resolveEstadoRetiroForVehicleKey(chunk[0]!.key, config, sortedUpcomingAuctions) ?? undefined;
+
         setGroupSyncAllState({
           running: true,
-          current: index + 1,
+          current: processed,
           total: targets.length,
-          patente,
+          patente: chunk[0]?.patente,
         });
 
         try {
-          const vehicleEstadoRetiro =
-            resolveEstadoRetiroForVehicleKey(key, config, sortedUpcomingAuctions) ?? estadoRetiro;
-          const { payload } = await importPatentWithRetries(patente, {
-            estadoRetiro: vehicleEstadoRetiro,
-            forceRefresh: true,
-          });
-          applyImportedPatentPayload({
-            item: payload.item!,
-            vehicleDetails: payload.vehicleDetails,
-            patente,
-            hasGlo3dViewer: payload.hasGlo3dViewer,
-          });
-          okCount += 1;
+          const batch =
+            chunk.length > 1
+              ? await importPatentsBatchWithRetries(
+                  chunk.map((entry) => entry.patente),
+                  { estadoRetiro, forceRefresh: true },
+                )
+              : null;
+
+          const rows =
+            batch?.results ??
+            (await (async () => {
+              const single = await importPatentWithRetries(chunk[0]!.patente, {
+                estadoRetiro,
+                forceRefresh: true,
+              });
+              return [single.payload];
+            })());
+
+          for (const row of rows) {
+            if (!row.item) continue;
+            const target = chunk.find((entry) => entry.patente === (row.patente ?? "")) ?? chunk[0]!;
+            applyImportedPatentPayload({
+              item: row.item,
+              vehicleDetails: row.vehicleDetails,
+              patente: row.patente ?? target.patente,
+              hasGlo3dViewer: row.hasGlo3dViewer,
+            });
+            okCount += 1;
+          }
+
+          for (const err of batch?.errors ?? []) {
+            failed.push(`${err.patente}: ${err.error}`);
+          }
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Error desconocido";
-          failed.push(`${patente}: ${message}`);
+          for (const entry of chunk) {
+            const message = error instanceof Error ? error.message : "Error desconocido";
+            failed.push(`${entry.patente}: ${message}`);
+          }
         }
 
-        if (index + 1 < targets.length) {
+        processed += chunk.length;
+        setGroupSyncAllState({
+          running: true,
+          current: processed,
+          total: targets.length,
+          patente: chunk[chunk.length - 1]?.patente,
+        });
+
+        if (index + CATALOG_SYNC_BATCH_CHUNK_SIZE < targets.length) {
           await sleepMs(CATALOG_SYNC_PATENT_DELAY_MS);
         }
       }
@@ -7569,8 +7598,8 @@ export function CatalogHomeClient({
     applyImportedPatentPayload,
     config,
     groupManageBaseItems,
-    groupManageTarget,
     groupSyncAllState?.running,
+    isStaleEditorDraftValue,
     showSystemNotice,
     sortedUpcomingAuctions,
     syncingVehicleKey,
@@ -11963,7 +11992,9 @@ export function CatalogHomeClient({
                 <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">
                   Ver y gestionar
                 </p>
-                <h3 className="text-lg font-bold text-slate-900">{groupManageTargetLabel}</h3>
+                <h3 className="text-lg font-bold text-slate-900" suppressHydrationWarning>
+                  {groupManageTargetLabel}
+                </h3>
                 <p className="text-xs text-slate-500">
                   {groupManageItems.length} unidad(es) visibles
                   {groupManageSearchTerm.trim()
@@ -11996,7 +12027,7 @@ export function CatalogHomeClient({
                       <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
                         <path d="M4.5 3A1.5 1.5 0 0 0 3 4.5v2.879a1 1 0 0 0 .293.707l2.122 2.122a1 1 0 0 0 1.414-1.414L5.414 7.5H7.5A1.5 1.5 0 0 0 9 6V4.5A1.5 1.5 0 0 0 7.5 3h-3ZM13 3A1.5 1.5 0 0 0 11.5 4.5V6a1.5 1.5 0 0 0 1.5 1.5h2.086l-1.415 1.415a1 1 0 1 0 1.414 1.414l2.122-2.122A1 1 0 0 0 17 7.379V4.5A1.5 1.5 0 0 0 15.5 3H13Zm-8 10A1.5 1.5 0 0 0 3.5 14.5V17a1.5 1.5 0 0 0 1.5 1.5h3A1.5 1.5 0 0 0 9 17v-1.5A1.5 1.5 0 0 0 7.5 14H5.414l1.415 1.415a1 1 0 0 1-1.414 1.414L3.293 14.707A1 1 0 0 1 3 14V11.5A1.5 1.5 0 0 1 4.5 10h.5v1.5A1.5 1.5 0 0 1 6.5 13H7v1.5A1.5 1.5 0 0 1 5.5 16h-2Zm11-1.5A1.5 1.5 0 0 0 15 14.5V17a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 17v-1.5a1.5 1.5 0 0 1 1.5-1.5h2.086l-1.415-1.415a1 1 0 1 1 1.414-1.414l2.122 2.122a1 1 0 0 1 .293.707V17a1.5 1.5 0 0 0 1.5 1.5h.5v-1.5A1.5 1.5 0 0 0 15.5 13H15v-1.5A1.5 1.5 0 0 0 13.5 10h2Z" />
                       </svg>
-                      <span className="hidden sm:inline">Sync todo</span>
+                      <span className="text-[11px] font-semibold">Sync todo</span>
                     </>
                   )}
                 </button>
@@ -12010,6 +12041,29 @@ export function CatalogHomeClient({
                 </button>
               </div>
             </div>
+
+            {groupSyncAllState?.running ? (
+              <div className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2">
+                <p className="text-xs font-semibold text-cyan-900">
+                  Sincronizando Glo3D + Autored… {groupSyncAllState.current}/{groupSyncAllState.total}
+                  {groupSyncAllState.patente ? ` · ${groupSyncAllState.patente}` : ""}
+                </p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cyan-100">
+                  <div
+                    className="h-full rounded-full bg-cyan-600 transition-all duration-300"
+                    style={{
+                      width: `${Math.max(
+                        4,
+                        Math.round((groupSyncAllState.current / groupSyncAllState.total) * 100),
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-cyan-800">
+                  Puede tardar varios minutos. No cierres esta ventana.
+                </p>
+              </div>
+            ) : null}
 
             {groupManageTarget.type === "auction" ? (
               <div className="mb-3 rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-3">
