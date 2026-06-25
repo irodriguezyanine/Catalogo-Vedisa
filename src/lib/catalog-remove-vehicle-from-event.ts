@@ -37,7 +37,34 @@ function resolveVehicleKeysForPatent(config: EditorConfig, patenteNorm: string):
   return [...keys];
 }
 
-function removePatentFromEditorConfig(
+export function removeVehicleKeyFromAuctionAssignment(
+  config: EditorConfig,
+  auctionId: string,
+  vehicleKey: string,
+): EditorConfig {
+  const detailPatente = normalizePatentKey(config.vehicleDetails?.[vehicleKey]?.patente);
+  const patenteNorm = detailPatente || normalizePatentKey(vehicleKey);
+  if (!patenteNorm) {
+    const assignments = { ...(config.vehicleUpcomingAuctionIds ?? {}) };
+    if (assignments[vehicleKey] === auctionId) delete assignments[vehicleKey];
+    return {
+      ...config,
+      vehicleUpcomingAuctionIds: assignments,
+      sectionVehicleIds: {
+        ...config.sectionVehicleIds,
+        "proximos-remates": (config.sectionVehicleIds?.["proximos-remates"] ?? []).filter(
+          (key) => key !== vehicleKey,
+        ),
+        "ventas-directas": (config.sectionVehicleIds?.["ventas-directas"] ?? []).filter(
+          (key) => key !== vehicleKey,
+        ),
+      },
+    };
+  }
+  return removePatentFromAuctionAssignment(config, auctionId, patenteNorm);
+}
+
+export function removePatentFromAuctionAssignment(
   config: EditorConfig,
   remateId: string,
   patenteNorm: string,
@@ -76,7 +103,7 @@ export async function removeVehicleFromCatalogEvent(
   const loaded = await getEditorConfig();
   const removedKeys = resolveVehicleKeysForPatent(loaded.config, patenteNorm);
   const previous = loaded.config;
-  const next = removePatentFromEditorConfig(previous, remateId, patenteNorm);
+  const next = removePatentFromAuctionAssignment(previous, remateId, patenteNorm);
 
   const saved = await saveEditorConfig(next, updatedBy);
   if (!saved.ok) {

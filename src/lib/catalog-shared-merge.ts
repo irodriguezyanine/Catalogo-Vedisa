@@ -583,6 +583,17 @@ export async function mergeSharedEventsIntoConfig(
 
   const ventaDirectaInventoryRaw = await fetchVentaDirectaInventoryRawKeys();
   for (const raw of ventaDirectaInventoryRaw) {
+    const patenteNorm = normalizePatentKey(raw);
+    if (patenteNorm) {
+      let excluded = false;
+      for (const excludedSet of excludedPatentesByRemate.values()) {
+        if (excludedSet.has(patenteNorm)) {
+          excluded = true;
+          break;
+        }
+      }
+      if (excluded) continue;
+    }
     const vehicleKeys = resolveCatalogVehicleKeys(inventoryAliases, raw).filter(
       (vehicleKey) => !soldVehicleKeys.has(vehicleKey),
     );

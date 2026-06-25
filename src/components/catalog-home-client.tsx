@@ -131,6 +131,7 @@ import {
   getAuctionCommercialEventType,
   resolveVehicleCommercialLane,
 } from "@/lib/commercial-category-exclusivity";
+import { removeVehicleKeyFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-from-event";
 import {
   DEFAULT_EDITOR_CONFIG,
   type CommercialEventOrigin,
@@ -6280,27 +6281,40 @@ export function CatalogHomeClient({
     setGroupRainworxEventUrl("");
   };
 
-  const removeVehicleFromGroupTarget = (vehicleKey: string) => {
+  const removeVehicleFromGroupTarget = async (vehicleKey: string) => {
     if (!groupManageTarget) return;
+    const prev = configRef.current;
+    let nextConfig: EditorConfig;
     if (groupManageTarget.type === "auction") {
-      setConfig((prev) => {
-        const nextAuctionMap = { ...prev.vehicleUpcomingAuctionIds };
-        if (nextAuctionMap[vehicleKey] === groupManageTarget.auctionId) {
-          delete nextAuctionMap[vehicleKey];
-        }
-        return { ...prev, vehicleUpcomingAuctionIds: nextAuctionMap };
-      });
+      nextConfig = removeVehicleKeyFromAuctionAssignment(prev, groupManageTarget.auctionId, vehicleKey);
     } else {
-      setConfig((prev) => ({
+      const patenteNorm = normalizePatenteKey(vehicleKey);
+      nextConfig = {
         ...prev,
         sectionVehicleIds: {
           ...prev.sectionVehicleIds,
           [groupManageTarget.sectionId]: (prev.sectionVehicleIds[groupManageTarget.sectionId] ?? []).filter(
-            (key) => key !== vehicleKey,
+            (key) => key !== vehicleKey && normalizePatenteKey(key) !== patenteNorm,
           ),
         },
-      }));
+      };
     }
+    setConfig(nextConfig);
+    lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+    const persistResult = await persistEditorConfigRef.current(nextConfig);
+    if (!persistResult.ok) {
+      showSystemNotice(
+        "error",
+        "No se guardó la eliminación",
+        "La unidad se quitó en pantalla pero no se pudo persistir en el servidor. Recarga y vuelve a intentar.",
+      );
+      return;
+    }
+    showSystemNotice(
+      "success",
+      "Unidad removida del grupo",
+      `${normalizePatenteKey(vehicleKey) || vehicleKey} ya no pertenece a ${groupManageTargetLabel}.`,
+    );
   };
 
   const addBatchVehiclesToTarget = async () => {
@@ -7601,6 +7615,7 @@ export function CatalogHomeClient({
         skipped?: { reason: string; lotId?: string }[];
         updatedPatentes?: string[];
         newPatentes?: string[];
+        removedFromGroup?: string[];
         photosPreserved?: number;
       };
     },
@@ -7610,6 +7625,7 @@ export function CatalogHomeClient({
     const skipped = data.editor?.skipped ?? [];
     const updated = data.editor?.updatedPatentes ?? [];
     const added = data.editor?.newPatentes ?? [];
+    const removed = data.editor?.removedFromGroup ?? [];
     const photosPreserved = data.editor?.photosPreserved ?? 0;
     if (skipped.length > 0) {
       showSystemNotice(
@@ -7635,6 +7651,9 @@ export function CatalogHomeClient({
     }
     if (added.length > 0) {
       parts.push(`${added.length} patente(s) nueva(s) agregada(s): ${added.join(", ")}`);
+    }
+    if (removed.length > 0) {
+      parts.push(`${removed.length} patente(s) quitada(s) del grupo (no están en Rainworx): ${removed.join(", ")}`);
     }
     if (photosPreserved > 0) {
       parts.push(`${photosPreserved} miniatura(s) Glo3D/Tasaciones conservada(s)`);
@@ -7759,12 +7778,9 @@ export function CatalogHomeClient({
           eventUrl: url,
           matchInventoryPatentes,
           addNewLotsFromEvent: groupRainworxAddMissing,
-          ...(groupRainworxAddMissing
-            ? {
-                assignNewLotsAuctionId: groupManageTarget.auctionId,
-                assignNewLotsEventType: groupManageCommercialEventType,
-              }
-            : {}),
+          syncGroupExclusive: true,
+          assignNewLotsAuctionId: groupManageTarget.auctionId,
+          assignNewLotsEventType: groupManageCommercialEventType,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -7775,6 +7791,7 @@ export function CatalogHomeClient({
           skipped?: { reason: string; lotId?: string }[];
           updatedPatentes?: string[];
           newPatentes?: string[];
+          removedFromGroup?: string[];
           photosPreserved?: number;
         };
       };
@@ -12065,14 +12082,15 @@ export function CatalogHomeClient({
                 <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
                   {groupManageCommercialEventType === "venta_directa" ? (
                     <>
-                      Pega la URL del evento en vehiculoschocados.cl. Se fusionará la ficha Rainworx con las{" "}
-                      {groupManageBaseItems.length} patente(s) de esta venta directa sin reemplazar fotos Glo3D ni
-                      Tasaciones.
+                      Pega la URL del evento en vehiculoschocados.cl. Se fusionará la ficha Rainworx con las patentes
+                      de esta venta directa sin reemplazar fotos Glo3D ni Tasaciones. Las patentes del grupo que no
+                      estén en el evento se quitarán automáticamente.
                     </>
                   ) : (
                     <>
-                      Pega la URL del evento en vehiculoschocados.cl. Se fusionará la ficha Rainworx con las{" "}
-                      {groupManageBaseItems.length} patente(s) de este remate sin reemplazar fotos Glo3D ni Tasaciones.
+                      Pega la URL del evento en vehiculoschocados.cl. Se fusionará la ficha Rainworx con las patentes
+                      de este remate sin reemplazar fotos Glo3D ni Tasaciones. Las patentes del grupo que no estén en
+                      el evento se quitarán automáticamente.
                     </>
                   )}
                 </p>
@@ -12306,14 +12324,7 @@ export function CatalogHomeClient({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            removeVehicleFromGroupTarget(key);
-                            showSystemNotice(
-                              "success",
-                              "Unidad removida del grupo",
-                              `${getPatent(item)} ya no pertenece a ${groupManageTargetLabel}.`,
-                            );
-                          }}
+                          onClick={() => void removeVehicleFromGroupTarget(key)}
                           className="ui-focus inline-flex h-7 w-7 items-center justify-center rounded border border-rose-300 bg-rose-50 text-rose-700 transition hover:bg-rose-100"
                           aria-label={`Quitar ${getPatent(item)} del grupo`}
                           title="Quitar del grupo"

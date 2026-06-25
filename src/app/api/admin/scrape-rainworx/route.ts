@@ -1,10 +1,15 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
-import { syncEditorConfigToSharedTables } from "@/lib/catalog-shared-sync";
+import {
+  deleteRemateItemsForRemovedAssignments,
+  findRemovedVehicleAssignments,
+  syncEditorConfigToSharedTables,
+} from "@/lib/catalog-shared-sync";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { applyExclusiveCommercialAssignment } from "@/lib/commercial-category-exclusivity";
 import type { CommercialLane } from "@/lib/commercial-category-exclusivity";
+import { removePatentFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-from-event";
 import {
   formatClpString,
   mergeEditorVehicleDetails,
@@ -59,6 +64,11 @@ type Body = {
   /** Tipo comercial para la asignación (`remate` → próximos remates, `venta_directa` → ventas directas). */
   assignNewLotsEventType?: "remate" | "venta_directa";
   /**
+   * Con `eventUrl` + `assignNewLotsAuctionId`: quita del grupo las patentes que ya no aparecen en Rainworx
+   * (el listado del evento queda como fuente de verdad).
+   */
+  syncGroupExclusive?: boolean;
+  /**
    * Patente normalizada esperada (p. ej. al editar una ficha). Si se envía y no coincide con la del lote Rainworx, no se guarda (409).
    */
   expectedPatente?: string;
@@ -91,6 +101,7 @@ export async function POST(request: Request) {
   const addNewLotsFromEvent = Boolean(body.addNewLotsFromEvent);
   const assignNewLotsAuctionId = body.assignNewLotsAuctionId?.trim();
   const assignNewLotsEventType = body.assignNewLotsEventType ?? "remate";
+  const syncGroupExclusive = body.syncGroupExclusive !== false;
 
   try {
     let items: RainworxLotScraped[];
@@ -122,12 +133,12 @@ export async function POST(request: Request) {
       items = await scrapeEventLots({
         eventPageUrl: body.eventUrl,
         patente: body.patente,
-        ...(addNewLotsFromEvent || !matchList || matchList.length === 0
+        ...(addNewLotsFromEvent || syncGroupExclusive || !matchList || matchList.length === 0
           ? {}
           : { matchPatentes: matchList }),
         maxLots:
           body.maxLots ??
-          (addNewLotsFromEvent ? 200 : matchList && matchList.length > 0 ? 160 : 80),
+          (addNewLotsFromEvent || syncGroupExclusive ? 200 : matchList && matchList.length > 0 ? 160 : 80),
         delayMs: body.delayMs ?? 250,
       });
     } else {
@@ -189,11 +200,13 @@ export async function POST(request: Request) {
     }
 
     const load = await getEditorConfig();
-    let config = load.config;
+    const previousConfig = load.config;
+    let config = previousConfig;
     const applied = new Set<string>();
     const skipped: { reason: string; lotId?: string }[] = [];
     const updatedPatentes = new Set<string>();
     const newPatentes = new Set<string>();
+    const removedFromGroup = new Set<string>();
     let photosPreserved = 0;
 
     const groupPatenteSet = new Set(
@@ -258,6 +271,21 @@ export async function POST(request: Request) {
       };
     }
 
+    if (
+      syncGroupExclusive &&
+      assignNewLotsAuctionId &&
+      groupPatenteSet.size > 0
+    ) {
+      const rainworxPatentes = new Set(
+        mapped.map((row) => row.vehicleKey).filter(Boolean),
+      );
+      for (const patente of groupPatenteSet) {
+        if (rainworxPatentes.has(patente)) continue;
+        config = removePatentFromAuctionAssignment(config, assignNewLotsAuctionId, patente);
+        removedFromGroup.add(patente);
+      }
+    }
+
     const saved = await saveEditorConfig(config, session.email);
     if (!saved.ok) {
       return Response.json(
@@ -275,8 +303,13 @@ export async function POST(request: Request) {
     }
 
     const normalizedConfig = saved.normalizedConfig ?? config;
-    const mergedConfig = await mergeSharedEventsIntoConfig(normalizedConfig);
-    const sync = await syncEditorConfigToSharedTables(mergedConfig);
+    const removals = findRemovedVehicleAssignments(previousConfig, normalizedConfig);
+    const removalResult = await deleteRemateItemsForRemovedAssignments(removals, normalizedConfig);
+    const mergedConfig = await mergeSharedEventsIntoConfig(normalizedConfig, {
+      pruneOrphanCatalogAssignments: false,
+    });
+    const finalSaved = await saveEditorConfig(mergedConfig, session.email);
+    const sync = await syncEditorConfigToSharedTables(finalSaved.normalizedConfig ?? mergedConfig);
 
     return Response.json({
       ok: true,
@@ -291,8 +324,10 @@ export async function POST(request: Request) {
         skipped,
         updatedPatentes: [...updatedPatentes],
         newPatentes: [...newPatentes],
+        removedFromGroup: [...removedFromGroup],
         photosPreserved,
         assignedAuctionId: assignNewLotsAuctionId && newPatentes.size > 0 ? assignNewLotsAuctionId : undefined,
+        removedFromRemateItems: removalResult.deleted,
       },
       sync,
     });
