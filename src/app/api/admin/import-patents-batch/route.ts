@@ -24,6 +24,7 @@ export async function POST(req: Request) {
     skipGlo3dFetch?: boolean;
     skipAutoredFetch?: boolean;
     glo3dDeepScan?: boolean;
+    internalOnly?: boolean;
   };
   const patentes = Array.isArray(body.patentes)
     ? body.patentes.map((value) => String(value ?? "").trim()).filter(Boolean)
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
       skipGlo3dFetch: body.skipGlo3dFetch,
       skipAutoredFetch: body.skipAutoredFetch,
       glo3dDeepScan: body.glo3dDeepScan,
+      internalOnly: body.internalOnly,
     });
     revalidateCatalogSurfaces();
     return Response.json({

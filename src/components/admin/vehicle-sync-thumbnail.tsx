@@ -127,7 +127,7 @@ export function VehicleQuickSyncButton({
       className="ui-focus inline-flex items-center gap-1 rounded border border-cyan-300 bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-800 disabled:opacity-60"
       title={title}
     >
-      {isSyncing ? "Sync…" : "Sync Glo3D"}
+      {isSyncing ? "Sync…" : "Sync"}
     </button>
   );
 }

@@ -20,6 +20,7 @@ import {
   sanitizeMarcaValue,
   sanitizeModeloValue,
 } from "@/lib/vehicle-identity";
+import { mergeRicherTasacionesRows } from "@/lib/catalog-tasaciones-import";
 import {
   applyGlo3dImagesToInventarioRow,
   extractGlo3dInventoryImages,
@@ -2065,6 +2066,26 @@ function normalizeTasacionesPatentRow(match: Record<string, unknown>): Record<st
   return { ...match, origen: "tasaciones" };
 }
 
+async function enrichTasacionesPatentRow(
+  normalized: string,
+  row: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const primary = normalizeTasacionesPatentRow(row);
+  try {
+    const bulkMap = await fetchTasacionesInventarioMap();
+    const bulk = bulkMap.get(normalized);
+    if (!bulk) return primary;
+    const merged = mergeRicherTasacionesRows(
+      normalized,
+      primary,
+      normalizeTasacionesPatentRow(bulk),
+    );
+    return merged ? normalizeTasacionesPatentRow(merged) : primary;
+  } catch {
+    return primary;
+  }
+}
+
 function findTasacionesRowInList(
   rows: Record<string, unknown>[],
   normalized: string,
@@ -2113,7 +2134,7 @@ export async function fetchTasacionesRecordByPatent(
       const payload = (await response.json()) as unknown;
       const rows = extractRowsFromPayload(payload);
       const match = findTasacionesRowInList(rows, normalized);
-      if (match) return normalizeTasacionesPatentRow(match);
+      if (match) return enrichTasacionesPatentRow(normalized, match);
     }
 
     const bulkNoEstado = await fetchTasacionesInventarioRows({
@@ -2122,12 +2143,12 @@ export async function fetchTasacionesRecordByPatent(
       limit: 500,
     });
     const fromBulkNoEstado = findTasacionesRowInList(bulkNoEstado, normalized);
-    if (fromBulkNoEstado) return normalizeTasacionesPatentRow(fromBulkNoEstado);
+    if (fromBulkNoEstado) return enrichTasacionesPatentRow(normalized, fromBulkNoEstado);
 
     try {
       const bulkMap = await fetchTasacionesInventarioMap();
       const fromBulk = bulkMap.get(normalized);
-      if (fromBulk) return normalizeTasacionesPatentRow(fromBulk);
+      if (fromBulk) return enrichTasacionesPatentRow(normalized, fromBulk);
     } catch {
       // noop
     }

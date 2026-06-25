@@ -28,6 +28,7 @@ export async function POST(req: Request) {
     glo3dDeepScan?: boolean;
     seedInventarioRow?: Record<string, unknown>;
     isNewUnit?: boolean;
+    internalOnly?: boolean;
   };
   const patente = String(body.patente ?? "").trim();
   if (!patente) {
@@ -45,6 +46,7 @@ export async function POST(req: Request) {
       glo3dDeepScan: body.glo3dDeepScan,
       seedInventarioRow: body.seedInventarioRow,
       isNewUnit: body.isNewUnit,
+      internalOnly: body.internalOnly,
     });
     logCatalogSyncPatentResult(patente, result);
     revalidateCatalogSurfaces();

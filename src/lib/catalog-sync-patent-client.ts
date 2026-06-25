@@ -26,6 +26,7 @@ export type ImportPatentClientOptions = {
   glo3dDeepScan?: boolean;
   seedInventarioRow?: Record<string, unknown>;
   isNewUnit?: boolean;
+  internalOnly?: boolean;
 };
 
 export type ImportPatentApiPayload = {
@@ -74,17 +75,19 @@ export function sleepMs(ms: number): Promise<void> {
 
 function buildImportPatentBody(patente: string, options: ImportPatentClientOptions) {
   const syncMode = options.syncMode ?? (options.forceExternalApis ? "external" : "tasaciones-first");
+  const internalOnly = options.internalOnly === true;
   return {
     patente,
     estadoRetiro: options.estadoRetiro,
     forceRefresh: options.forceRefresh ?? true,
-    forceExternalApis: options.forceExternalApis ?? syncMode === "external",
-    syncMode,
+    forceExternalApis: internalOnly ? false : (options.forceExternalApis ?? syncMode === "external"),
+    syncMode: internalOnly ? "tasaciones-first" : syncMode,
     skipGlo3dFetch: options.skipGlo3dFetch ?? false,
     skipAutoredFetch: options.skipAutoredFetch ?? false,
     glo3dDeepScan: options.glo3dDeepScan ?? false,
     seedInventarioRow: options.seedInventarioRow,
     isNewUnit: options.isNewUnit ?? false,
+    internalOnly: options.internalOnly ?? false,
   };
 }
 
@@ -150,6 +153,7 @@ export async function postImportPatentsBatch(
   options: ImportPatentClientOptions = {},
 ): Promise<{ response: Response; payload: ImportPatentsBatchApiPayload }> {
   const syncMode = options.syncMode ?? (options.forceExternalApis ? "external" : "tasaciones-first");
+  const internalOnly = options.internalOnly === true;
   const response = await fetch("/api/admin/import-patents-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -157,11 +161,12 @@ export async function postImportPatentsBatch(
       patentes,
       estadoRetiro: options.estadoRetiro,
       forceRefresh: options.forceRefresh ?? true,
-      forceExternalApis: options.forceExternalApis ?? syncMode === "external",
-      syncMode,
+      forceExternalApis: internalOnly ? false : (options.forceExternalApis ?? syncMode === "external"),
+      syncMode: internalOnly ? "tasaciones-first" : syncMode,
       skipGlo3dFetch: options.skipGlo3dFetch ?? false,
       skipAutoredFetch: options.skipAutoredFetch ?? false,
       glo3dDeepScan: options.glo3dDeepScan ?? false,
+      internalOnly,
     }),
     signal: AbortSignal.timeout(CATALOG_SYNC_BATCH_TIMEOUT_MS),
   });

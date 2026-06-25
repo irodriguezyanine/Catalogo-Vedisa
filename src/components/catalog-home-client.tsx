@@ -7252,7 +7252,11 @@ export function CatalogHomeClient({
   const runPatentInventorySync = useCallback(
     async (
       vehicleKey: string,
-      options?: { persistEditor?: boolean; updateEditingForm?: boolean },
+      options?: {
+        persistEditor?: boolean;
+        updateEditingForm?: boolean;
+        internalOnly?: boolean;
+      },
     ) => {
       const currentItem = itemsByKey.get(vehicleKey);
       if (!currentItem) {
@@ -7276,6 +7280,7 @@ export function CatalogHomeClient({
         estadoRetiro,
         syncMode: "tasaciones-first",
         forceRefresh: true,
+        internalOnly: options?.internalOnly !== false,
         seedInventarioRow: currentItem.raw as Record<string, unknown>,
       });
 
@@ -7343,9 +7348,7 @@ export function CatalogHomeClient({
 
         const tasacionesNote = payload.syncDiagnostics?.tasacionesFound
           ? payload.syncDiagnostics.usedExternalApis
-            ? payload.syncDiagnostics.autoredSynced
-              ? " Sistema interno + fotos Glo3D (API interna sin miniatura)."
-              : " Sistema interno + Glo3D/Autored (unidad nueva)."
+            ? " Unidad nueva importada con APIs externas."
             : " Importado desde el sistema interno."
           : " Sin registro en el sistema interno — completa la ficha allí o usa «Agregar unidades».";
         const autoredNote = payload.autoredSynced
@@ -7414,13 +7417,14 @@ export function CatalogHomeClient({
       const result = await runPatentInventorySync(editingVehicleKey, {
         updateEditingForm: true,
         persistEditor: true,
+        internalOnly: true,
       });
       resolvedKey = result.resolvedKey;
       const { payload, patente } = result;
       const mediaNote = payload.hasGlo3dViewer
         ? payload.syncDiagnostics?.thumbnailSource === "glo3d"
-          ? "Visor 3D, miniatura y galería Glo3D cargados desde el sistema interno."
-          : "Visor 3D cargado; revisa miniatura en el sistema interno o usa plan B Glo3D."
+          ? "Visor 3D, miniatura y galería cargados desde el sistema interno."
+          : "Visor 3D cargado; revisa fotos en el sistema interno (pestaña Fotos)."
         : payload.item?.thumbnail || (payload.item?.images?.length ?? 0) > 0
           ? "Fotos cargadas desde el sistema interno."
           : "El sistema interno no devolvió medios para esta patente. Verifica que exista en inventario interno.";
@@ -7501,18 +7505,12 @@ export function CatalogHomeClient({
         if (key.startsWith("manual-")) return null;
         const patente = normalizePatentToken(getPatent(item));
         if (!patente || patente === "—") return null;
-        const needsSync = vehicleNeedsQuickSync(item, key, config, isStaleEditorDraftValue);
-        return { key, patente, needsSync };
+        return { key, patente };
       })
-      .filter((entry): entry is { key: string; patente: string; needsSync: boolean } => Boolean(entry))
-      .filter((entry) => entry.needsSync);
+      .filter((entry): entry is { key: string; patente: string } => Boolean(entry));
 
     if (targets.length === 0) {
-      showSystemNotice(
-        "success",
-        "Grupo al día",
-        "Todas las unidades del grupo ya tienen ficha completa desde el sistema interno.",
-      );
+      showSystemNotice("info", "Sin unidades", "No hay patentes sincronizables en este grupo.");
       return;
     }
 
@@ -7536,6 +7534,7 @@ export function CatalogHomeClient({
           const result = await runPatentInventorySync(target.key, {
             persistEditor: false,
             updateEditingForm: false,
+            internalOnly: true,
           });
           appliedCount += 1;
           if (result.payload.syncDiagnostics?.syncComplete === false) {
@@ -7595,11 +7594,8 @@ export function CatalogHomeClient({
       }
     }
   }, [
-    applyImportedPatentPayload,
-    config,
     groupManageBaseItems,
     groupSyncAllState?.running,
-    isStaleEditorDraftValue,
     runPatentInventorySync,
     router,
     showSystemNotice,

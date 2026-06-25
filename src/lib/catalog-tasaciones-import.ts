@@ -188,6 +188,59 @@ export function tasacionesRowSkipsExternalApis(
   return assessTasacionesRecordCompleteness(row, patente).complete;
 }
 
+export function mergeRicherTasacionesRows(
+  patente: string,
+  ...rows: Array<Record<string, unknown> | null | undefined>
+): Record<string, unknown> | null {
+  const candidates = rows.filter(
+    (row): row is Record<string, unknown> => Boolean(row && typeof row === "object"),
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return { ...candidates[0]! };
+
+  const scoreRow = (row: Record<string, unknown>) => {
+    const c = assessTasacionesRecordCompleteness(row, patente);
+    return (
+      (c.complete ? 32 : 0) +
+      (c.hasThumbnail ? 16 : 0) +
+      (c.hasGlo3dViewer ? 8 : 0) +
+      (c.hasIdentity ? 4 : 0) +
+      (tasacionesRowHasEmbeddedInventory(row) ? 2 : 0)
+    );
+  };
+
+  const sorted = [...candidates].sort((a, b) => scoreRow(b) - scoreRow(a));
+  let merged: Record<string, unknown> = { ...sorted[0]! };
+
+  for (const row of sorted.slice(1)) {
+    for (const [key, value] of Object.entries(row)) {
+      if (value == null || value === "") continue;
+      const current = merged[key];
+      const currentEmpty =
+        current == null ||
+        current === "" ||
+        (Array.isArray(current) && current.length === 0);
+      if (currentEmpty) {
+        merged[key] = value;
+        continue;
+      }
+      if (
+        (key === "glo3d_campos" || key === "glo3d" || key === "autored_campos" || key === "autored") &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        typeof current === "object" &&
+        !Array.isArray(current)
+      ) {
+        const curSize = Object.keys(current as Record<string, unknown>).length;
+        const nextSize = Object.keys(value as Record<string, unknown>).length;
+        if (nextSize > curSize) merged[key] = value;
+      }
+    }
+  }
+
+  return merged;
+}
+
 export function itemOriginatedFromTasaciones(raw: Record<string, unknown>): boolean {
   const origen = String(raw.origen ?? raw.source ?? "").toLowerCase();
   return (
