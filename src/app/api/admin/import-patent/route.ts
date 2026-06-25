@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { Glo3dRateLimitError } from "@/lib/catalog";
 import { importVehicleByPatent } from "@/lib/catalog-import-patent";
+import { logCatalogSyncPatentResult } from "@/lib/catalog-sync-debug";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
     skipAutoredFetch?: boolean;
     glo3dDeepScan?: boolean;
     seedInventarioRow?: Record<string, unknown>;
+    isNewUnit?: boolean;
   };
   const patente = String(body.patente ?? "").trim();
   if (!patente) {
@@ -42,7 +44,9 @@ export async function POST(req: Request) {
       skipAutoredFetch: body.skipAutoredFetch,
       glo3dDeepScan: body.glo3dDeepScan,
       seedInventarioRow: body.seedInventarioRow,
+      isNewUnit: body.isNewUnit,
     });
+    logCatalogSyncPatentResult(patente, result);
     revalidateCatalogSurfaces();
     return Response.json({ ok: true, ...result });
   } catch (error) {
@@ -50,6 +54,7 @@ export async function POST(req: Request) {
     const rateLimited = error instanceof Glo3dRateLimitError;
     const status = rateLimited ? 429 : 400;
     const retryAfterMs = rateLimited ? error.retryAfterMs : undefined;
+    logCatalogSyncPatentResult(patente, { error: message, rateLimited });
     return Response.json({ ok: false, error: message, rateLimited, retryAfterMs }, { status });
   }
 }

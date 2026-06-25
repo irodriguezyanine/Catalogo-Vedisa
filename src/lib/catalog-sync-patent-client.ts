@@ -1,5 +1,6 @@
 import { isGlo3dRateLimitResponse } from "@/lib/glo3d-client-cooldown";
 import type { ImportPatentSyncMode } from "@/lib/catalog-import-patent";
+import { logCatalogSyncPatentResult } from "@/lib/catalog-sync-debug";
 import type { CatalogItem } from "@/types/catalog";
 import type { EditorVehicleDetails } from "@/types/editor";
 
@@ -24,6 +25,7 @@ export type ImportPatentClientOptions = {
   skipAutoredFetch?: boolean;
   glo3dDeepScan?: boolean;
   seedInventarioRow?: Record<string, unknown>;
+  isNewUnit?: boolean;
 };
 
 export type ImportPatentApiPayload = {
@@ -82,6 +84,7 @@ function buildImportPatentBody(patente: string, options: ImportPatentClientOptio
     skipAutoredFetch: options.skipAutoredFetch ?? false,
     glo3dDeepScan: options.glo3dDeepScan ?? false,
     seedInventarioRow: options.seedInventarioRow,
+    isNewUnit: options.isNewUnit ?? false,
   };
 }
 
@@ -129,9 +132,11 @@ export async function importPatentWithRetries(
     }
 
     if (!response.ok || !payload.ok || !payload.item) {
+      logCatalogSyncPatentResult(patente, payload);
       throw new Error(payload.error ?? `No se pudo sincronizar ${patente}.`);
     }
 
+    logCatalogSyncPatentResult(patente, payload);
     return { response, payload };
   }
 

@@ -155,6 +155,20 @@ export function tasacionesRowHasEmbeddedGlo3d(row: Record<string, unknown>): boo
   );
 }
 
+export function tasacionesRowHasEmbeddedInventory(row: Record<string, unknown>): boolean {
+  return Boolean(row.glo3d_campos ?? row.glo3d) || Boolean(row.autored_campos ?? row.autored);
+}
+
+/** Tasaciones ya trae ficha enriquecida (Glo3D/Autored embebidos) — no reconsultar APIs externas. */
+export function tasacionesRowSkipsExternalApis(
+  row: Record<string, unknown> | null | undefined,
+  patente: string,
+): boolean {
+  if (!row) return false;
+  if (tasacionesRowHasEmbeddedInventory(row)) return true;
+  return assessTasacionesRecordCompleteness(row, patente).complete;
+}
+
 export function itemOriginatedFromTasaciones(raw: Record<string, unknown>): boolean {
   const origen = String(raw.origen ?? raw.source ?? "").toLowerCase();
   return (

@@ -39,7 +39,7 @@ export function VehicleListThumbnailWithSync({
   const needsQuickSync = vehicleNeedsQuickSync(item, vehicleKey, editorConfig, isStaleTitle);
   const isSyncing = syncingVehicleKey === vehicleKey;
   const patente = getCatalogItemPatent(item);
-  const syncTitle = "Sincronizar Glo3D + Autored";
+  const syncTitle = "Sincronizar desde TasacionesVedisa1";
 
   return (
     <div className={className}>
@@ -59,7 +59,7 @@ export function VehicleListThumbnailWithSync({
           onClick={() => onSync(vehicleKey)}
           disabled={Boolean(syncingVehicleKey)}
           className="ui-focus absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-slate-900/50 text-white transition hover:bg-cyan-900/65 disabled:cursor-wait"
-          aria-label={`Sincronizar ${patente} con Glo3D y Autored`}
+          aria-label={`Sincronizar ${patente} desde TasacionesVedisa1`}
           title={syncTitle}
         >
           {isSyncing ? (
@@ -98,7 +98,7 @@ export function VehicleQuickSyncButton({
   if (!vehicleNeedsQuickSync(item, vehicleKey, editorConfig, isStaleTitle)) return null;
   const isSyncing = syncingVehicleKey === vehicleKey;
   const patente = getCatalogItemPatent(item);
-  const title = "Sincronizar Glo3D + Autored";
+  const title = "Sincronizar desde TasacionesVedisa1";
 
   if (variant === "icon") {
     return (

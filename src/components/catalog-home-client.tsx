@@ -72,7 +72,6 @@ import {
   isGlo3dRateLimitMessage,
 } from "@/lib/glo3d-client-cooldown";
 import {
-  CATALOG_SYNC_BATCH_CHUNK_SIZE,
   CATALOG_SYNC_PATENT_DELAY_MS,
   importPatentWithRetries,
   importPatentsBatchWithRetries,
@@ -95,7 +94,6 @@ import {
 } from "@/components/home-upcoming-auctions-section";
 import {
   VehicleListThumbnailWithSync,
-  VehicleQuickSyncButton,
   VehicleSyncIcon,
 } from "@/components/admin/vehicle-sync-thumbnail";
 import {
@@ -6303,9 +6301,16 @@ export function CatalogHomeClient({
     try {
       for (let index = 0; index < patentTokens.length; index += 1) {
         const patente = patentTokens[index]!;
+        const local = items.find(
+          (item) =>
+            normalizePatentToken(getPatent(item)) === patente ||
+            normalizePatentToken(getVehicleKey(item)) === patente,
+        );
         const { payload } = await importPatentWithRetries(patente, {
           syncMode: "tasaciones-first",
           forceRefresh: true,
+          isNewUnit: !local,
+          seedInventarioRow: local ? (local.raw as Record<string, unknown>) : undefined,
         });
         const key = applyImportedPatentPayload({
           item: payload.item!,
@@ -6323,7 +6328,7 @@ export function CatalogHomeClient({
       showSystemNotice(
         "success",
         "Importación lista",
-        `${importedKeys.length} unidad(es) importada(s) desde Tasaciones (sin APIs externas duplicadas).`,
+        `${importedKeys.length} unidad(es) importada(s). Tasaciones primero; Glo3D/Autored solo si no existe en inventario compartido.`,
       );
 
       setBatchAssignSelectedKeys((prev) => Array.from(new Set([...prev, ...importedKeys])));
@@ -7267,28 +7272,12 @@ export function CatalogHomeClient({
         config,
         sortedUpcomingAuctions,
       );
-      let { payload } = await importPatentWithRetries(patente, {
+      const { payload } = await importPatentWithRetries(patente, {
         estadoRetiro,
         syncMode: "tasaciones-first",
         forceRefresh: true,
         seedInventarioRow: currentItem.raw as Record<string, unknown>,
       });
-      if (payload.syncDiagnostics?.syncComplete === false) {
-        const skipAutored =
-          payload.autoredSynced === true || payload.syncDiagnostics.autoredSynced === true;
-        const needsGlo3dOnly =
-          skipAutored &&
-          (payload.syncDiagnostics.thumbnailSource === "autored" || !payload.hasGlo3dViewer);
-        ({ payload } = await importPatentWithRetries(patente, {
-          estadoRetiro,
-          syncMode: "external",
-          forceExternalApis: true,
-          forceRefresh: true,
-          skipAutoredFetch: skipAutored,
-          glo3dDeepScan: !needsGlo3dOnly,
-          seedInventarioRow: currentItem.raw as Record<string, unknown>,
-        }));
-      }
 
       const resolvedKey = applyImportedPatentPayload({
         item: payload.item!,
@@ -7354,9 +7343,9 @@ export function CatalogHomeClient({
 
         const tasacionesNote = payload.syncDiagnostics?.tasacionesFound
           ? payload.syncDiagnostics.usedExternalApis
-            ? " Tasaciones + plan B (APIs externas)."
-            : " Importado desde Tasaciones (sin duplicar APIs)."
-          : " Sin registro en Tasaciones.";
+            ? " Tasaciones + Glo3D/Autored (unidad nueva)."
+            : " Importado desde TasacionesVedisa1."
+          : " Sin registro en Tasaciones — completa la ficha en TasacionesVedisa1 o usa «Agregar unidades».";
         const autoredNote = payload.autoredSynced
           ? " Autored aplicado."
           : payload.autoredReason === "not_configured"
@@ -7514,8 +7503,7 @@ export function CatalogHomeClient({
         return { key, patente, needsSync };
       })
       .filter((entry): entry is { key: string; patente: string; needsSync: boolean } => Boolean(entry))
-      .filter((entry) => entry.needsSync)
-      .sort((a, b) => Number(b.needsSync) - Number(a.needsSync));
+      .filter((entry) => entry.needsSync);
 
     if (targets.length === 0) {
       showSystemNotice(
@@ -7534,112 +7522,41 @@ export function CatalogHomeClient({
     const incomplete: string[] = [];
 
     try {
-      for (let index = 0; index < targets.length; index += CATALOG_SYNC_BATCH_CHUNK_SIZE) {
-        const chunk = targets.slice(index, index + CATALOG_SYNC_BATCH_CHUNK_SIZE);
-        const estadoRetiro =
-          resolveEstadoRetiroForVehicleKey(chunk[0]!.key, config, sortedUpcomingAuctions) ?? undefined;
-
+      for (const target of targets) {
         setGroupSyncAllState({
           running: true,
           current: processed,
           total: targets.length,
-          patente: chunk[0]?.patente,
+          patente: target.patente,
         });
-
-        let chunkUsedExternalApis = false;
 
         try {
-          const resolveSeedRow = (patente: string) => {
-            const item =
-              groupManageBaseItems.find(
-                (entry) => normalizePatentToken(getPatent(entry)) === patente,
-              ) ?? itemsByKey.get(patente);
-            return item ? (item.raw as Record<string, unknown>) : undefined;
-          };
-
-          const importOne = async (patente: string, external: boolean) => {
-            const { payload } = await importPatentWithRetries(patente, {
-              estadoRetiro,
-              syncMode: external ? "external" : "tasaciones-first",
-              forceExternalApis: external,
-              forceRefresh: true,
-              seedInventarioRow: resolveSeedRow(patente),
-            });
-            return payload;
-          };
-
-          const importChunk = async (external: boolean) => {
-            if (chunk.length > 1) {
-              const batch = await importPatentsBatchWithRetries(
-                chunk.map((entry) => entry.patente),
-                {
-                  estadoRetiro,
-                  syncMode: external ? "external" : "tasaciones-first",
-                  forceExternalApis: external,
-                  forceRefresh: true,
-                },
-              );
-              return batch.results ?? [];
-            }
-            return [await importOne(chunk[0]!.patente, external)];
-          };
-
-          let rows = await importChunk(false);
-          const stillIncomplete = rows.filter((row) => row.syncDiagnostics?.syncComplete === false);
-          if (stillIncomplete.length > 0) {
-            chunkUsedExternalApis = true;
-            const skipAutoredForChunk = stillIncomplete.every(
-              (row) => row.autoredSynced || row.syncDiagnostics?.autoredSynced,
+          const result = await runPatentInventorySync(target.key, {
+            persistEditor: false,
+            updateEditingForm: false,
+          });
+          appliedCount += 1;
+          if (result.payload.syncDiagnostics?.syncComplete === false) {
+            incomplete.push(
+              `${target.patente}: ${result.payload.syncDiagnostics?.warnings[0] ?? "ficha incompleta en Tasaciones"}`,
             );
-            rows = await importPatentsBatchWithRetries(
-              chunk.map((entry) => entry.patente),
-              {
-                estadoRetiro,
-                syncMode: "external",
-                forceExternalApis: true,
-                forceRefresh: true,
-                skipAutoredFetch: skipAutoredForChunk,
-                glo3dDeepScan: stillIncomplete.some(
-                  (row) => !row.hasGlo3dViewer && row.syncDiagnostics?.glo3dFound !== true,
-                ),
-              },
-            ).then((batch) => batch.results ?? []);
-          }
-
-          for (const row of rows) {
-            if (!row.item) continue;
-            const target = chunk.find((entry) => entry.patente === (row.patente ?? "")) ?? chunk[0]!;
-            applyImportedPatentPayload({
-              item: row.item,
-              vehicleDetails: row.vehicleDetails,
-              patente: row.patente ?? target.patente,
-              hasGlo3dViewer: row.hasGlo3dViewer,
-            });
-            appliedCount += 1;
-            if (row.syncDiagnostics?.syncComplete === false) {
-              incomplete.push(
-                `${row.patente ?? target.patente}: ${row.syncDiagnostics.warnings[0] ?? "ficha incompleta"}`,
-              );
-            } else {
-              okCount += 1;
-            }
+          } else {
+            okCount += 1;
           }
         } catch (error) {
-          for (const entry of chunk) {
-            const message = error instanceof Error ? error.message : "Error desconocido";
-            failed.push(`${entry.patente}: ${message}`);
-          }
+          const message = error instanceof Error ? error.message : "Error desconocido";
+          failed.push(`${target.patente}: ${message}`);
         }
 
-        processed += chunk.length;
+        processed += 1;
         setGroupSyncAllState({
           running: true,
           current: processed,
           total: targets.length,
-          patente: chunk[chunk.length - 1]?.patente,
+          patente: target.patente,
         });
 
-        if (index + CATALOG_SYNC_BATCH_CHUNK_SIZE < targets.length && chunkUsedExternalApis) {
+        if (processed < targets.length) {
           await sleepMs(CATALOG_SYNC_PATENT_DELAY_MS);
         }
       }
@@ -7648,7 +7565,7 @@ export function CatalogHomeClient({
         showSystemNotice(
           "success",
           "Grupo sincronizado",
-          `${okCount} unidad(es) actualizadas desde Tasaciones (sin APIs externas duplicadas).`,
+          `${okCount} unidad(es) actualizadas desde TasacionesVedisa1.`,
         );
       } else {
         const incompleteNote =
@@ -7681,10 +7598,9 @@ export function CatalogHomeClient({
     groupManageBaseItems,
     groupSyncAllState?.running,
     isStaleEditorDraftValue,
-    itemsByKey,
+    runPatentInventorySync,
     router,
     showSystemNotice,
-    sortedUpcomingAuctions,
     syncingVehicleKey,
   ]);
 
@@ -8994,7 +8910,7 @@ export function CatalogHomeClient({
                                 type="button"
                                 onClick={() => void showPatentDiagnosis(getPatent(item))}
                                 className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800 underline decoration-amber-400/70 underline-offset-2 hover:bg-amber-200"
-                                title="Ver diagnóstico Glo3D + Autored"
+                                title="Ver diagnóstico Tasaciones / Glo3D / Autored"
                               >
                                 Sin sync
                               </button>
@@ -9021,16 +8937,6 @@ export function CatalogHomeClient({
                           </p>
                         </div>
                         <div className="flex items-center justify-end gap-1.5">
-                          <VehicleQuickSyncButton
-                            item={item}
-                            vehicleKey={key}
-                            editorConfig={config}
-                            onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
-                            syncingVehicleKey={syncingVehicleKey}
-                            glo3dCooldownLabel={cooldownLabel}
-                            isStaleTitle={isStaleEditorDraftValue}
-                            variant="icon"
-                          />
                           <button
                             type="button"
                             onClick={() => setManagingVehicleKey(key)}
@@ -12104,12 +12010,12 @@ export function CatalogHomeClient({
                       ? `Sincronizando ${groupSyncAllState.current}/${groupSyncAllState.total}${
                           groupSyncAllState.patente ? ` · ${groupSyncAllState.patente}` : ""
                         }`
-                      : "Sincronizar Glo3D + Autored de todas las unidades del grupo"
+                      : "Sincronizar grupo desde TasacionesVedisa1"
                   }
                   aria-label={
                     groupSyncAllState?.running
                       ? `Sincronizando ${groupSyncAllState.current} de ${groupSyncAllState.total} unidades`
-                      : "Sincronizar todas las unidades del grupo con Glo3D y Autored"
+                      : "Sincronizar todas las unidades del grupo desde TasacionesVedisa1"
                   }
                 >
                   {groupSyncAllState?.running ? (
@@ -12132,7 +12038,7 @@ export function CatalogHomeClient({
             {groupSyncAllState?.running ? (
               <div className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2">
                 <p className="text-xs font-semibold text-cyan-900">
-                  Sincronizando Glo3D + Autored… {groupSyncAllState.current}/{groupSyncAllState.total}
+                  Sincronizando desde TasacionesVedisa1… {groupSyncAllState.current}/{groupSyncAllState.total}
                   {groupSyncAllState.patente ? ` · ${groupSyncAllState.patente}` : ""}
                 </p>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cyan-100">
@@ -12302,7 +12208,7 @@ export function CatalogHomeClient({
                               type="button"
                               onClick={() => void showPatentDiagnosis(getPatent(item))}
                               className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800 underline decoration-amber-400/70 underline-offset-2 hover:bg-amber-200"
-                              title="Ver diagnóstico Glo3D + Autored"
+                              title="Ver diagnóstico Tasaciones / Glo3D / Autored"
                             >
                               Sin sync
                             </button>
@@ -12328,16 +12234,6 @@ export function CatalogHomeClient({
                         </p>
                       </div>
                       <div className="flex items-center justify-end gap-1.5">
-                        <VehicleQuickSyncButton
-                          item={item}
-                          vehicleKey={key}
-                          editorConfig={config}
-                          onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
-                          syncingVehicleKey={syncingVehicleKey}
-                          glo3dCooldownLabel={cooldownLabel}
-                          isStaleTitle={isStaleEditorDraftValue}
-                          variant="icon"
-                        />
                         <button
                           type="button"
                           onClick={() => setManagingVehicleKey(key)}
@@ -12465,7 +12361,7 @@ export function CatalogHomeClient({
                 disabled={batchAssignImporting || !resolveAutoImportPatent(batchAssignSearchTerm)}
                 className="ui-focus rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {batchAssignImporting ? "Importando…" : "Importar Glo3D + Autored"}
+                {batchAssignImporting ? "Importando…" : "Importar patente"}
               </button>
             </div>
 
@@ -12581,18 +12477,6 @@ export function CatalogHomeClient({
                         {alreadyInTarget ? " · ya agregado" : ""}
                       </p>
                     </div>
-                    <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
-                      <VehicleQuickSyncButton
-                        item={item}
-                        vehicleKey={key}
-                        editorConfig={config}
-                        onSync={(vehicleKey) => void syncVehicleWithGlo3dAutored(vehicleKey)}
-                        syncingVehicleKey={syncingVehicleKey}
-                        glo3dCooldownLabel={cooldownLabel}
-                        isStaleTitle={isStaleEditorDraftValue}
-                        variant="icon"
-                      />
-                    </div>
                     <span
                       className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
                         checked
@@ -12617,7 +12501,7 @@ export function CatalogHomeClient({
               !batchAssignImporting ? (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm text-slate-500">
                   Sin resultados en inventario local. Pulsa &quot;Importar Glo3D&quot; para traer la
-                  patente desde Glo3D + Autored.
+                  patente desde TasacionesVedisa1 (o Glo3D/Autored si es nueva).
                 </p>
               ) : null}
             </div>
@@ -12801,9 +12685,9 @@ export function CatalogHomeClient({
                     onClick={() => void syncManagingVehicleWithGlo3dAutored()}
                     disabled={Boolean(syncingVehicleKey)}
                     className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="Traer miniatura, marca/modelo Autored y detalles técnicos Glo3D"
+                    title="Traer miniatura y ficha desde TasacionesVedisa1"
                   >
-                    {syncingVehicleKey === managingVehicleKey ? "Sync…" : "Sync Glo3D + Autored"}
+                    {syncingVehicleKey === managingVehicleKey ? "Sync…" : "Sync Tasaciones"}
                   </button>
                 ) : null}
                 <button
@@ -13011,18 +12895,6 @@ export function CatalogHomeClient({
                         setEditingDetails((prev) => ({ ...(prev ?? {}), subtitle: event.target.value }))
                       }
                     />
-                    {!editingVehicleKey.startsWith("manual-") ? (
-                      <button
-                        type="button"
-                        onClick={() => void syncVehicleWithGlo3dAutored(editingVehicleKey)}
-                        disabled={Boolean(syncingVehicleKey)}
-                        className="ui-focus rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800 disabled:opacity-60"
-                      >
-                        {syncingVehicleKey === editingVehicleKey
-                          ? "Sync…"
-                          : "Sync Glo3D + Autored"}
-                      </button>
-                    ) : null}
                   </div>
                 </div>
                 <button
@@ -13495,7 +13367,7 @@ export function CatalogHomeClient({
                     </div>
                   ) : (
                     <p className="mt-2 text-xs text-slate-500">
-                      Sin visor 3D cargado. Usa &quot;Cargar desde Tasaciones&quot; o &quot;Sync Glo3D + Autored&quot;.
+                      Sin visor 3D cargado. Usa &quot;Cargar desde TasacionesVedisa1&quot; en la sección Fotos.
                     </p>
                   )}
                 </div>

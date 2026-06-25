@@ -24,6 +24,7 @@ import {
   resolveTasacionesRowFromMap,
   setCachedTasacionesInventarioMap,
 } from "@/lib/catalog-tasaciones-import";
+import { logCatalogSync, warnCatalogSync } from "@/lib/catalog-sync-debug";
 import { sleepMs } from "@/lib/glo3d-api";
 import { fetchAutoredPublicationAveragePrice, isAutoredApiConfigured } from "@/lib/autored-api";
 import { buildDefaultVentaDirectaExtendedDescription } from "@/lib/venta-directa-description";
@@ -74,6 +75,8 @@ export type ImportPatentOptions = {
   skipAutoredFetch?: boolean;
   /** Paginación profunda Glo3D solo si búsqueda rápida no encuentra la patente. */
   glo3dDeepScan?: boolean;
+  /** Solo para altas nuevas sin registro en Tasaciones: permite plan B Glo3D/Autored. */
+  isNewUnit?: boolean;
   /** Mapa precargado de inventario Tasaciones (import por lote). */
   tasacionesMap?: Map<string, Record<string, unknown>>;
   /** Fila parcial del ítem en catálogo (feed/editor) para completar la importación. */
@@ -431,7 +434,7 @@ function buildSyncDiagnostics(
   if (!tasaciones.found) {
     warnings.push("Tasaciones: patente no encontrada en inventario compartido.");
   } else if (!tasaciones.complete && !tasaciones.usedExternalApis) {
-    warnings.push("Tasaciones: ficha incompleta; se intentará plan B (APIs externas).");
+    warnings.push("Tasaciones: ficha incompleta; revisa glo3d_campos/autored_campos en TasacionesVedisa1.");
   }
   if (!glo3d && tasaciones.usedExternalApis) {
     warnings.push("Glo3D API: patente no encontrada en consulta directa.");
@@ -449,9 +452,11 @@ function buildSyncDiagnostics(
   }
 
   const syncComplete =
-    Boolean(merged.thumbnail) &&
-    autoredRecordHasIdentity(autored, patente) &&
-    (hasGlo3dViewer || Boolean(merged.thumbnail));
+    tasaciones.found && (tasaciones.complete || Boolean(merged.thumbnail))
+      ? true
+      : Boolean(merged.thumbnail) &&
+        autoredRecordHasIdentity(autored, patente) &&
+        (hasGlo3dViewer || Boolean(merged.thumbnail));
 
   return {
     tasacionesFound: tasaciones.found,
@@ -1198,15 +1203,27 @@ export async function importVehicleByPatent(
     ...(tasacionesRow ?? {}),
   };
 
-  // ── 2) Plan B: APIs externas si falta visor/imágenes reales ─────────────
-  const needsExternalGlo3d = importNeedsExternalGlo3d(
-    options,
+  const tasacionesFound = Boolean(tasacionesRow);
+  const allowExternalApis =
+    forceExternalApis || (options?.isNewUnit === true && !tasacionesFound);
+
+  logCatalogSync(`${requestedPatente} resolve`, {
+    fromTasaciones,
+    tasacionesFound,
+    tasacionesComplete: tasacionesCompleteness.complete,
+    allowExternalApis,
     forceExternalApis,
-    glo3d,
-    localContextRow,
-  );
+    isNewUnit: options?.isNewUnit === true,
+  });
+
+  // ── 2) Plan B: solo unidades nuevas sin Tasaciones ───────────────────────
+  const needsExternalGlo3d =
+    allowExternalApis &&
+    importNeedsExternalGlo3d(options, forceExternalApis, glo3d, localContextRow);
   const needsExternalAutored =
-    !options?.skipAutoredFetch && !autoredRecordHasIdentity(autored, requestedPatente);
+    allowExternalApis &&
+    !options?.skipAutoredFetch &&
+    !autoredRecordHasIdentity(autored, requestedPatente);
 
   if (needsExternalGlo3d && !options?.skipGlo3dFetch) {
     usedExternalApis = true;
@@ -1329,8 +1346,13 @@ export async function importVehicleByPatent(
     if (glo3dRateLimited) {
       throw new Glo3dRateLimitError(getGlo3dCircuitRetryAfterMs());
     }
+    warnCatalogSync(`${requestedPatente} not-found`, {
+      fromTasaciones,
+      isNewUnit: options?.isNewUnit === true,
+      hasExistingRow: Boolean(existingRowEarlyOrNull),
+    });
     throw new Error(
-      `No se encontró ${requestedPatente} en Tasaciones ni en APIs externas. Verifica la patente en TasacionesVedisa1.`,
+      `No se encontró ${requestedPatente} en Tasaciones. Agrégala primero en TasacionesVedisa1 o usa «Agregar unidades» para importar desde Glo3D/Autored.`,
     );
   }
 
