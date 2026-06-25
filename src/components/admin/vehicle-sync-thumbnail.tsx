@@ -45,7 +45,7 @@ export function VehicleListThumbnailWithSync({
     <div className={className}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={resolveVehicleThumbnailSrc(item)}
+        src={resolveVehicleThumbnailSrc(item, vehicleKey, editorConfig)}
         alt={`Miniatura ${getCatalogItemModel(item)}`}
         className="h-full w-full object-cover"
         loading="lazy"

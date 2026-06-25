@@ -1389,7 +1389,7 @@ export async function importVehicleByPatent(
       hasExistingRow: Boolean(existingRowEarlyOrNull),
     });
     throw new Error(
-      `No se encontró ${requestedPatente} en el sistema interno. Agrégala primero allí o usa «Agregar unidades» para importar desde Glo3D/Autored.`,
+      `No se encontró ${requestedPatente} en el sistema interno (vedisa). Agrégala primero en Inventario → TasacionesVedisa, sincroniza Glo3D allí, y vuelve a sincronizar el catálogo.`,
     );
   }
 

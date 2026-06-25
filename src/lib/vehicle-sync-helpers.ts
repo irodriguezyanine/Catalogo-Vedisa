@@ -25,6 +25,10 @@ function thumbnailLooksLikeGlo3d(url: string): boolean {
   return /glo3d|firebasestorage|storage\.googleapis|googleusercontent/i.test(url);
 }
 
+function thumbnailLooksLikeAutoredGeneric(url: string): boolean {
+  return /autored-public-files\.s3\.amazonaws\.com\/autored\/models\//i.test(url);
+}
+
 export function hasRealVehicleThumbnail(
   item: CatalogItem,
   vehicleKey: string,
@@ -90,14 +94,32 @@ export function vehicleNeedsQuickSync(
       item.images.find((url) => url.startsWith("http")) ??
       (typeof raw.thumbnail === "string" ? raw.thumbnail : undefined);
     if (!thumb) return true;
-    if (thumb && !thumbnailLooksLikeGlo3d(thumb)) return true;
+    if (thumbnailLooksLikeAutoredGeneric(thumb)) return true;
+    if (!thumbnailLooksLikeGlo3d(thumb)) {
+      const isUploadedPhoto =
+        /supabase\.co|cloudinary|inventario-documentos|storage/i.test(thumb) &&
+        !thumbnailLooksLikeAutoredGeneric(thumb);
+      if (!isUploadedPhoto) return true;
+    }
   }
 
   return vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle);
 }
 
-export function resolveVehicleThumbnailSrc(item: CatalogItem): string {
+export function resolveVehicleThumbnailSrc(
+  item: CatalogItem,
+  vehicleKey?: string,
+  editorConfig?: EditorConfig,
+): string {
+  const details = vehicleKey && editorConfig ? editorConfig.vehicleDetails?.[vehicleKey] : undefined;
+  const raw = item.raw as Record<string, unknown>;
   const candidate =
-    item.thumbnail ?? item.images.find((url) => url.startsWith("http") && !url.includes("placeholder"));
-  return candidate ?? "/placeholder-car.svg";
+    details?.thumbnail?.trim() ||
+    item.thumbnail?.trim() ||
+    item.images.find((url) => url.startsWith("http") && !url.includes("placeholder")) ||
+    (typeof raw.thumbnail === "string" ? raw.thumbnail : undefined) ||
+    (typeof raw.imagen_principal === "string" ? raw.imagen_principal : undefined) ||
+    (typeof raw.foto_portada === "string" ? raw.foto_portada : undefined);
+  if (candidate?.startsWith("http") && !candidate.includes("placeholder")) return candidate;
+  return "/placeholder-car.svg";
 }

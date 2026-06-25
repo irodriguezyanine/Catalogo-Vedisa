@@ -2022,6 +2022,7 @@ export async function fetchTasacionesInventarioRows(options?: {
       : (options?.estado ?? process.env.CATALOG_SOURCE_API_ESTADO?.trim());
   if (estadoFilter) endpoint.searchParams.set("estado", estadoFilter);
   endpoint.searchParams.set("incluir_medios", "true");
+  // Solo en búsqueda por patente (sync individual); el bulk no debe disparar Glo3D masivo.
 
   const response = await fetch(endpoint.toString(), {
     method: "GET",
