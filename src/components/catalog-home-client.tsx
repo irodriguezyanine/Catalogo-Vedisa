@@ -2709,6 +2709,7 @@ export function CatalogHomeClient({
   const [editingVehicleKey, setEditingVehicleKey] = useState<string | null>(null);
   const [managingVehicleKey, setManagingVehicleKey] = useState<string | null>(null);
   const [syncingVehicleKey, setSyncingVehicleKey] = useState<string | null>(null);
+  const [loadingTasacionesMedia, setLoadingTasacionesMedia] = useState(false);
   const [groupSyncAllState, setGroupSyncAllState] = useState<{
     running: boolean;
     current: number;
@@ -7243,14 +7244,95 @@ export function CatalogHomeClient({
     await refreshInventoryAndSync();
   }, [adminInventorySyncBusy, refreshInventoryAndSync]);
 
-  const syncVehicleWithGlo3dAutored = useCallback(
-    async (vehicleKey: string) => {
+  const runPatentInventorySync = useCallback(
+    async (
+      vehicleKey: string,
+      options?: { persistEditor?: boolean; updateEditingForm?: boolean },
+    ) => {
       const currentItem = itemsByKey.get(vehicleKey);
       if (!currentItem) {
-        showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
-        return;
+        throw new Error("No se pudo localizar la unidad en inventario.");
       }
       if (vehicleKey.startsWith("manual-")) {
+        throw new Error("Las unidades manuales no se sincronizan con Tasaciones.");
+      }
+
+      const patente = normalizePatentToken(getPatent(currentItem));
+      if (!patente || patente === "—") {
+        throw new Error("Esta unidad no tiene patente para sincronizar.");
+      }
+
+      const estadoRetiro = resolveEstadoRetiroForVehicleKey(
+        vehicleKey,
+        config,
+        sortedUpcomingAuctions,
+      );
+      let { payload } = await importPatentWithRetries(patente, {
+        estadoRetiro,
+        syncMode: "tasaciones-first",
+        forceRefresh: true,
+        seedInventarioRow: currentItem.raw as Record<string, unknown>,
+      });
+      if (payload.syncDiagnostics?.syncComplete === false) {
+        const skipAutored =
+          payload.autoredSynced === true || payload.syncDiagnostics.autoredSynced === true;
+        const needsGlo3dOnly =
+          skipAutored &&
+          (payload.syncDiagnostics.thumbnailSource === "autored" || !payload.hasGlo3dViewer);
+        ({ payload } = await importPatentWithRetries(patente, {
+          estadoRetiro,
+          syncMode: "external",
+          forceExternalApis: true,
+          forceRefresh: true,
+          skipAutoredFetch: skipAutored,
+          glo3dDeepScan: !needsGlo3dOnly,
+          seedInventarioRow: currentItem.raw as Record<string, unknown>,
+        }));
+      }
+
+      const resolvedKey = applyImportedPatentPayload({
+        item: payload.item!,
+        vehicleDetails: payload.vehicleDetails,
+        patente,
+        hasGlo3dViewer: payload.hasGlo3dViewer,
+      });
+
+      if (managingVehicleKey === vehicleKey && resolvedKey !== vehicleKey) {
+        setManagingVehicleKey(resolvedKey);
+      }
+
+      if (
+        options?.updateEditingForm !== false &&
+        editingVehicleKey &&
+        (editingVehicleKey === vehicleKey || editingVehicleKey === resolvedKey)
+      ) {
+        const syncedItem = applyCatalogDetailsOverride(payload.item!, payload.vehicleDetails);
+        setEditingVehicleKey(resolvedKey);
+        setEditingDetails(mergeSyncedVehicleDetails(syncedItem, payload.vehicleDetails));
+      }
+
+      if (options?.persistEditor !== false) {
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+        void persistEditorConfigRef.current(configRef.current);
+        router.refresh();
+      }
+
+      return { payload, patente, resolvedKey, vehicleKey };
+    },
+    [
+      applyImportedPatentPayload,
+      config,
+      editingVehicleKey,
+      itemsByKey,
+      managingVehicleKey,
+      router,
+      sortedUpcomingAuctions,
+    ],
+  );
+
+  const syncVehicleWithGlo3dAutored = useCallback(
+    async (vehicleKey: string) => {
+      if (itemsByKey.get(vehicleKey)?.id && vehicleKey.startsWith("manual-")) {
         showSystemNotice(
           "info",
           "Solo inventario Glo3D",
@@ -7258,63 +7340,17 @@ export function CatalogHomeClient({
         );
         return;
       }
-
-      const patente = normalizePatentToken(getPatent(currentItem));
-      if (!patente || patente === "—") {
-        showSystemNotice("error", "Sin patente", "Esta unidad no tiene patente para sincronizar.");
+      if (!itemsByKey.get(vehicleKey)) {
+        showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
         return;
       }
 
       setSyncingVehicleKey(vehicleKey);
+      let resolvedKey = vehicleKey;
       try {
-        const estadoRetiro = resolveEstadoRetiroForVehicleKey(
-          vehicleKey,
-          config,
-          sortedUpcomingAuctions,
-        );
-        let { payload } = await importPatentWithRetries(patente, {
-          estadoRetiro,
-          syncMode: "tasaciones-first",
-          forceRefresh: true,
-          seedInventarioRow: currentItem.raw as Record<string, unknown>,
-        });
-        if (payload.syncDiagnostics?.syncComplete === false) {
-          const skipAutored =
-            payload.autoredSynced === true ||
-            payload.syncDiagnostics.autoredSynced === true;
-          const needsGlo3dOnly =
-            skipAutored &&
-            (payload.syncDiagnostics.thumbnailSource === "autored" ||
-              !payload.hasGlo3dViewer);
-          ({ payload } = await importPatentWithRetries(patente, {
-            estadoRetiro,
-            syncMode: "external",
-            forceExternalApis: true,
-            forceRefresh: true,
-            skipAutoredFetch: skipAutored,
-            glo3dDeepScan: !needsGlo3dOnly,
-            seedInventarioRow: currentItem.raw as Record<string, unknown>,
-          }));
-        }
-
-        const resolvedKey = applyImportedPatentPayload({
-          item: payload.item!,
-          vehicleDetails: payload.vehicleDetails,
-          patente,
-          hasGlo3dViewer: payload.hasGlo3dViewer,
-        });
-        if (managingVehicleKey === vehicleKey && resolvedKey !== vehicleKey) {
-          setManagingVehicleKey(resolvedKey);
-        }
-
-        if (
-          editingVehicleKey &&
-          (editingVehicleKey === vehicleKey || editingVehicleKey === resolvedKey)
-        ) {
-          const syncedItem = applyCatalogDetailsOverride(payload.item!, payload.vehicleDetails);
-          setEditingVehicleKey(resolvedKey);
-          setEditingDetails(mergeSyncedVehicleDetails(syncedItem, payload.vehicleDetails));
-        }
+        const result = await runPatentInventorySync(vehicleKey);
+        resolvedKey = result.resolvedKey;
+        const { payload, patente } = result;
 
         const tasacionesNote = payload.syncDiagnostics?.tasacionesFound
           ? payload.syncDiagnostics.usedExternalApis
@@ -7348,9 +7384,6 @@ export function CatalogHomeClient({
               : "Sincronización parcial",
           `${patente} actualizado.${tasacionesNote}${glo3dNote}${autoredNote}${diagNote}`,
         );
-        await new Promise((resolve) => window.setTimeout(resolve, 80));
-        void persistEditorConfigRef.current(configRef.current);
-        router.refresh();
       } catch (error) {
         const message =
           error instanceof DOMException && error.name === "TimeoutError"
@@ -7364,20 +7397,62 @@ export function CatalogHomeClient({
           message,
         );
       } finally {
-        setSyncingVehicleKey((current) => (current === vehicleKey ? null : current));
+        setSyncingVehicleKey((current) =>
+          current === vehicleKey || current === resolvedKey ? null : current,
+        );
       }
     },
-    [
-      applyImportedPatentPayload,
-      config,
-      editingVehicleKey,
-      itemsByKey,
-      managingVehicleKey,
-      showSystemNotice,
-      sortedUpcomingAuctions,
-      router,
-    ],
+    [itemsByKey, runPatentInventorySync, showSystemNotice],
   );
+
+  const loadTasacionesInventoryIntoEditor = useCallback(async () => {
+    if (!editingVehicleKey) return;
+    if (editingVehicleKey.startsWith("manual-")) {
+      showSystemNotice("info", "Sin Tasaciones", "Las unidades manuales no tienen inventario compartido.");
+      return;
+    }
+    if (!itemsByKey.get(editingVehicleKey)) {
+      showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
+      return;
+    }
+
+    setLoadingTasacionesMedia(true);
+    setSyncingVehicleKey(editingVehicleKey);
+    let resolvedKey = editingVehicleKey;
+    try {
+      const result = await runPatentInventorySync(editingVehicleKey, {
+        updateEditingForm: true,
+        persistEditor: true,
+      });
+      resolvedKey = result.resolvedKey;
+      const { payload, patente } = result;
+      const mediaNote = payload.hasGlo3dViewer
+        ? payload.syncDiagnostics?.thumbnailSource === "glo3d"
+          ? "Visor 3D, miniatura y galería Glo3D cargados desde TasacionesVedisa1."
+          : "Visor 3D cargado; revisa miniatura en Tasaciones o usa plan B Glo3D."
+        : payload.item?.thumbnail || (payload.item?.images?.length ?? 0) > 0
+          ? "Fotos cargadas desde TasacionesVedisa1."
+          : "Tasaciones no devolvió medios para esta patente. Verifica que exista en inventario interno.";
+      showSystemNotice(
+        payload.syncDiagnostics?.syncComplete === false || !payload.syncDiagnostics?.tasacionesFound
+          ? "info"
+          : "success",
+        payload.syncDiagnostics?.tasacionesFound ? "Inventario Tasaciones cargado" : "Sin datos en Tasaciones",
+        `${patente}: ${mediaNote}`,
+      );
+    } catch (error) {
+      showSystemNotice(
+        "error",
+        "No se pudo cargar desde Tasaciones",
+        error instanceof Error ? error.message : "Error desconocido al consultar inventario.",
+      );
+    } finally {
+      setLoadingTasacionesMedia(false);
+      setSyncingVehicleKey((current) =>
+        current === editingVehicleKey || current === resolvedKey ? null : current,
+      );
+    }
+  }, [editingVehicleKey, itemsByKey, runPatentInventorySync, showSystemNotice]);
 
   const showPatentDiagnosis = useCallback(
     async (rawPatente: string) => {
@@ -13420,7 +13495,7 @@ export function CatalogHomeClient({
                     </div>
                   ) : (
                     <p className="mt-2 text-xs text-slate-500">
-                      Sin visor 3D cargado. Usa &quot;Sync Glo3D + Autored&quot; para traerlo desde Glo3D.
+                      Sin visor 3D cargado. Usa &quot;Cargar desde Tasaciones&quot; o &quot;Sync Glo3D + Autored&quot;.
                     </p>
                   )}
                 </div>
@@ -13477,26 +13552,17 @@ export function CatalogHomeClient({
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500">
-                    Sin fotos en galería. Sincroniza con Glo3D o pega URLs manualmente.
+                    Sin fotos en galería. Carga desde TasacionesVedisa1 o pega URLs manualmente.
                   </p>
                 )}
 
                 <button
                   type="button"
-                  onClick={() => {
-                    if (!editingItem) return;
-                    const images = editingItem.images.filter((url) => url.startsWith("http"));
-                    setEditingDetails((prev) => ({
-                      ...(prev ?? {}),
-                      thumbnail: prev?.thumbnail || editingItem.thumbnail || images[0] || "",
-                      view3dUrl: prev?.view3dUrl || editingItem.view3dUrl || "",
-                      imagesCsv: prev?.imagesCsv || images.join(", "),
-                    }));
-                    showSystemNotice("success", "Medios cargados", "Se tomaron miniatura, visor y galería del inventario actual.");
-                  }}
-                  className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800"
+                  onClick={() => void loadTasacionesInventoryIntoEditor()}
+                  disabled={Boolean(loadingTasacionesMedia || syncingVehicleKey)}
+                  className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 disabled:opacity-60"
                 >
-                  Cargar medios desde inventario
+                  {loadingTasacionesMedia ? "Cargando desde Tasaciones…" : "Cargar desde TasacionesVedisa1"}
                 </button>
               </div>
             ) : null}

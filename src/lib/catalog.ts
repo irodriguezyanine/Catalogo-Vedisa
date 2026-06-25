@@ -2065,63 +2065,77 @@ function normalizeTasacionesPatentRow(match: Record<string, unknown>): Record<st
   return { ...match, origen: "tasaciones" };
 }
 
+function findTasacionesRowInList(
+  rows: Record<string, unknown>[],
+  normalized: string,
+): Record<string, unknown> | undefined {
+  return rows.find(
+    (row) =>
+      normalizeStock(String(row.patente ?? row.PPU ?? row.stock_number ?? row.ppu ?? "")) ===
+      normalized,
+  );
+}
+
 export async function fetchTasacionesRecordByPatent(
   patent: string,
 ): Promise<Record<string, unknown> | null> {
   const normalized = normalizeStock(patent);
   if (!normalized) return null;
 
-  const fromSupabase = await fetchSharedInventarioRecordByPatent(normalized);
-  if (fromSupabase) return fromSupabase;
-
   const apiBase = process.env.CATALOG_SOURCE_API_URL;
-  if (!apiBase) return null;
+  if (apiBase) {
+    const token = process.env.CATALOG_SOURCE_API_TOKEN;
+    const baseEndpoint = apiBase.includes("/api/")
+      ? new URL(apiBase)
+      : new URL("/api/inventario-publico", apiBase);
 
-  const token = process.env.CATALOG_SOURCE_API_TOKEN;
-  const baseEndpoint = apiBase.includes("/api/")
-    ? new URL(apiBase)
-    : new URL("/api/inventario-publico", apiBase);
+    for (const paramName of ["patente", "ppu", "PPU", "plate", "stock_number", "q", "search"]) {
+      const endpoint = new URL(baseEndpoint.toString());
+      endpoint.searchParams.set(paramName, normalized);
+      endpoint.searchParams.set("limit", "50");
+      endpoint.searchParams.set("incluir_historicos", "true");
 
-  for (const paramName of ["patente", "ppu", "PPU", "plate", "stock_number", "q", "search"]) {
-    const endpoint = new URL(baseEndpoint.toString());
-    endpoint.searchParams.set(paramName, normalized);
-    endpoint.searchParams.set("limit", "50");
-    endpoint.searchParams.set("incluir_historicos", "true");
+      const response = await fetch(endpoint.toString(), {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token
+            ? {
+                "x-api-key": token,
+                Authorization: `Bearer ${token}`,
+              }
+            : {}),
+        },
+        cache: "no-store",
+      });
+      if (!response.ok) continue;
 
-    const response = await fetch(endpoint.toString(), {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token
-          ? {
-              "x-api-key": token,
-              Authorization: `Bearer ${token}`,
-            }
-          : {}),
-      },
-      cache: "no-store",
+      const payload = (await response.json()) as unknown;
+      const rows = extractRowsFromPayload(payload);
+      const match = findTasacionesRowInList(rows, normalized);
+      if (match) return normalizeTasacionesPatentRow(match);
+    }
+
+    const bulkNoEstado = await fetchTasacionesInventarioRows({
+      incluirHistoricos: true,
+      estado: null,
+      limit: 500,
     });
-    if (!response.ok) continue;
+    const fromBulkNoEstado = findTasacionesRowInList(bulkNoEstado, normalized);
+    if (fromBulkNoEstado) return normalizeTasacionesPatentRow(fromBulkNoEstado);
 
-    const payload = (await response.json()) as unknown;
-    const rows = extractRowsFromPayload(payload);
-    if (rows.length === 0) continue;
-
-    const match =
-      rows.find(
-        (row) =>
-          normalizeStock(String(row.patente ?? row.PPU ?? row.stock_number ?? row.ppu ?? "")) ===
-          normalized,
-      ) ?? rows[0];
-    return normalizeTasacionesPatentRow(match);
+    try {
+      const bulkMap = await fetchTasacionesInventarioMap();
+      const fromBulk = bulkMap.get(normalized);
+      if (fromBulk) return normalizeTasacionesPatentRow(fromBulk);
+    } catch {
+      // noop
+    }
   }
 
-  try {
-    const bulkMap = await fetchTasacionesInventarioMap();
-    const fromBulk = bulkMap.get(normalized);
-    if (fromBulk) return normalizeTasacionesPatentRow(fromBulk);
-  } catch {
-    // noop
+  const fromSupabase = await fetchInventarioRowByPatent(normalized);
+  if (fromSupabase && inventarioRowHasSharedInventoryData(fromSupabase)) {
+    return normalizeTasacionesPatentRow(fromSupabase);
   }
 
   return null;

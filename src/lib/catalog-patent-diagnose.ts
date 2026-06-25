@@ -2,7 +2,6 @@ import {
   fetchAutoredRecordByPatent,
   fetchGlo3dRecordByPatent,
   fetchInventarioRowByPatent,
-  fetchSharedInventarioRecordByPatent,
   fetchTasacionesRecordByPatent,
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
@@ -79,9 +78,13 @@ export async function diagnosePatentSync(rawPatente: string): Promise<PatentSync
   const warnings: string[] = [];
 
   const inventarioRow = await fetchInventarioRowByPatent(patente);
-  const tasacionesRow =
-    (await fetchSharedInventarioRecordByPatent(patente)) ??
-    (await fetchTasacionesRecordByPatent(patente));
+  const tasacionesFromApi = await fetchTasacionesRecordByPatent(patente);
+  const tasacionesRow = (() => {
+    if (tasacionesFromApi && inventarioRow) {
+      return { ...inventarioRow, ...tasacionesFromApi };
+    }
+    return tasacionesFromApi ?? inventarioRow;
+  })();
   const tasacionesCompleteness = assessTasacionesRecordCompleteness(tasacionesRow, patente);
 
   const tasacionesGlo3d = tasacionesRow ? buildGlo3dFromTasacionesRow(tasacionesRow) : null;

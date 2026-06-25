@@ -1000,11 +1000,20 @@ async function resolveTasacionesRowForImport(
     return buildAutoredFromTasacionesRow(fromCachedMap);
   }
 
+  const fromApi = await fetchTasacionesRecordByPatent(patente);
+  const fromCatalogInventario = await fetchInventarioRowByPatent(patente);
+  if (fromApi && fromCatalogInventario) {
+    return buildAutoredFromTasacionesRow(
+      mergePreferMeaningful(
+        buildAutoredFromTasacionesRow(fromApi),
+        buildAutoredFromTasacionesRow(fromCatalogInventario),
+      ),
+    );
+  }
+  if (fromApi) return buildAutoredFromTasacionesRow(fromApi);
+
   const fromSupabase = await fetchSharedInventarioRecordByPatent(patente);
   if (fromSupabase) return buildAutoredFromTasacionesRow(fromSupabase);
-
-  const fromApi = await fetchTasacionesRecordByPatent(patente);
-  if (fromApi) return buildAutoredFromTasacionesRow(fromApi);
 
   if (seed && typeof seed === "object") {
     const mergedSeed = buildAutoredFromTasacionesRow(seed);
