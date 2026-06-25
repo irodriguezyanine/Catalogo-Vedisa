@@ -1215,7 +1215,8 @@ export async function importVehicleByPatent(
     try {
       const refreshed = await fetchTasacionesRecordByPatent(requestedPatente);
       if (refreshed) {
-        tasacionesRow = mergeRicherTasacionesRows(tasacionesRow, refreshed);
+        tasacionesRow =
+          mergeRicherTasacionesRows(requestedPatente, tasacionesRow, refreshed) ?? tasacionesRow;
         tasacionesCompleteness = assessTasacionesRecordCompleteness(
           tasacionesRow,
           requestedPatente,
