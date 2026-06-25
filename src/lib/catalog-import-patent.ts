@@ -1103,9 +1103,7 @@ async function persistInventarioRow(
 ): Promise<{ row: Record<string, unknown>; created: boolean }> {
   const supabase = getServerSupabase();
   const finalPayload = existingRow
-    ? options?.forceRefresh
-      ? { ...existingRow, ...payload }
-      : mergePreferMeaningful(payload, existingRow)
+    ? mergePreferMeaningful(payload, existingRow)
     : payload;
 
   if (!supabase) {
@@ -1323,10 +1321,10 @@ export async function importVehicleByPatent(
   payload.PPU = patente;
   payload.stock_number = patente;
   if (!sanitizeModeloValue(String(payload.modelo ?? ""), patente)) {
-    payload.modelo = "Sin Modelo";
+    delete payload.modelo;
   }
   if (!sanitizeMarcaValue(String(payload.marca ?? ""))) {
-    payload.marca = "Sin Marca";
+    delete payload.marca;
   }
   const shouldPersist = Boolean(glo3d || autored || tasacionesRow || options?.forceRefresh);
 
@@ -1341,10 +1339,7 @@ export async function importVehicleByPatent(
     const item = catalogRowToItem(mergedRow);
     if (!item) throw new Error(`No se pudo normalizar el inventario para ${patente}.`);
     const hasGlo3dViewer = Boolean(glo3d?.view3dUrl ?? mergedRow.glo3d_url ?? mergedRow.url_3d);
-    const completeness = assessTasacionesRecordCompleteness(
-      tasacionesRow ?? mergedRow,
-      patente,
-    );
+    const completeness = assessTasacionesRecordCompleteness(mergedRow, patente);
 
     return buildImportPatentResult({
       item,

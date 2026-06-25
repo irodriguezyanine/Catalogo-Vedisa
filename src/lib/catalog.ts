@@ -32,6 +32,7 @@ import {
 } from "@/lib/catalog-feed-slim";
 import {
   extractAutoredImagesFromRecord,
+  isGlo3dCatalogImageUrl,
   mergeVehicleImageSources,
 } from "@/lib/catalog-sync-images";
 import {
@@ -440,6 +441,9 @@ async function fetchFromTasacionesApi(): Promise<CatalogItem[] | null> {
     "incluir_historicos",
     process.env.CATALOG_SOURCE_API_INCLUIR_HISTORICOS ?? "false",
   );
+  endpoint.searchParams.set("incluir_medios", "true");
+  endpoint.searchParams.set("fetch_glo3d", "false");
+  endpoint.searchParams.set("persistir_medios", "false");
   const estadoFilter = process.env.CATALOG_SOURCE_API_ESTADO?.trim();
   if (estadoFilter) {
     endpoint.searchParams.set("estado", estadoFilter);
@@ -2225,6 +2229,26 @@ async function enrichWithAutoredFallback(
   });
 }
 
+function isUsableCatalogThumbnail(url?: string | null): boolean {
+  return Boolean(url?.startsWith("http") && !url.includes("placeholder"));
+}
+
+function pickBetterCatalogTitle(primary?: string, fallback?: string): string {
+  const p = primary?.trim();
+  const f = fallback?.trim();
+  if (p && !isPlaceholderVehicleIdentity(p)) return p;
+  if (f && !isPlaceholderVehicleIdentity(f)) return f;
+  return p || f || "Sin modelo";
+}
+
+function pickBetterCatalogThumbnail(primary?: string, fallback?: string): string | undefined {
+  const p = isUsableCatalogThumbnail(primary) ? primary : undefined;
+  const f = isUsableCatalogThumbnail(fallback) ? fallback : undefined;
+  if (p && isGlo3dCatalogImageUrl(p)) return p;
+  if (f && isGlo3dCatalogImageUrl(f)) return f;
+  return p ?? f;
+}
+
 function mergeCatalogItems(primary: CatalogItem[], secondary: CatalogItem[]): CatalogItem[] {
   const merged = new Map<string, CatalogItem>();
 
@@ -2236,16 +2260,19 @@ function mergeCatalogItems(primary: CatalogItem[], secondary: CatalogItem[]): Ca
       return;
     }
 
+    const mergedImages =
+      item.images.length >= existing.images.length ? item.images : existing.images;
     merged.set(key, {
       ...existing,
       ...item,
+      title: pickBetterCatalogTitle(item.title, existing.title),
       subtitle: item.subtitle ?? existing.subtitle,
       lot: item.lot ?? existing.lot,
       status: item.status ?? existing.status,
       location: item.location ?? existing.location,
       auctionDate: item.auctionDate ?? existing.auctionDate,
-      images: item.images.length > 0 ? item.images : existing.images,
-      thumbnail: item.thumbnail ?? existing.thumbnail,
+      images: mergedImages.length > 0 ? mergedImages : existing.images,
+      thumbnail: pickBetterCatalogThumbnail(item.thumbnail, existing.thumbnail),
       view3dUrl: item.view3dUrl ?? existing.view3dUrl,
       raw: mergeRawPreferPrimary(
         item.raw as Record<string, unknown>,
