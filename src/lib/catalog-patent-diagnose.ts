@@ -147,7 +147,7 @@ export async function diagnosePatentSync(rawPatente: string): Promise<PatentSync
   });
 
   if (!tasacionesRow) {
-    warnings.push("Tasaciones: patente no encontrada en inventario compartido (TasacionesVedisa1).");
+    warnings.push("Sistema interno: patente no encontrada en inventario compartido.");
   } else if (!tasacionesCompleteness.complete) {
     warnings.push(`Tasaciones: ficha incompleta (${tasacionesCompleteness.missing.join(", ")}).`);
   }
@@ -164,7 +164,7 @@ export async function diagnosePatentSync(rawPatente: string): Promise<PatentSync
   let recommendation = "Ficha lista desde Tasaciones.";
   if (!tasacionesRow) {
     recommendation =
-      "Verifica que la unidad exista en TasacionesVedisa1 con glo3d_campos y autored_campos.";
+      "Verifica que la unidad exista en el sistema interno con glo3d_campos y autored_campos.";
   } else if (!tasacionesCompleteness.complete) {
     recommendation =
       "Completa la ficha en Tasaciones (visor 3D + fotos). El catálogo usará plan B solo para lo que falte.";

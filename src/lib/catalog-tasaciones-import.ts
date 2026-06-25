@@ -7,7 +7,7 @@ import {
   buildGlo3dEntryFromInventarioRow,
   type Glo3dInventoryEntry,
 } from "@/lib/catalog";
-import { extractGlo3dInventoryImages, glo3dSourcesHaveUsableImages } from "@/lib/glo3d-images";
+import { extractGlo3dInventoryImages, glo3dSourcesHaveUsableImages, normalizeCatalogImageUrl, pickImageUrlFromValue } from "@/lib/glo3d-images";
 import {
   extractAutoredImagesFromRecord,
   mergeVehicleImageSources,
@@ -40,11 +40,26 @@ function normalizeImageList(value: unknown): string[] {
   if (!value) return [];
   if (Array.isArray(value)) {
     return value
-      .filter((entry): entry is string => typeof entry === "string" && entry.startsWith("http"))
-      .map((entry) => entry.trim());
+      .flatMap((entry) => {
+        if (typeof entry === "string") {
+          const normalized = normalizeCatalogImageUrl(entry.trim());
+          return normalized ? [normalized] : [];
+        }
+        const fromObject = pickImageUrlFromValue(entry);
+        return fromObject ? [fromObject] : [];
+      })
+      .filter(Boolean);
   }
-  if (typeof value === "string" && value.startsWith("http")) return [value.trim()];
-  return [];
+  if (typeof value === "string") {
+    const direct = normalizeCatalogImageUrl(value.trim());
+    if (direct) return [direct];
+    return value
+      .split(/[\n,;|]+/)
+      .map((part) => normalizeCatalogImageUrl(part.trim()))
+      .filter((url): url is string => Boolean(url));
+  }
+  const fromObject = pickImageUrlFromValue(value);
+  return fromObject ? [fromObject] : [];
 }
 
 export function normalizePatentKey(value: string): string {
@@ -95,7 +110,11 @@ export function assessTasacionesRecordCompleteness(
   );
   const inventarioImages = [
     ...normalizeImageList(row.imagenes),
+    ...normalizeImageList(row.fotos),
     ...normalizeImageList(row.fotos_urls),
+    ...normalizeImageList(row.galeria),
+    ...normalizeImageList(row.galeria_fotos),
+    ...extractAutoredImagesFromRecord(row),
     pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]),
   ].filter((url): url is string => typeof url === "string");
 

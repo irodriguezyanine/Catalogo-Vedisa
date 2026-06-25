@@ -382,7 +382,14 @@ function resolveMergedVehicleImages(
     if (fromRow) glo3dImages = extractGlo3dImages(fromRow);
   }
   const autoredImages = extractAutoredImagesFromRecord(autored);
-  const inventarioImages = row ? normalizeImageList(row.imagenes) : [];
+  const inventarioImages = row
+    ? [
+        ...normalizeImageList(row.imagenes),
+        ...normalizeImageList(row.fotos),
+        ...normalizeImageList(row.fotos_urls),
+        ...extractAutoredImagesFromRecord(row),
+      ]
+    : [];
   const rowThumb = row ? pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]) : undefined;
   if (rowThumb?.startsWith("http")) inventarioImages.unshift(rowThumb);
   return mergeVehicleImageSources({ glo3dImages, autoredImages, inventarioImages });
@@ -434,7 +441,9 @@ function buildSyncDiagnostics(
   if (!tasaciones.found) {
     warnings.push("Tasaciones: patente no encontrada en inventario compartido.");
   } else if (!tasaciones.complete && !tasaciones.usedExternalApis) {
-    warnings.push("Tasaciones: ficha incompleta; revisa glo3d_campos/autored_campos en TasacionesVedisa1.");
+    warnings.push(
+      "Sistema interno: ficha sin fotos en API pública; completa glo3d_campos o deja que el catálogo rellene desde Glo3D.",
+    );
   }
   if (!glo3d && tasaciones.usedExternalApis) {
     warnings.push("Glo3D API: patente no encontrada en consulta directa.");
@@ -985,9 +994,29 @@ async function resolveTasacionesRowForImport(
   patente: string,
   options?: ImportPatentOptions,
 ): Promise<Record<string, unknown> | null> {
+  const buildRow = (row: Record<string, unknown>) => buildAutoredFromTasacionesRow(row);
+  const mergeSources = (...sources: Array<Record<string, unknown> | null | undefined>) => {
+    let merged: Record<string, unknown> | null = null;
+    for (const source of sources) {
+      if (!source || typeof source !== "object") continue;
+      const built = buildRow(source);
+      merged = merged ? mergePreferMeaningful(built, merged) : built;
+    }
+    return merged;
+  };
+
+  const forceRefresh = options?.forceRefresh !== false;
+
+  if (forceRefresh) {
+    const fromApi = await fetchTasacionesRecordByPatent(patente);
+    const fromCatalogInventario = await fetchInventarioRowByPatent(patente);
+    const merged = mergeSources(fromApi, fromCatalogInventario, options?.seedInventarioRow);
+    if (merged) return merged;
+  }
+
   const seed = options?.seedInventarioRow;
   if (seed && typeof seed === "object") {
-    const mergedSeed = buildAutoredFromTasacionesRow(seed);
+    const mergedSeed = buildRow(seed);
     const seedCompleteness = assessTasacionesRecordCompleteness(mergedSeed, patente);
     if (seedCompleteness.complete) {
       return mergedSeed;
@@ -996,32 +1025,25 @@ async function resolveTasacionesRowForImport(
 
   const fromMap = resolveTasacionesRowFromMap(patente, options?.tasacionesMap);
   if (fromMap) {
-    return buildAutoredFromTasacionesRow(fromMap);
+    return buildRow(fromMap);
   }
 
   const cachedMap = getCachedTasacionesInventarioMap();
   const fromCachedMap = resolveTasacionesRowFromMap(patente, cachedMap);
   if (fromCachedMap) {
-    return buildAutoredFromTasacionesRow(fromCachedMap);
+    return buildRow(fromCachedMap);
   }
 
   const fromApi = await fetchTasacionesRecordByPatent(patente);
   const fromCatalogInventario = await fetchInventarioRowByPatent(patente);
-  if (fromApi && fromCatalogInventario) {
-    return buildAutoredFromTasacionesRow(
-      mergePreferMeaningful(
-        buildAutoredFromTasacionesRow(fromApi),
-        buildAutoredFromTasacionesRow(fromCatalogInventario),
-      ),
-    );
-  }
-  if (fromApi) return buildAutoredFromTasacionesRow(fromApi);
+  const mergedApi = mergeSources(fromApi, fromCatalogInventario);
+  if (mergedApi) return mergedApi;
 
   const fromSupabase = await fetchSharedInventarioRecordByPatent(patente);
-  if (fromSupabase) return buildAutoredFromTasacionesRow(fromSupabase);
+  if (fromSupabase) return buildRow(fromSupabase);
 
   if (seed && typeof seed === "object") {
-    const mergedSeed = buildAutoredFromTasacionesRow(seed);
+    const mergedSeed = buildRow(seed);
     const completeness = assessTasacionesRecordCompleteness(mergedSeed, patente);
     if (completeness.hasIdentity || completeness.hasGlo3dViewer || completeness.hasThumbnail) {
       return mergedSeed;
@@ -1206,32 +1228,43 @@ export async function importVehicleByPatent(
   const tasacionesFound = Boolean(tasacionesRow);
   const allowExternalApis =
     forceExternalApis || (options?.isNewUnit === true && !tasacionesFound);
+  /** Tasaciones tiene la patente pero la API no trae fotos embebidas → solo pedir imágenes a Glo3D. */
+  const allowGlo3dMediaFill =
+    !forceExternalApis &&
+    tasacionesFound &&
+    !tasacionesCompleteness.hasThumbnail;
 
   logCatalogSync(`${requestedPatente} resolve`, {
     fromTasaciones,
     tasacionesFound,
     tasacionesComplete: tasacionesCompleteness.complete,
     allowExternalApis,
+    allowGlo3dMediaFill,
     forceExternalApis,
     isNewUnit: options?.isNewUnit === true,
   });
 
-  // ── 2) Plan B: solo unidades nuevas sin Tasaciones ───────────────────────
+  // ── 2) Plan B: unidades nuevas sin Tasaciones, o solo medios Glo3D si faltan fotos ──
   const needsExternalGlo3d =
-    allowExternalApis &&
-    importNeedsExternalGlo3d(options, forceExternalApis, glo3d, localContextRow);
+    (allowExternalApis || allowGlo3dMediaFill) &&
+    importNeedsExternalGlo3d(
+      options,
+      forceExternalApis || allowGlo3dMediaFill,
+      glo3d,
+      localContextRow,
+    );
   const needsExternalAutored =
     allowExternalApis &&
     !options?.skipAutoredFetch &&
     !autoredRecordHasIdentity(autored, requestedPatente);
 
   if (needsExternalGlo3d && !options?.skipGlo3dFetch) {
-    usedExternalApis = true;
+    usedExternalApis = allowExternalApis || allowGlo3dMediaFill;
     skippedGlo3dFetch = false;
     try {
       const fetched = await fetchGlo3dRecordByPatent(requestedPatente, {
         forceRefresh: true,
-        deepScan: options?.glo3dDeepScan === true,
+        deepScan: allowGlo3dMediaFill || options?.glo3dDeepScan === true,
       });
       glo3d = fetched ?? glo3d;
     } catch (error) {
@@ -1352,7 +1385,7 @@ export async function importVehicleByPatent(
       hasExistingRow: Boolean(existingRowEarlyOrNull),
     });
     throw new Error(
-      `No se encontró ${requestedPatente} en Tasaciones. Agrégala primero en TasacionesVedisa1 o usa «Agregar unidades» para importar desde Glo3D/Autored.`,
+      `No se encontró ${requestedPatente} en el sistema interno. Agrégala primero allí o usa «Agregar unidades» para importar desde Glo3D/Autored.`,
     );
   }
 

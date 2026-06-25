@@ -7343,9 +7343,11 @@ export function CatalogHomeClient({
 
         const tasacionesNote = payload.syncDiagnostics?.tasacionesFound
           ? payload.syncDiagnostics.usedExternalApis
-            ? " Tasaciones + Glo3D/Autored (unidad nueva)."
-            : " Importado desde TasacionesVedisa1."
-          : " Sin registro en Tasaciones — completa la ficha en TasacionesVedisa1 o usa «Agregar unidades».";
+            ? payload.syncDiagnostics.autoredSynced
+              ? " Sistema interno + fotos Glo3D (API interna sin miniatura)."
+              : " Sistema interno + Glo3D/Autored (unidad nueva)."
+            : " Importado desde el sistema interno."
+          : " Sin registro en el sistema interno — completa la ficha allí o usa «Agregar unidades».";
         const autoredNote = payload.autoredSynced
           ? " Autored aplicado."
           : payload.autoredReason === "not_configured"
@@ -7417,22 +7419,22 @@ export function CatalogHomeClient({
       const { payload, patente } = result;
       const mediaNote = payload.hasGlo3dViewer
         ? payload.syncDiagnostics?.thumbnailSource === "glo3d"
-          ? "Visor 3D, miniatura y galería Glo3D cargados desde TasacionesVedisa1."
-          : "Visor 3D cargado; revisa miniatura en Tasaciones o usa plan B Glo3D."
+          ? "Visor 3D, miniatura y galería Glo3D cargados desde el sistema interno."
+          : "Visor 3D cargado; revisa miniatura en el sistema interno o usa plan B Glo3D."
         : payload.item?.thumbnail || (payload.item?.images?.length ?? 0) > 0
-          ? "Fotos cargadas desde TasacionesVedisa1."
-          : "Tasaciones no devolvió medios para esta patente. Verifica que exista en inventario interno.";
+          ? "Fotos cargadas desde el sistema interno."
+          : "El sistema interno no devolvió medios para esta patente. Verifica que exista en inventario interno.";
       showSystemNotice(
         payload.syncDiagnostics?.syncComplete === false || !payload.syncDiagnostics?.tasacionesFound
           ? "info"
           : "success",
-        payload.syncDiagnostics?.tasacionesFound ? "Inventario Tasaciones cargado" : "Sin datos en Tasaciones",
+        payload.syncDiagnostics?.tasacionesFound ? "Inventario del sistema interno cargado" : "Sin datos en el sistema interno",
         `${patente}: ${mediaNote}`,
       );
     } catch (error) {
       showSystemNotice(
         "error",
-        "No se pudo cargar desde Tasaciones",
+        "No se pudo cargar desde el sistema interno",
         error instanceof Error ? error.message : "Error desconocido al consultar inventario.",
       );
     } finally {
@@ -7509,7 +7511,7 @@ export function CatalogHomeClient({
       showSystemNotice(
         "success",
         "Grupo al día",
-        "Todas las unidades del grupo ya tienen ficha completa desde Tasaciones.",
+        "Todas las unidades del grupo ya tienen ficha completa desde el sistema interno.",
       );
       return;
     }
@@ -7538,7 +7540,7 @@ export function CatalogHomeClient({
           appliedCount += 1;
           if (result.payload.syncDiagnostics?.syncComplete === false) {
             incomplete.push(
-              `${target.patente}: ${result.payload.syncDiagnostics?.warnings[0] ?? "ficha incompleta en Tasaciones"}`,
+              `${target.patente}: ${result.payload.syncDiagnostics?.warnings[0] ?? "ficha incompleta en el sistema interno"}`,
             );
           } else {
             okCount += 1;
@@ -7565,7 +7567,7 @@ export function CatalogHomeClient({
         showSystemNotice(
           "success",
           "Grupo sincronizado",
-          `${okCount} unidad(es) actualizadas desde TasacionesVedisa1.`,
+          `${okCount} unidad(es) actualizadas desde el sistema interno.`,
         );
       } else {
         const incompleteNote =
@@ -8910,7 +8912,7 @@ export function CatalogHomeClient({
                                 type="button"
                                 onClick={() => void showPatentDiagnosis(getPatent(item))}
                                 className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800 underline decoration-amber-400/70 underline-offset-2 hover:bg-amber-200"
-                                title="Ver diagnóstico Tasaciones / Glo3D / Autored"
+                                title="Ver diagnóstico del sistema interno / Glo3D / Autored"
                               >
                                 Sin sync
                               </button>
@@ -12010,12 +12012,12 @@ export function CatalogHomeClient({
                       ? `Sincronizando ${groupSyncAllState.current}/${groupSyncAllState.total}${
                           groupSyncAllState.patente ? ` · ${groupSyncAllState.patente}` : ""
                         }`
-                      : "Sincronizar grupo desde TasacionesVedisa1"
+                      : "Sincronizar grupo desde el sistema interno"
                   }
                   aria-label={
                     groupSyncAllState?.running
                       ? `Sincronizando ${groupSyncAllState.current} de ${groupSyncAllState.total} unidades`
-                      : "Sincronizar todas las unidades del grupo desde TasacionesVedisa1"
+                      : "Sincronizar todas las unidades del grupo desde el sistema interno"
                   }
                 >
                   {groupSyncAllState?.running ? (
@@ -12038,7 +12040,7 @@ export function CatalogHomeClient({
             {groupSyncAllState?.running ? (
               <div className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2">
                 <p className="text-xs font-semibold text-cyan-900">
-                  Sincronizando desde TasacionesVedisa1… {groupSyncAllState.current}/{groupSyncAllState.total}
+                  Sincronizando desde el sistema interno… {groupSyncAllState.current}/{groupSyncAllState.total}
                   {groupSyncAllState.patente ? ` · ${groupSyncAllState.patente}` : ""}
                 </p>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cyan-100">
@@ -12208,7 +12210,7 @@ export function CatalogHomeClient({
                               type="button"
                               onClick={() => void showPatentDiagnosis(getPatent(item))}
                               className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-amber-800 underline decoration-amber-400/70 underline-offset-2 hover:bg-amber-200"
-                              title="Ver diagnóstico Tasaciones / Glo3D / Autored"
+                              title="Ver diagnóstico del sistema interno / Glo3D / Autored"
                             >
                               Sin sync
                             </button>
@@ -12501,7 +12503,7 @@ export function CatalogHomeClient({
               !batchAssignImporting ? (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm text-slate-500">
                   Sin resultados en inventario local. Pulsa &quot;Importar Glo3D&quot; para traer la
-                  patente desde TasacionesVedisa1 (o Glo3D/Autored si es nueva).
+                  patente desde el sistema interno (o Glo3D/Autored si es nueva).
                 </p>
               ) : null}
             </div>
@@ -12685,9 +12687,9 @@ export function CatalogHomeClient({
                     onClick={() => void syncManagingVehicleWithGlo3dAutored()}
                     disabled={Boolean(syncingVehicleKey)}
                     className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="Traer miniatura y ficha desde TasacionesVedisa1"
+                    title="Traer miniatura y ficha desde el sistema interno"
                   >
-                    {syncingVehicleKey === managingVehicleKey ? "Sync…" : "Sync Tasaciones"}
+                    {syncingVehicleKey === managingVehicleKey ? "Sync…" : "Sistema interno"}
                   </button>
                 ) : null}
                 <button
@@ -13367,7 +13369,7 @@ export function CatalogHomeClient({
                     </div>
                   ) : (
                     <p className="mt-2 text-xs text-slate-500">
-                      Sin visor 3D cargado. Usa &quot;Cargar desde TasacionesVedisa1&quot; en la sección Fotos.
+                      Sin visor 3D cargado. Usa &quot;Cargar desde el sistema interno&quot; en la sección Fotos.
                     </p>
                   )}
                 </div>
@@ -13424,7 +13426,7 @@ export function CatalogHomeClient({
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500">
-                    Sin fotos en galería. Carga desde TasacionesVedisa1 o pega URLs manualmente.
+                    Sin fotos en galería. Carga desde el sistema interno o pega URLs manualmente.
                   </p>
                 )}
 
@@ -13434,7 +13436,7 @@ export function CatalogHomeClient({
                   disabled={Boolean(loadingTasacionesMedia || syncingVehicleKey)}
                   className="ui-focus rounded border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 disabled:opacity-60"
                 >
-                  {loadingTasacionesMedia ? "Cargando desde Tasaciones…" : "Cargar desde TasacionesVedisa1"}
+                  {loadingTasacionesMedia ? "Cargando desde el sistema interno…" : "Cargar desde el sistema interno"}
                 </button>
               </div>
             ) : null}
