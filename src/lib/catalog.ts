@@ -1434,10 +1434,21 @@ export function buildGlo3dEntryFromInventarioRow(
 ): Glo3dInventoryEntry | null {
   const rawCandidate = row.glo3d_campos ?? row.glo3d;
   if (rawCandidate && typeof rawCandidate === "object" && !Array.isArray(rawCandidate)) {
-    const entry = buildGlo3dEntryFromRaw(rawCandidate as Record<string, unknown>);
+    const raw = rawCandidate as Record<string, unknown>;
+    const entry = buildGlo3dEntryFromRaw(raw);
     if (entry) return entry;
+    const nestedEmbed = pickString(raw, ["embed_url", "iframe", "src", "glo3d_url"]);
+    if (nestedEmbed) {
+      return buildGlo3dEntryFromRaw({ ...raw, iframe: nestedEmbed, src: nestedEmbed });
+    }
   }
-  const view3dUrl = pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]);
+  const view3dUrl =
+    pickString(row, ["glo3d_url", "url_3d", "visor_3d_url"]) ??
+    (row.glo3d &&
+    typeof row.glo3d === "object" &&
+    !Array.isArray(row.glo3d)
+      ? pickString(row.glo3d as Record<string, unknown>, ["embed_url", "direct_url", "stock_embed_url"])
+      : undefined);
   if (!view3dUrl) return null;
   const raw =
     rawCandidate && typeof rawCandidate === "object" && !Array.isArray(rawCandidate)
@@ -2010,6 +2021,7 @@ export async function fetchTasacionesInventarioRows(options?: {
       ? null
       : (options?.estado ?? process.env.CATALOG_SOURCE_API_ESTADO?.trim());
   if (estadoFilter) endpoint.searchParams.set("estado", estadoFilter);
+  endpoint.searchParams.set("incluir_medios", "true");
 
   const response = await fetch(endpoint.toString(), {
     method: "GET",
@@ -2115,6 +2127,7 @@ export async function fetchTasacionesRecordByPatent(
       endpoint.searchParams.set(paramName, normalized);
       endpoint.searchParams.set("limit", "50");
       endpoint.searchParams.set("incluir_historicos", "true");
+      endpoint.searchParams.set("incluir_medios", "true");
 
       const response = await fetch(endpoint.toString(), {
         method: "GET",
