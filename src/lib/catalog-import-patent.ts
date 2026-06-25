@@ -70,6 +70,10 @@ export type ImportPatentOptions = {
   syncMode?: ImportPatentSyncMode;
   /** Omite consulta a Glo3D (útil si la API está saturada). */
   skipGlo3dFetch?: boolean;
+  /** Omite reconsulta Autored si Tasaciones ya trae identidad (plan B más rápido). */
+  skipAutoredFetch?: boolean;
+  /** Paginación profunda Glo3D solo si búsqueda rápida no encuentra la patente. */
+  glo3dDeepScan?: boolean;
   /** Mapa precargado de inventario Tasaciones (import por lote). */
   tasacionesMap?: Map<string, Record<string, unknown>>;
   /** Fila parcial del ítem en catálogo (feed/editor) para completar la importación. */
@@ -369,7 +373,11 @@ function resolveMergedVehicleImages(
   autored: Record<string, unknown> | null | undefined,
   row?: Record<string, unknown>,
 ) {
-  const glo3dImages = glo3d ? extractGlo3dImages(glo3d) : [];
+  let glo3dImages = glo3d ? extractGlo3dImages(glo3d) : [];
+  if (glo3dImages.length === 0 && row) {
+    const fromRow = buildGlo3dEntryFromInventarioRow(row);
+    if (fromRow) glo3dImages = extractGlo3dImages(fromRow);
+  }
   const autoredImages = extractAutoredImagesFromRecord(autored);
   const inventarioImages = row ? normalizeImageList(row.imagenes) : [];
   const rowThumb = row ? pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]) : undefined;
@@ -394,12 +402,11 @@ function resolveImportedGlo3dImages(
 
 function importNeedsExternalGlo3d(
   options: ImportPatentOptions | undefined,
-  forceExternalApis: boolean,
+  _forceExternalApis: boolean,
   glo3d: Glo3dInventoryEntry | null,
   row?: Record<string, unknown> | null,
 ): boolean {
   if (options?.skipGlo3dFetch) return false;
-  if (forceExternalApis) return true;
   const entry = glo3d ?? (row ? buildGlo3dEntryFromInventarioRow(row) : null);
   const images = resolveImportedGlo3dImages(glo3d, row);
   if (entry?.view3dUrl && images.length > 0) return false;
@@ -973,9 +980,24 @@ async function resolveTasacionesRowForImport(
   patente: string,
   options?: ImportPatentOptions,
 ): Promise<Record<string, unknown> | null> {
+  const seed = options?.seedInventarioRow;
+  if (seed && typeof seed === "object") {
+    const mergedSeed = buildAutoredFromTasacionesRow(seed);
+    const seedCompleteness = assessTasacionesRecordCompleteness(mergedSeed, patente);
+    if (seedCompleteness.complete) {
+      return mergedSeed;
+    }
+  }
+
   const fromMap = resolveTasacionesRowFromMap(patente, options?.tasacionesMap);
   if (fromMap) {
     return buildAutoredFromTasacionesRow(fromMap);
+  }
+
+  const cachedMap = getCachedTasacionesInventarioMap();
+  const fromCachedMap = resolveTasacionesRowFromMap(patente, cachedMap);
+  if (fromCachedMap) {
+    return buildAutoredFromTasacionesRow(fromCachedMap);
   }
 
   const fromSupabase = await fetchSharedInventarioRecordByPatent(patente);
@@ -984,7 +1006,6 @@ async function resolveTasacionesRowForImport(
   const fromApi = await fetchTasacionesRecordByPatent(patente);
   if (fromApi) return buildAutoredFromTasacionesRow(fromApi);
 
-  const seed = options?.seedInventarioRow;
   if (seed && typeof seed === "object") {
     const mergedSeed = buildAutoredFromTasacionesRow(seed);
     const completeness = assessTasacionesRecordCompleteness(mergedSeed, patente);
@@ -1176,7 +1197,7 @@ export async function importVehicleByPatent(
     localContextRow,
   );
   const needsExternalAutored =
-    forceExternalApis || !autoredRecordHasIdentity(autored, requestedPatente);
+    !options?.skipAutoredFetch && !autoredRecordHasIdentity(autored, requestedPatente);
 
   if (needsExternalGlo3d && !options?.skipGlo3dFetch) {
     usedExternalApis = true;
@@ -1184,6 +1205,7 @@ export async function importVehicleByPatent(
     try {
       const fetched = await fetchGlo3dRecordByPatent(requestedPatente, {
         forceRefresh: true,
+        deepScan: options?.glo3dDeepScan === true,
       });
       glo3d = fetched ?? glo3d;
     } catch (error) {
@@ -1312,7 +1334,7 @@ export async function importVehicleByPatent(
 }
 
 const TASACIONES_BATCH_DELAY_MS = Number(process.env.TASACIONES_BATCH_DELAY_MS ?? "0");
-const EXTERNAL_API_BATCH_DELAY_MS = Number(process.env.EXTERNAL_API_BATCH_DELAY_MS ?? "900");
+const EXTERNAL_API_BATCH_DELAY_MS = Number(process.env.EXTERNAL_API_BATCH_DELAY_MS ?? "450");
 
 export async function preloadTasacionesMapForImport(
   options?: ImportPatentOptions,

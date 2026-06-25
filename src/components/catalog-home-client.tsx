@@ -7279,11 +7279,20 @@ export function CatalogHomeClient({
           seedInventarioRow: currentItem.raw as Record<string, unknown>,
         });
         if (payload.syncDiagnostics?.syncComplete === false) {
+          const skipAutored =
+            payload.autoredSynced === true ||
+            payload.syncDiagnostics.autoredSynced === true;
+          const needsGlo3dOnly =
+            skipAutored &&
+            (payload.syncDiagnostics.thumbnailSource === "autored" ||
+              !payload.hasGlo3dViewer);
           ({ payload } = await importPatentWithRetries(patente, {
             estadoRetiro,
             syncMode: "external",
             forceExternalApis: true,
             forceRefresh: true,
+            skipAutoredFetch: skipAutored,
+            glo3dDeepScan: !needsGlo3dOnly,
             seedInventarioRow: currentItem.raw as Record<string, unknown>,
           }));
         }
@@ -7462,6 +7471,8 @@ export function CatalogHomeClient({
           patente: chunk[0]?.patente,
         });
 
+        let chunkUsedExternalApis = false;
+
         try {
           const resolveSeedRow = (patente: string) => {
             const item =
@@ -7501,7 +7512,23 @@ export function CatalogHomeClient({
           let rows = await importChunk(false);
           const stillIncomplete = rows.filter((row) => row.syncDiagnostics?.syncComplete === false);
           if (stillIncomplete.length > 0) {
-            rows = await importChunk(true);
+            chunkUsedExternalApis = true;
+            const skipAutoredForChunk = stillIncomplete.every(
+              (row) => row.autoredSynced || row.syncDiagnostics?.autoredSynced,
+            );
+            rows = await importPatentsBatchWithRetries(
+              chunk.map((entry) => entry.patente),
+              {
+                estadoRetiro,
+                syncMode: "external",
+                forceExternalApis: true,
+                forceRefresh: true,
+                skipAutoredFetch: skipAutoredForChunk,
+                glo3dDeepScan: stillIncomplete.some(
+                  (row) => !row.hasGlo3dViewer && row.syncDiagnostics?.glo3dFound !== true,
+                ),
+              },
+            ).then((batch) => batch.results ?? []);
           }
 
           for (const row of rows) {
@@ -7537,7 +7564,7 @@ export function CatalogHomeClient({
           patente: chunk[chunk.length - 1]?.patente,
         });
 
-        if (index + CATALOG_SYNC_BATCH_CHUNK_SIZE < targets.length) {
+        if (index + CATALOG_SYNC_BATCH_CHUNK_SIZE < targets.length && chunkUsedExternalApis) {
           await sleepMs(CATALOG_SYNC_PATENT_DELAY_MS);
         }
       }

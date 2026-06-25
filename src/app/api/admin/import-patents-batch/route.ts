@@ -22,6 +22,8 @@ export async function POST(req: Request) {
     forceExternalApis?: boolean;
     syncMode?: "tasaciones-first" | "external";
     skipGlo3dFetch?: boolean;
+    skipAutoredFetch?: boolean;
+    glo3dDeepScan?: boolean;
   };
   const patentes = Array.isArray(body.patentes)
     ? body.patentes.map((value) => String(value ?? "").trim()).filter(Boolean)
@@ -43,6 +45,8 @@ export async function POST(req: Request) {
       forceExternalApis: body.forceExternalApis,
       syncMode: body.syncMode ?? "tasaciones-first",
       skipGlo3dFetch: body.skipGlo3dFetch,
+      skipAutoredFetch: body.skipAutoredFetch,
+      glo3dDeepScan: body.glo3dDeepScan,
     });
     revalidateCatalogSurfaces();
     return Response.json({

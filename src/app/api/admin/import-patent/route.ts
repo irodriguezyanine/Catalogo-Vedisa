@@ -23,6 +23,8 @@ export async function POST(req: Request) {
     forceExternalApis?: boolean;
     syncMode?: "tasaciones-first" | "external";
     skipGlo3dFetch?: boolean;
+    skipAutoredFetch?: boolean;
+    glo3dDeepScan?: boolean;
     seedInventarioRow?: Record<string, unknown>;
   };
   const patente = String(body.patente ?? "").trim();
@@ -37,6 +39,8 @@ export async function POST(req: Request) {
       forceExternalApis: body.forceExternalApis,
       syncMode: body.syncMode,
       skipGlo3dFetch: body.skipGlo3dFetch,
+      skipAutoredFetch: body.skipAutoredFetch,
+      glo3dDeepScan: body.glo3dDeepScan,
       seedInventarioRow: body.seedInventarioRow,
     });
     revalidateCatalogSurfaces();

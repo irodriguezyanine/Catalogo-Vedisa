@@ -5,8 +5,10 @@ import type { EditorVehicleDetails } from "@/types/editor";
 
 const CHILE_TIME_ZONE = "America/Santiago";
 
-/** Pausa entre lotes cuando se usan APIs externas (plan B). */
-export const CATALOG_SYNC_PATENT_DELAY_MS = 1_200;
+/** Pausa entre lotes cuando el chunk anterior usó APIs externas (plan B). */
+export const CATALOG_SYNC_PATENT_DELAY_MS = Number(
+  process.env.CATALOG_SYNC_PATENT_DELAY_MS ?? "350",
+);
 export const CATALOG_SYNC_PATENT_MAX_RETRIES = 4;
 export const CATALOG_SYNC_PATENT_RETRY_BASE_MS = 3_000;
 export const CATALOG_SYNC_PATENT_TIMEOUT_MS = 120_000;
@@ -19,6 +21,8 @@ export type ImportPatentClientOptions = {
   forceExternalApis?: boolean;
   syncMode?: ImportPatentSyncMode;
   skipGlo3dFetch?: boolean;
+  skipAutoredFetch?: boolean;
+  glo3dDeepScan?: boolean;
   seedInventarioRow?: Record<string, unknown>;
 };
 
@@ -75,6 +79,8 @@ function buildImportPatentBody(patente: string, options: ImportPatentClientOptio
     forceExternalApis: options.forceExternalApis ?? syncMode === "external",
     syncMode,
     skipGlo3dFetch: options.skipGlo3dFetch ?? false,
+    skipAutoredFetch: options.skipAutoredFetch ?? false,
+    glo3dDeepScan: options.glo3dDeepScan ?? false,
     seedInventarioRow: options.seedInventarioRow,
   };
 }
@@ -149,6 +155,8 @@ export async function postImportPatentsBatch(
       forceExternalApis: options.forceExternalApis ?? syncMode === "external",
       syncMode,
       skipGlo3dFetch: options.skipGlo3dFetch ?? false,
+      skipAutoredFetch: options.skipAutoredFetch ?? false,
+      glo3dDeepScan: options.glo3dDeepScan ?? false,
     }),
     signal: AbortSignal.timeout(CATALOG_SYNC_BATCH_TIMEOUT_MS),
   });

@@ -90,7 +90,7 @@ export function vehicleNeedsQuickSync(
       item.images.find((url) => url.startsWith("http")) ??
       (typeof raw.thumbnail === "string" ? raw.thumbnail : undefined);
     if (!thumb) return true;
-    if (thumb && !thumbnailLooksLikeGlo3d(thumb) && !view3dUrl) return true;
+    if (thumb && !thumbnailLooksLikeGlo3d(thumb)) return true;
   }
 
   return vehicleTitleNeedsSync(item, vehicleKey, editorConfig, isStaleTitle);

@@ -41,6 +41,18 @@ describe("vehicleNeedsQuickSync", () => {
     expect(vehicleNeedsQuickSync(item, "RHCP68", baseConfig)).toBe(false);
   });
 
+  it("requiere sync si hay visor Glo3D pero miniatura de Autored", () => {
+    const item = {
+      ...baseItem,
+      thumbnail: "https://autored.cl/foto.jpg",
+      raw: {
+        ...baseItem.raw,
+        glo3d_url: "https://glo3d.net/iframeNova/abc123",
+      },
+    };
+    expect(vehicleNeedsQuickSync(item, "RHCP68", baseConfig)).toBe(true);
+  });
+
   it("omite publicaciones manuales", () => {
     expect(vehicleNeedsQuickSync(baseItem, "manual-abc", baseConfig)).toBe(false);
   });

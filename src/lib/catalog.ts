@@ -1384,10 +1384,13 @@ function resolveGlo3dEntryFromPayload(
 
 async function fetchGlo3dByPatentScan(
   patent: string,
+  options?: { deepScan?: boolean },
 ): Promise<{ entry: Glo3dInventoryEntry | null; rateLimited: boolean }> {
   const target = normalizeStock(patent);
   if (!target) return { entry: null, rateLimited: false };
   if (isGlo3dCircuitOpen()) return { entry: null, rateLimited: true };
+
+  const deepScan = options?.deepScan === true;
 
   const searchPayload = await fetchGlo3dInventoryPage(0, target);
   if (searchPayload.rateLimited) {
@@ -1397,6 +1400,14 @@ async function fetchGlo3dByPatentScan(
   if (searchPayload.ok) {
     const found = resolveGlo3dEntryFromPayload(searchPayload.data, target);
     if (found) return { entry: found, rateLimited: false };
+  }
+
+  const stockLookup = await fetchGlo3dByStocks([target]);
+  const fromStockScan = stockLookup.get(target);
+  if (fromStockScan) return { entry: fromStockScan, rateLimited: false };
+
+  if (!deepScan) {
+    return { entry: null, rateLimited: false };
   }
 
   for (let page = 0; page < GLO3D_MAX_PAGES; page += 1) {
@@ -1413,10 +1424,6 @@ async function fetchGlo3dByPatentScan(
 
     if (payload.remaining <= 0 || payload.data.length === 0) break;
   }
-
-  const stockLookup = await fetchGlo3dByStocks([target]);
-  const fromStockScan = stockLookup.get(target);
-  if (fromStockScan) return { entry: fromStockScan, rateLimited: false };
 
   return { entry: null, rateLimited: false };
 }
@@ -1460,7 +1467,7 @@ export function invalidateAutoredPatentCache(patent?: string): void {
 
 export async function fetchGlo3dRecordByPatent(
   patent: string,
-  options?: { forceRefresh?: boolean },
+  options?: { forceRefresh?: boolean; deepScan?: boolean },
 ): Promise<Glo3dInventoryEntry | null> {
   const stock = normalizeStock(patent);
   if (!stock) return null;
@@ -1474,7 +1481,9 @@ export async function fetchGlo3dRecordByPatent(
     return cached.entry;
   }
 
-  const lookup = await fetchGlo3dByPatentScan(stock);
+  const lookup = await fetchGlo3dByPatentScan(stock, {
+    deepScan: options?.deepScan === true,
+  });
   glo3dPatentCache.set(stock, {
     expires:
       Date.now() +
