@@ -1,5 +1,12 @@
+import {
+  mergeEditorVehicleDetailsSmart,
+  type RainworxEditorMergeMode,
+  type RainworxSmartMergeStats,
+} from "@/lib/rainworx-merge-smart";
 import type { EditorVehicleDetails } from "@/types/editor";
 import type { RainworxLotScraped } from "@/lib/rainworx-scrape";
+
+export type { RainworxEditorMergeMode, RainworxSmartMergeStats };
 import { cloudinaryRawPdfUrlForInlineDisplay } from "@/lib/cloudinary-delivery";
 import {
   coerceSiNoSpanish,
@@ -262,8 +269,11 @@ export function formatClpString(amount: number): string {
 export function mergeEditorVehicleDetails(
   existing: EditorVehicleDetails | undefined,
   incoming: EditorVehicleDetails,
-  mode: "rainworx_wins" | "fill_empty",
+  mode: RainworxEditorMergeMode,
 ): EditorVehicleDetails {
+  if (mode === "merge_smart") {
+    return mergeEditorVehicleDetailsSmart(existing, incoming).details;
+  }
   if (mode === "rainworx_wins" || !existing) {
     return { ...(existing ?? {}), ...incoming } as EditorVehicleDetails;
   }

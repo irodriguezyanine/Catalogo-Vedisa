@@ -2629,6 +2629,7 @@ export function CatalogHomeClient({
   const [detailRainworxUrl, setDetailRainworxUrl] = useState("");
   const [detailRainworxImporting, setDetailRainworxImporting] = useState(false);
   const [groupRainworxEventUrl, setGroupRainworxEventUrl] = useState("");
+  const [groupRainworxAddMissing, setGroupRainworxAddMissing] = useState(true);
   const [groupRainworxImporting, setGroupRainworxImporting] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const buildVehicleAnalyticsContextRef = useRef<
@@ -5656,6 +5657,14 @@ export function CatalogHomeClient({
     };
   }, [groupManageTarget, sortedUpcomingAuctions]);
 
+  const groupManageCommercialEventType = useMemo((): "remate" | "venta_directa" => {
+    if (!groupManageTarget || groupManageTarget.type !== "auction") return "remate";
+    const auction = sortedUpcomingAuctions.find((entry) => entry.id === groupManageTarget.auctionId);
+    return getAuctionCommercialEventType(
+      auction ?? { id: groupManageTarget.auctionId, name: "", date: "" },
+    );
+  }, [groupManageTarget, sortedUpcomingAuctions]);
+
   const toggleGroupManageVehicle = useCallback((vehicleKey: string) => {
     setGroupManageSelectedKeys((prev) =>
       prev.includes(vehicleKey)
@@ -7587,12 +7596,21 @@ export function CatalogHomeClient({
   const notifyRainworxEventImportOutcome = (
     data: {
       count?: number;
-      editor?: { applied?: string[]; skipped?: { reason: string; lotId?: string }[] };
+      editor?: {
+        applied?: string[];
+        skipped?: { reason: string; lotId?: string }[];
+        updatedPatentes?: string[];
+        newPatentes?: string[];
+        photosPreserved?: number;
+      };
     },
     contextLabel: string,
   ) => {
     const applied = data.editor?.applied ?? [];
     const skipped = data.editor?.skipped ?? [];
+    const updated = data.editor?.updatedPatentes ?? [];
+    const added = data.editor?.newPatentes ?? [];
+    const photosPreserved = data.editor?.photosPreserved ?? 0;
     if (skipped.length > 0) {
       showSystemNotice(
         "info",
@@ -7611,10 +7629,22 @@ export function CatalogHomeClient({
       );
       return;
     }
+    const parts: string[] = [];
+    if (updated.length > 0) {
+      parts.push(`${updated.length} ficha(s) actualizada(s) sin pisar fotos Glo3D`);
+    }
+    if (added.length > 0) {
+      parts.push(`${added.length} patente(s) nueva(s) agregada(s): ${added.join(", ")}`);
+    }
+    if (photosPreserved > 0) {
+      parts.push(`${photosPreserved} miniatura(s) Glo3D/Tasaciones conservada(s)`);
+    }
     showSystemNotice(
       "success",
       "Evento Rainworx sincronizado",
-      `${n} lote(s) leídos. Fichas actualizadas en ${contextLabel}: ${applied.join(", ")}.`,
+      parts.length > 0
+        ? `${n} lote(s) leídos. ${parts.join(". ")}.`
+        : `${n} lote(s) leídos. Fichas actualizadas en ${contextLabel}: ${applied.join(", ")}.`,
     );
   };
 
@@ -7634,7 +7664,7 @@ export function CatalogHomeClient({
     try {
       const body: Record<string, unknown> = {
         applyToEditor: true,
-        editorMerge: "rainworx_wins",
+        editorMerge: "merge_smart",
       };
       if (isEventUrl) {
         const matchInventoryPatentes = collectInventoryPatentesForRainworx(items);
@@ -7708,11 +7738,13 @@ export function CatalogHomeClient({
       return;
     }
     const matchInventoryPatentes = collectInventoryPatentesForRainworx(groupManageBaseItems);
-    if (matchInventoryPatentes.length === 0) {
+    if (matchInventoryPatentes.length === 0 && !groupRainworxAddMissing) {
       showSystemNotice(
         "error",
-        "Sin patentes en este remate",
-        "Agrega unidades con patente a este remate antes de sincronizar con Rainworx.",
+        groupManageCommercialEventType === "venta_directa" ? "Sin patentes en venta directa" : "Sin patentes en este remate",
+        groupManageCommercialEventType === "venta_directa"
+          ? "Agrega unidades con patente a esta venta directa antes de sincronizar con Rainworx."
+          : "Agrega unidades con patente a este remate antes de sincronizar con Rainworx.",
       );
       return;
     }
@@ -7723,22 +7755,35 @@ export function CatalogHomeClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           applyToEditor: true,
-          editorMerge: "rainworx_wins",
+          editorMerge: "merge_smart",
           eventUrl: url,
           matchInventoryPatentes,
+          addNewLotsFromEvent: groupRainworxAddMissing,
+          ...(groupRainworxAddMissing
+            ? {
+                assignNewLotsAuctionId: groupManageTarget.auctionId,
+                assignNewLotsEventType: groupManageCommercialEventType,
+              }
+            : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         count?: number;
-        editor?: { applied?: string[]; skipped?: { reason: string; lotId?: string }[] };
+        editor?: {
+          applied?: string[];
+          skipped?: { reason: string; lotId?: string }[];
+          updatedPatentes?: string[];
+          newPatentes?: string[];
+          photosPreserved?: number;
+        };
       };
       if (!res.ok) {
         showSystemNotice("error", "Importación Rainworx", data.error ?? `Error HTTP ${res.status}`);
         return;
       }
       await refreshEditorConfigAfterRainworx();
-      notifyRainworxEventImportOutcome(data, groupManageTargetLabel || "este remate");
+      notifyRainworxEventImportOutcome(data, groupManageTargetLabel || "este grupo");
     } catch {
       showSystemNotice("error", "Importación Rainworx", "No se pudo completar la solicitud.");
     } finally {
@@ -7767,7 +7812,7 @@ export function CatalogHomeClient({
           lotUrls: [url],
           catalogItemIds: [editingItem.id],
           applyToEditor: true,
-          editorMerge: "rainworx_wins",
+          editorMerge: "merge_smart",
           ...(expectedPatente ? { expectedPatente } : {}),
         }),
       });
@@ -12012,11 +12057,39 @@ export function CatalogHomeClient({
 
             {groupManageTarget.type === "auction" ? (
               <div className="mb-3 rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-3">
-                <p className="text-xs font-semibold text-indigo-950">Sincronizar remate con Rainworx</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-                  Pega la URL del evento en vehiculoschocados.cl. Se importará la ficha de Rainworx solo para las{" "}
-                  {groupManageBaseItems.length} patente(s) asignadas a este remate.
+                <p className="text-xs font-semibold text-indigo-950">
+                  {groupManageCommercialEventType === "venta_directa"
+                    ? "Sincronizar venta directa con Rainworx"
+                    : "Sincronizar remate con Rainworx"}
                 </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+                  {groupManageCommercialEventType === "venta_directa" ? (
+                    <>
+                      Pega la URL del evento en vehiculoschocados.cl. Se fusionará la ficha Rainworx con las{" "}
+                      {groupManageBaseItems.length} patente(s) de esta venta directa sin reemplazar fotos Glo3D ni
+                      Tasaciones.
+                    </>
+                  ) : (
+                    <>
+                      Pega la URL del evento en vehiculoschocados.cl. Se fusionará la ficha Rainworx con las{" "}
+                      {groupManageBaseItems.length} patente(s) de este remate sin reemplazar fotos Glo3D ni Tasaciones.
+                    </>
+                  )}
+                </p>
+                <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={groupRainworxAddMissing}
+                    onChange={(event) => setGroupRainworxAddMissing(event.target.checked)}
+                    disabled={groupRainworxImporting}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    {groupManageCommercialEventType === "venta_directa"
+                      ? "Agregar patentes del evento que aún no están en esta venta directa (importación completa Rainworx)"
+                      : "Agregar patentes del evento que aún no están en este remate (importación completa Rainworx)"}
+                  </span>
+                </label>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
                   <label className="min-w-0 flex-1">
                     <span className="sr-only">URL del evento Rainworx</span>
@@ -12032,7 +12105,10 @@ export function CatalogHomeClient({
                   <button
                     type="button"
                     onClick={() => void importGroupRainworxFromEvent()}
-                    disabled={groupRainworxImporting || groupManageBaseItems.length === 0}
+                    disabled={
+                      groupRainworxImporting ||
+                      (groupManageBaseItems.length === 0 && !groupRainworxAddMissing)
+                    }
                     className="ui-focus shrink-0 rounded-md border border-indigo-400 bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {groupRainworxImporting ? "Sincronizando…" : "Importar desde Rainworx"}

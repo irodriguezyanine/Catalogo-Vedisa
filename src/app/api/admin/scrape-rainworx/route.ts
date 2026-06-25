@@ -3,12 +3,18 @@ import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import { syncEditorConfigToSharedTables } from "@/lib/catalog-shared-sync";
 import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
+import { applyExclusiveCommercialAssignment } from "@/lib/commercial-category-exclusivity";
+import type { CommercialLane } from "@/lib/commercial-category-exclusivity";
 import {
   formatClpString,
   mergeEditorVehicleDetails,
   normalizePatenteKey,
   rainworxToEditorVehicleDetails,
 } from "@/lib/rainworx-to-editor";
+import {
+  mergeEditorVehicleDetailsSmart,
+  type RainworxEditorMergeMode,
+} from "@/lib/rainworx-merge-smart";
 import { mirrorRainworxDocumentsToCloudinary } from "@/lib/rainworx-documents-cloudinary";
 import {
   fetchRainworxHtml,
@@ -39,10 +45,19 @@ type Body = {
    * Si es true, fusiona en `catalogo_editor_config` → `vehicleDetails` usando la misma clave que el catálogo (patente normalizada).
    */
   applyToEditor?: boolean;
-  /** Por defecto `rainworx_wins` (la ficha Rainworx actualiza campos). Usa `fill_empty` para no sobrescribir lo ya editado. */
-  editorMerge?: "rainworx_wins" | "fill_empty";
+  /** Por defecto `merge_smart` (preserva fotos Glo3D/Tasaciones y completa vacíos). */
+  editorMerge?: RainworxEditorMergeMode;
   /** Si es true (default con `applyToEditor`), actualiza `vehiclePrices` con el precio actual del lote. */
   updateVehiclePrices?: boolean;
+  /**
+   * Con `eventUrl`: importa también lotes del evento cuya patente no está en `matchInventoryPatentes`
+   * (fichas nuevas con merge completo Rainworx).
+   */
+  addNewLotsFromEvent?: boolean;
+  /** Asigna patentes nuevas al remate o venta directa indicada. */
+  assignNewLotsAuctionId?: string;
+  /** Tipo comercial para la asignación (`remate` → próximos remates, `venta_directa` → ventas directas). */
+  assignNewLotsEventType?: "remate" | "venta_directa";
   /**
    * Patente normalizada esperada (p. ej. al editar una ficha). Si se envía y no coincide con la del lote Rainworx, no se guarda (409).
    */
@@ -71,8 +86,11 @@ export async function POST(request: Request) {
 
   const origin = getRainworxOrigin();
   const applyToEditor = Boolean(body.applyToEditor);
-  const editorMerge = body.editorMerge ?? "rainworx_wins";
+  const editorMerge: RainworxEditorMergeMode = body.editorMerge ?? "merge_smart";
   const updateVehiclePrices = body.updateVehiclePrices !== false;
+  const addNewLotsFromEvent = Boolean(body.addNewLotsFromEvent);
+  const assignNewLotsAuctionId = body.assignNewLotsAuctionId?.trim();
+  const assignNewLotsEventType = body.assignNewLotsEventType ?? "remate";
 
   try {
     let items: RainworxLotScraped[];
@@ -90,7 +108,12 @@ export async function POST(request: Request) {
         rawMatch && rawMatch.length > 0
           ? [...new Set(rawMatch.map((p) => normalizePatenteKey(p)).filter(Boolean))]
           : undefined;
-      if (rawMatch && rawMatch.length > 0 && (!matchList || matchList.length === 0)) {
+      if (
+        !addNewLotsFromEvent &&
+        rawMatch &&
+        rawMatch.length > 0 &&
+        (!matchList || matchList.length === 0)
+      ) {
         return Response.json(
           { error: "Ninguna patente válida en matchInventoryPatentes." },
           { status: 400 },
@@ -99,8 +122,12 @@ export async function POST(request: Request) {
       items = await scrapeEventLots({
         eventPageUrl: body.eventUrl,
         patente: body.patente,
-        ...(matchList && matchList.length > 0 ? { matchPatentes: matchList } : {}),
-        maxLots: body.maxLots ?? (matchList && matchList.length > 0 ? 160 : 80),
+        ...(addNewLotsFromEvent || !matchList || matchList.length === 0
+          ? {}
+          : { matchPatentes: matchList }),
+        maxLots:
+          body.maxLots ??
+          (addNewLotsFromEvent ? 200 : matchList && matchList.length > 0 ? 160 : 80),
         delayMs: body.delayMs ?? 250,
       });
     } else {
@@ -165,6 +192,13 @@ export async function POST(request: Request) {
     let config = load.config;
     const applied = new Set<string>();
     const skipped: { reason: string; lotId?: string }[] = [];
+    const updatedPatentes = new Set<string>();
+    const newPatentes = new Set<string>();
+    let photosPreserved = 0;
+
+    const groupPatenteSet = new Set(
+      (body.matchInventoryPatentes ?? []).map((p) => normalizePatenteKey(p)).filter(Boolean),
+    );
 
     for (let i = 0; i < mapped.length; i++) {
       const row = mapped[i];
@@ -172,6 +206,10 @@ export async function POST(request: Request) {
         skipped.push({ reason: "Sin patente en ficha Rainworx", lotId: row.scraped.lotId });
         continue;
       }
+
+      const isExistingInGroup = groupPatenteSet.has(row.vehicleKey);
+      const isNewFromEvent = addNewLotsFromEvent && groupPatenteSet.size > 0 && !isExistingInGroup;
+      const rowMerge: RainworxEditorMergeMode = isNewFromEvent ? "rainworx_wins" : editorMerge;
 
       const keysToWrite = new Set<string>([row.vehicleKey]);
       const catalogId = body.catalogItemIds?.[i]?.trim();
@@ -183,13 +221,41 @@ export async function POST(request: Request) {
       let nextDetails = { ...config.vehicleDetails };
       let nextPrices = { ...config.vehiclePrices };
       for (const k of keysToWrite) {
-        nextDetails[k] = mergeEditorVehicleDetails(nextDetails[k], row.details, editorMerge);
+        const existing = nextDetails[k];
+        if (rowMerge === "merge_smart") {
+          const { details, stats } = mergeEditorVehicleDetailsSmart(existing, row.details);
+          nextDetails[k] = details;
+          if (stats.photosPreserved) photosPreserved += 1;
+        } else {
+          nextDetails[k] = mergeEditorVehicleDetails(existing, row.details, rowMerge);
+        }
         if (updateVehiclePrices && row.scraped.precioActualClp != null) {
           nextPrices[k] = formatClpString(row.scraped.precioActualClp);
         }
         applied.add(k);
       }
+      if (isNewFromEvent) {
+        newPatentes.add(row.vehicleKey);
+      } else if (isExistingInGroup || groupPatenteSet.size === 0) {
+        updatedPatentes.add(row.vehicleKey);
+      }
       config = { ...config, vehicleDetails: nextDetails, vehiclePrices: nextPrices };
+    }
+
+    if (addNewLotsFromEvent && assignNewLotsAuctionId && newPatentes.size > 0) {
+      const lane: CommercialLane =
+        assignNewLotsEventType === "venta_directa" ? "ventas-directas" : "proximos-remates";
+      const assignment = applyExclusiveCommercialAssignment(
+        config,
+        [...newPatentes],
+        { lane, auctionId: assignNewLotsAuctionId },
+        config.upcomingAuctions ?? [],
+      );
+      config = {
+        ...config,
+        sectionVehicleIds: assignment.sectionVehicleIds,
+        vehicleUpcomingAuctionIds: assignment.vehicleUpcomingAuctionIds,
+      };
     }
 
     const saved = await saveEditorConfig(config, session.email);
@@ -223,6 +289,10 @@ export async function POST(request: Request) {
         pricesUpdated: updateVehiclePrices,
         applied: [...applied],
         skipped,
+        updatedPatentes: [...updatedPatentes],
+        newPatentes: [...newPatentes],
+        photosPreserved,
+        assignedAuctionId: assignNewLotsAuctionId && newPatentes.size > 0 ? assignNewLotsAuctionId : undefined,
       },
       sync,
     });
