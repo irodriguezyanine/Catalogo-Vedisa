@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import nextDynamic from "next/dynamic";
 import { getCachedCatalogFeed } from "@/lib/catalog-feed-cache";
+import { hydrateCatalogItemsWithEditorConfig } from "@/lib/catalog-feed-hydrate";
 import { getCachedMergedEditorConfig } from "@/lib/editor-config-cache";
 
 const CatalogHomeClient = nextDynamic(
@@ -29,9 +30,14 @@ export default async function AdminPage() {
     getCachedMergedEditorConfig(),
   ]);
 
+  const hydratedFeed = {
+    ...feed,
+    items: hydrateCatalogItemsWithEditorConfig(feed.items, editorConfigResult.config),
+  };
+
   return (
     <CatalogHomeClient
-      feed={feed}
+      feed={hydratedFeed}
       initialConfig={editorConfigResult.config}
       initialAdminView="editor"
       openLoginIfGuest

@@ -82,6 +82,11 @@ import {
   isTasacionesInventoryPhotoUrl,
   mergeVehicleImageSources,
 } from "@/lib/catalog-sync-images";
+import {
+  hydrateCatalogItemsWithEditorConfig,
+  mergeEditorConfigsPreferVehicleDetails,
+} from "@/lib/catalog-feed-hydrate";
+import { patchEditorConfigVehicleDetails } from "@/lib/catalog-editor-vehicle-persist";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
 import { EditorVehiculoDocumentos } from "@/components/admin/EditorVehiculoDocumentos";
@@ -2508,6 +2513,10 @@ export function CatalogHomeClient({
   const [config, setConfig] = useState<EditorConfig>(() =>
     normalizeEditorConfigClient(initialConfig),
   );
+  useEffect(() => {
+    lastPersistedConfigRef.current = JSON.stringify(normalizeEditorConfigClient(initialConfig));
+    autoSaveReadyRef.current = true;
+  }, [initialConfig]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminView, setAdminView] = useState<"editor" | "home">("home");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -2515,7 +2524,9 @@ export function CatalogHomeClient({
   const [saving, setSaving] = useState(false);
   const [autoSaveState, setAutoSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string>("");
-  const [liveFeedItems, setLiveFeedItems] = useState<CatalogItem[]>(feed.items);
+  const [liveFeedItems, setLiveFeedItems] = useState<CatalogItem[]>(() =>
+    hydrateCatalogItemsWithEditorConfig(feed.items, initialConfig),
+  );
   const lastAutoImportPatentRef = useRef("");
   const [homeSearchTerm, setHomeSearchTerm] = useState("");
   const [homeSort, setHomeSort] = useState<SortOption>("recomendado");
@@ -2669,6 +2680,7 @@ export function CatalogHomeClient({
   );
   const autoSaveReadyRef = useRef(false);
   const lastPersistedConfigRef = useRef("");
+  const groupSyncInProgressRef = useRef(false);
   const configRef = useRef(config);
   configRef.current = config;
   const persistEditorConfigRef = useRef<
@@ -2909,9 +2921,13 @@ export function CatalogHomeClient({
   const rawItems = liveFeedItems;
 
   useEffect(() => {
-    setLiveFeedItems((prev) =>
-      dedupeCatalogItemsByVehicleKey([...feed.items, ...prev]),
-    );
+    setLiveFeedItems((prev) => {
+      const hydratedIncoming = hydrateCatalogItemsWithEditorConfig(
+        feed.items,
+        configRef.current,
+      );
+      return dedupeCatalogItemsByVehicleKey([...hydratedIncoming, ...prev]);
+    });
   }, [feed.items]);
   const updateVehicleUrlParam = useCallback((vehicleKey?: string) => {
     if (typeof window === "undefined") return;
@@ -3022,9 +3038,21 @@ export function CatalogHomeClient({
         if (configRes.ok) {
           const payload = (await configRes.json()) as { config?: EditorConfig; persisted?: boolean };
           if (payload.config) {
-            const normalized = normalizeEditorConfigClient(payload.config);
-            setConfig(normalized);
-            localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(normalized));
+            const fromServer = normalizeEditorConfigClient(payload.config);
+            const merged = mergeEditorConfigsPreferVehicleDetails(
+              normalizeEditorConfigClient(initialConfig),
+              fromServer,
+            );
+            setConfig(merged);
+            lastPersistedConfigRef.current = JSON.stringify(merged);
+            autoSaveReadyRef.current = true;
+            localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(merged));
+            setLiveFeedItems((prev) =>
+              hydrateCatalogItemsWithEditorConfig(
+                dedupeCatalogItemsByVehicleKey([...feed.items, ...prev]),
+                merged,
+              ),
+            );
             return;
           }
         }
@@ -6037,6 +6065,18 @@ export function CatalogHomeClient({
         Object.assign(merged, { [key]: previousValue });
       }
     }
+    const prevThumb = previous?.thumbnail?.trim();
+    const nextThumb = imported.thumbnail?.trim();
+    if (nextThumb?.startsWith("http") && isGlo3dCatalogImageUrl(nextThumb)) {
+      merged.thumbnail = nextThumb;
+    } else if (prevThumb?.startsWith("http") && isGlo3dCatalogImageUrl(prevThumb)) {
+      merged.thumbnail = prevThumb;
+    } else if (nextThumb?.startsWith("http")) {
+      merged.thumbnail = nextThumb;
+    }
+    if (imported.view3dUrl?.includes("glo3d")) {
+      merged.view3dUrl = imported.view3dUrl;
+    }
     return merged;
   };
 
@@ -6054,7 +6094,11 @@ export function CatalogHomeClient({
       const patentKey = normalizePatentToken(getPatent(payload.item));
       const importedVehicleDetails = payload.vehicleDetails;
       const mergedVehicleDetails = importedVehicleDetails
-        ? mergeImportedVehicleDetails(undefined, importedVehicleDetails)
+        ? mergeImportedVehicleDetails(
+            configRef.current.vehicleDetails?.[vehicleKey] ??
+              (patentKey ? configRef.current.vehicleDetails?.[patentKey] : undefined),
+            importedVehicleDetails,
+          )
         : undefined;
       const enrichedItem = mergedVehicleDetails
         ? applyCatalogDetailsOverride(payload.item, mergedVehicleDetails)
@@ -6972,20 +7016,34 @@ export function CatalogHomeClient({
     setSaving(true);
     setAutoSaveState("saving");
     localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(nextConfig));
-    const response = await fetch("/api/admin/editor-config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        config: nextConfig,
-        deletedAuctionIds: Array.from(deletedAuctionIdsRef.current),
-      }),
-    });
-    const payload = (await response.json().catch(() => ({}))) as {
+
+    let response: Response | null = null;
+    let payload: {
       config?: EditorConfig;
       syncOk?: boolean;
       sync?: { remateItemsUpserted?: number; skipped?: string[] };
       error?: string;
-    };
+    } = {};
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      response = await fetch("/api/admin/editor-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: nextConfig,
+          deletedAuctionIds: Array.from(deletedAuctionIdsRef.current),
+        }),
+      });
+      payload = (await response.json().catch(() => ({}))) as typeof payload;
+      if (response.ok) break;
+      if (attempt === 0) await sleepMs(800);
+    }
+
+    if (!response) {
+      setSaving(false);
+      setAutoSaveState("error");
+      return { ok: false };
+    }
     setSaving(false);
     if (!response.ok) {
       setAutoSaveState("error");
@@ -7030,6 +7088,7 @@ export function CatalogHomeClient({
 
   useEffect(() => {
     if (isBootstrapping || !isAdmin) return;
+    if (groupSyncInProgressRef.current) return;
     const serializedConfig = JSON.stringify(config);
     if (!autoSaveReadyRef.current) {
       autoSaveReadyRef.current = true;
@@ -7099,6 +7158,47 @@ export function CatalogHomeClient({
     await refreshInventoryAndSync();
   }, [adminInventorySyncBusy, refreshInventoryAndSync]);
 
+  const persistVehicleSyncSnapshot = useCallback(
+    async (opts: {
+      patente: string;
+      vehicleKey: string;
+      itemId?: string;
+      vehicleDetails: EditorVehicleDetails;
+      nextConfig: EditorConfig;
+    }) => {
+      const response = await fetch("/api/admin/vehicle-sync-persist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patente: opts.patente,
+          vehicleKey: opts.vehicleKey,
+          itemId: opts.itemId,
+          vehicleDetails: opts.vehicleDetails,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        persistedAt?: string;
+      };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? `No se pudo guardar la sync de ${opts.patente}.`);
+      }
+      const patched = patchEditorConfigVehicleDetails(
+        opts.nextConfig,
+        opts.patente,
+        opts.vehicleDetails,
+        { vehicleKey: opts.vehicleKey, itemId: opts.itemId },
+      );
+      lastPersistedConfigRef.current = JSON.stringify(patched);
+      configRef.current = patched;
+      setConfig(patched);
+      localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(patched));
+      return payload.persistedAt;
+    },
+    [],
+  );
+
   const runPatentInventorySync = useCallback(
     async (
       vehicleKey: string,
@@ -7156,8 +7256,22 @@ export function CatalogHomeClient({
       }
 
       if (options?.persistEditor !== false) {
-        lastPersistedConfigRef.current = JSON.stringify(nextConfig);
-        await persistEditorConfigRef.current(nextConfig);
+        const detailsToSave =
+          payload.vehicleDetails ??
+          nextConfig.vehicleDetails?.[resolvedKey] ??
+          nextConfig.vehicleDetails?.[patente];
+        if (detailsToSave) {
+          await persistVehicleSyncSnapshot({
+            patente,
+            vehicleKey: resolvedKey,
+            itemId: payload.item?.id,
+            vehicleDetails: detailsToSave,
+            nextConfig,
+          });
+        } else {
+          lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+          await persistEditorConfigRef.current(nextConfig);
+        }
       }
 
       return { payload, patente, resolvedKey, vehicleKey, nextConfig };
@@ -7167,6 +7281,7 @@ export function CatalogHomeClient({
       editingVehicleKey,
       itemsByKey,
       managingVehicleKey,
+      persistVehicleSyncSnapshot,
       sortedUpcomingAuctions,
     ],
   );
@@ -7362,6 +7477,7 @@ export function CatalogHomeClient({
     }
 
     setGroupSyncAllState({ running: true, current: 0, total: targets.length });
+    groupSyncInProgressRef.current = true;
     let okCount = 0;
     let processed = 0;
     let appliedCount = 0;
@@ -7380,7 +7496,7 @@ export function CatalogHomeClient({
 
         try {
           const result = await runPatentInventorySync(target.key, {
-            persistEditor: false,
+            persistEditor: true,
             updateEditingForm: false,
             internalOnly: true,
           });
@@ -7435,6 +7551,7 @@ export function CatalogHomeClient({
         );
       }
     } finally {
+      groupSyncInProgressRef.current = false;
       setGroupSyncAllState(null);
       if (appliedCount > 0) {
         lastPersistedConfigRef.current = JSON.stringify(latestConfig);

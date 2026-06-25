@@ -42,6 +42,7 @@ import {
 } from "@/lib/glo3d-images";
 import {
   extractAutoredImagesFromRecord,
+  isGlo3dCatalogImageUrl,
   mergeVehicleImageSources,
   type CatalogThumbnailSource,
 } from "@/lib/catalog-sync-images";
@@ -680,6 +681,10 @@ function buildVehicleDetailsFromSources(
       .join(" ")
       .trim() || `Unidad ${patente}`;
   const thumbnail =
+    (preferredThumbnail && isGlo3dCatalogImageUrl(preferredThumbnail)
+      ? preferredThumbnail
+      : undefined) ??
+    images.find((url) => isGlo3dCatalogImageUrl(url)) ??
     preferredThumbnail ??
     images[0] ??
     pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]);
@@ -1201,6 +1206,25 @@ export async function importVehicleByPatent(
     tasacionesRow,
     requestedPatente,
   );
+
+  if (
+    tasacionesRow &&
+    tasacionesCompleteness.hasGlo3dViewer &&
+    !tasacionesCompleteness.hasThumbnail
+  ) {
+    try {
+      const refreshed = await fetchTasacionesRecordByPatent(requestedPatente);
+      if (refreshed) {
+        tasacionesRow = mergeRicherTasacionesRows(tasacionesRow, refreshed);
+        tasacionesCompleteness = assessTasacionesRecordCompleteness(
+          tasacionesRow,
+          requestedPatente,
+        );
+      }
+    } catch {
+      // noop
+    }
+  }
 
   let glo3d: Glo3dInventoryEntry | null = tasacionesRow
     ? buildGlo3dFromTasacionesRow(tasacionesRow)

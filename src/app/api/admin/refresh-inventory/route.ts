@@ -2,6 +2,7 @@ import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-session";
 import { appendGlo3dOnlyCatalogItems, getCatalogFeed, isGlo3dCircuitOpen } from "@/lib/catalog";
+import { hydrateCatalogItemsWithEditorConfig } from "@/lib/catalog-feed-hydrate";
 import { reconcileSharedPlatforms } from "@/lib/catalog-shared-reconcile";
 import { buildCatalogSharedSyncStatus } from "@/lib/catalog-shared-sync-status";
 import { fetchSharedRemateItems } from "@/lib/catalog-shared-merge";
@@ -26,10 +27,11 @@ export async function POST() {
 
   try {
     const feed = await getCatalogFeed();
-    const items = isGlo3dCircuitOpen()
+    const reconcile = await reconcileSharedPlatforms(session.email);
+    const baseItems = isGlo3dCircuitOpen()
       ? feed.items
       : await appendGlo3dOnlyCatalogItems(feed.items);
-    const reconcile = await reconcileSharedPlatforms(session.email);
+    const items = hydrateCatalogItemsWithEditorConfig(baseItems, reconcile.mergedConfig);
     revalidateCatalogSurfaces();
     const sharedVentaDirectaItemsCount = await countSharedVentaDirectaItems();
 

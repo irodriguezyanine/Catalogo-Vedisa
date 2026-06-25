@@ -225,6 +225,19 @@ function buildInventarioPayload(
     parseClpAmount(manual?.promoPrice) ??
     valorMinimo;
   const descripcion = manual?.description ?? details?.description ?? details?.extendedDescription ?? null;
+  const detailImages = (details?.imagesCsv ?? "")
+    .split(/[\n,;|]+/)
+    .map((part) => part.trim())
+    .filter((url) => url.startsWith("http"));
+  const imagenes =
+    detailImages.length > 0
+      ? detailImages
+      : details?.thumbnail?.startsWith("http")
+        ? [details.thumbnail]
+        : manual?.images?.length
+          ? manual.images
+          : null;
+  const glo3dUrl = details?.view3dUrl?.includes("glo3d") ? details.view3dUrl : null;
 
   return {
     patente,
@@ -238,8 +251,9 @@ function buildInventarioPayload(
     valor_minimo: valorMinimo,
     precio_minimo_remate: precioMinimoRemate,
     valor_esperado: valorEsperado,
-    imagenes: manual?.images?.length ? manual.images : null,
-    origen: manual ? "manual" : "manual",
+    imagenes,
+    ...(glo3dUrl ? { glo3d_url: glo3dUrl, url_3d: glo3dUrl } : {}),
+    origen: manual ? "manual" : "catalogo_sync",
     estado_retiro: estadoRetiro || ESTADO_RETIRO_DEFAULT,
   };
 }
