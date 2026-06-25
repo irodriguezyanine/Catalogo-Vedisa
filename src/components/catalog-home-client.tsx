@@ -77,6 +77,11 @@ import {
   importPatentsBatchWithRetries,
   sleepMs,
 } from "@/lib/catalog-sync-patent-client";
+import {
+  isGlo3dCatalogImageUrl,
+  isTasacionesInventoryPhotoUrl,
+  mergeVehicleImageSources,
+} from "@/lib/catalog-sync-images";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
 import { EditorVehiculoDocumentos } from "@/components/admin/EditorVehiculoDocumentos";
@@ -733,8 +738,7 @@ function normalizeEditorConfigClient(
       heroMaxWidth: migrated?.homeLayout?.heroMaxWidth ?? defaults.homeLayout.heroMaxWidth,
       showHeroChips: migrated?.homeLayout?.showHeroChips ?? defaults.homeLayout.showHeroChips,
       showHeroCtas: migrated?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
-      showFeaturedStrip:
-        migrated?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
+      showFeaturedStrip: false,
       showRecentPublications: false,
       showFavoritesSection: false,
       showHowToSection:
@@ -2190,170 +2194,6 @@ function sanitizeDetails(details: EditorVehicleDetails): EditorVehicleDetails | 
   return clean;
 }
 
-type FeaturedStripProps = {
-  items: CatalogItem[];
-  onOpenVehicle: (item: CatalogItem) => void;
-};
-
-function FeaturedStrip({ items, onOpenVehicle }: FeaturedStripProps) {
-  if (items.length === 0) return null;
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
-  const dragStartXRef = useRef(0);
-  const dragStartScrollLeftRef = useRef(0);
-  const draggedRef = useRef(false);
-
-  const updateScrollArrows = useCallback(() => {
-    const node = scrollRef.current;
-    if (!node) return;
-    const maxScrollLeft = Math.max(0, node.scrollWidth - node.clientWidth);
-    const hasOverflow = maxScrollLeft > 4;
-    setCanScrollLeft(hasOverflow && node.scrollLeft > 4);
-    setCanScrollRight(hasOverflow && node.scrollLeft < maxScrollLeft - 4);
-  }, []);
-
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (!node) return;
-    updateScrollArrows();
-    const onScroll = () => updateScrollArrows();
-    const onResize = () => updateScrollArrows();
-    node.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onResize);
-    return () => {
-      node.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onResize);
-    };
-  }, [items.length, updateScrollArrows]);
-
-  const scrollByAmount = (direction: "left" | "right") => {
-    const node = scrollRef.current;
-    if (!node) return;
-    const amount = Math.max(280, Math.round(node.clientWidth * 0.72));
-    const offset = direction === "left" ? -amount : amount;
-    node.scrollBy({ left: offset, behavior: "smooth" });
-    window.setTimeout(() => updateScrollArrows(), 320);
-  };
-
-  const onMouseDown = (event: MouseEvent<HTMLDivElement>) => {
-    const node = scrollRef.current;
-    if (!node) return;
-    setIsDragging(true);
-    draggedRef.current = false;
-    dragStartXRef.current = event.clientX;
-    dragStartScrollLeftRef.current = node.scrollLeft;
-  };
-
-  const onMouseMove = (event: MouseEvent<HTMLDivElement>) => {
-    const node = scrollRef.current;
-    if (!node || !isDragging) return;
-    const delta = event.clientX - dragStartXRef.current;
-    if (Math.abs(delta) > 6) draggedRef.current = true;
-    node.scrollLeft = dragStartScrollLeftRef.current - delta;
-  };
-
-  const endDrag = () => {
-    setIsDragging(false);
-    window.setTimeout(() => {
-      draggedRef.current = false;
-    }, 20);
-  };
-
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      scrollByAmount("left");
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      scrollByAmount("right");
-    }
-  };
-
-  return (
-    <section className="section-shell">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="premium-kicker">Selecciones premium</p>
-          <h2 className="text-2xl font-bold text-slate-900">Vitrina destacada</h2>
-        </div>
-        <p className="text-xs text-slate-500">Desliza con mouse o flechas</p>
-      </div>
-      <div className="featured-strip-shell relative">
-        <button
-          type="button"
-          onClick={() => scrollByAmount("left")}
-          className={`ui-focus absolute left-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-slate-900/25 text-white backdrop-blur-sm transition hover:bg-slate-900/45 md:inline-flex ${
-            canScrollLeft ? "opacity-100" : "pointer-events-none opacity-0"
-          }`}
-          aria-label="Desplazar vitrina hacia la izquierda"
-          title="Anterior"
-        >
-          <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
-            <path fillRule="evenodd" d="M12.78 4.22a.75.75 0 0 1 0 1.06L8.06 10l4.72 4.72a.75.75 0 1 1-1.06 1.06l-5.25-5.25a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          onClick={() => scrollByAmount("right")}
-          className={`ui-focus absolute right-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-slate-900/25 text-white backdrop-blur-sm transition hover:bg-slate-900/45 md:inline-flex ${
-            canScrollRight ? "opacity-100" : "pointer-events-none opacity-0"
-          }`}
-          aria-label="Desplazar vitrina hacia la derecha"
-          title="Siguiente"
-        >
-          <svg viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor" aria-hidden="true">
-            <path fillRule="evenodd" d="M7.22 15.78a.75.75 0 0 1 0-1.06L11.94 10 7.22 5.28a.75.75 0 1 1 1.06-1.06l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 0 1-1.06 0Z" clipRule="evenodd" />
-          </svg>
-        </button>
-        <div
-          ref={scrollRef}
-          className={`featured-strip select-none ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
-          tabIndex={0}
-          role="region"
-          aria-label="Vitrina destacada: usa flechas izquierda y derecha para navegar"
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={endDrag}
-          onMouseLeave={endDrag}
-          onKeyDown={onKeyDown}
-        >
-          {items.map((item) => (
-            <button
-              key={`featured-${item.id}`}
-              type="button"
-              className="featured-item text-left"
-              onClick={() => {
-                if (draggedRef.current) return;
-                onOpenVehicle(item);
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={resolveVehicleThumbnailSrc(item)}
-                alt={item.title}
-                className="featured-image"
-                loading="lazy"
-              />
-              <div className="featured-overlay" />
-              <div className="featured-content">
-                <p className="line-clamp-1 text-sm font-semibold uppercase tracking-wide text-cyan-700">
-                  {item.status ?? "Unidad disponible"}
-                </p>
-                <h3 className="line-clamp-2 text-xl font-bold text-white">{item.title}</h3>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-100">
-                  {item.subtitle ? <span className="featured-chip">{item.subtitle}</span> : null}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 type SectionProps = {
   id: string;
   title: string;
@@ -3069,7 +2909,9 @@ export function CatalogHomeClient({
   const rawItems = liveFeedItems;
 
   useEffect(() => {
-    setLiveFeedItems(feed.items);
+    setLiveFeedItems((prev) =>
+      dedupeCatalogItemsByVehicleKey([...feed.items, ...prev]),
+    );
   }, [feed.items]);
   const updateVehicleUrlParam = useCallback((vehicleKey?: string) => {
     if (typeof window === "undefined") return;
@@ -4022,8 +3864,6 @@ export function CatalogHomeClient({
     showPatents,
   ]);
 
-  const featuredItems = useMemo(() => homeVisibleItems.slice(0, 16), [homeVisibleItems]);
-
   const downloadVisibleCalendarPdf = useCallback(async () => {
     if (isDownloadingCalendarPdf) return;
     if (calendarPdfSections.length === 0) {
@@ -4210,7 +4050,17 @@ export function CatalogHomeClient({
     const list = [selectedVehicle.thumbnail, ...selectedVehicle.images].filter(
       (entry): entry is string => typeof entry === "string" && entry.startsWith("http"),
     );
-    return Array.from(new Set(list));
+    const unique = Array.from(new Set(list));
+    const glo3dImages = unique.filter(isGlo3dCatalogImageUrl);
+    const tasacionesImages = unique.filter(isTasacionesInventoryPhotoUrl);
+    const rest = unique.filter(
+      (url) => !glo3dImages.includes(url) && !tasacionesImages.includes(url),
+    );
+    return mergeVehicleImageSources({
+      glo3dImages,
+      autoredImages: rest,
+      inventarioImages: tasacionesImages,
+    }).images;
   }, [selectedVehicle]);
 
   const selectedVehicleMainImage = useMemo(() => {
@@ -5947,7 +5797,6 @@ export function CatalogHomeClient({
 
   const toggleHomeLayoutFlag = (
     field:
-      | "showFeaturedStrip"
       | "showCommercialPanel"
       | "showHowToSection"
       | "showFavoritesSection"
@@ -6200,7 +6049,7 @@ export function CatalogHomeClient({
       requestedPatente?: string;
       created?: boolean;
       hasGlo3dViewer?: boolean;
-    }) => {
+    }): { vehicleKey: string; nextConfig: EditorConfig } => {
       const vehicleKey = getVehicleKey(payload.item);
       const patentKey = normalizePatentToken(getPatent(payload.item));
       const importedVehicleDetails = payload.vehicleDetails;
@@ -6220,19 +6069,19 @@ export function CatalogHomeClient({
           enrichedItem,
         ]),
       );
+      let nextConfig = configRef.current;
       if (importedVehicleDetails) {
         const priceSeed = importedVehicleDetails.originalPrice?.trim();
-        setConfig((prev) => {
-          const mergedDetails = mergeImportedVehicleDetails(
-            prev.vehicleDetails?.[vehicleKey] ??
-              (patentKey ? prev.vehicleDetails?.[patentKey] : undefined) ??
-              (payload.item.id ? prev.vehicleDetails?.[payload.item.id] : undefined),
-            importedVehicleDetails,
-          );
-          return {
-          ...prev,
+        const mergedDetails = mergeImportedVehicleDetails(
+          configRef.current.vehicleDetails?.[vehicleKey] ??
+            (patentKey ? configRef.current.vehicleDetails?.[patentKey] : undefined) ??
+            (payload.item.id ? configRef.current.vehicleDetails?.[payload.item.id] : undefined),
+          importedVehicleDetails,
+        );
+        nextConfig = {
+          ...configRef.current,
           vehicleDetails: {
-            ...prev.vehicleDetails,
+            ...configRef.current.vehicleDetails,
             [vehicleKey]: mergedDetails,
             ...(patentKey && patentKey !== vehicleKey ? { [patentKey]: mergedDetails } : {}),
             ...(payload.item.id && payload.item.id !== vehicleKey && payload.item.id !== patentKey
@@ -6242,15 +6091,16 @@ export function CatalogHomeClient({
           ...(payload.created && priceSeed
             ? {
                 vehiclePrices: {
-                  ...prev.vehiclePrices,
+                  ...configRef.current.vehiclePrices,
                   [vehicleKey]: priceSeed,
                 },
               }
             : {}),
-          };
-        });
+        };
+        configRef.current = nextConfig;
+        setConfig(nextConfig);
       }
-      return vehicleKey;
+      return { vehicleKey, nextConfig };
     },
     [],
   );
@@ -6312,7 +6162,7 @@ export function CatalogHomeClient({
           isNewUnit: !local,
           seedInventarioRow: local ? (local.raw as Record<string, unknown>) : undefined,
         });
-        const key = applyImportedPatentPayload({
+        const { vehicleKey: key } = applyImportedPatentPayload({
           item: payload.item!,
           vehicleDetails: payload.vehicleDetails,
           patente: payload.patente ?? patente,
@@ -6502,7 +6352,7 @@ export function CatalogHomeClient({
             for (const row of batch.results ?? []) {
               if (!row.item) continue;
               const patente = normalizePatentToken(row.patente ?? getPatent(row.item));
-              const resolvedKey = applyImportedPatentPayload({
+              const { vehicleKey: resolvedKey } = applyImportedPatentPayload({
                 item: row.item,
                 vehicleDetails: row.vehicleDetails,
                 patente,
@@ -6525,7 +6375,7 @@ export function CatalogHomeClient({
               syncMode: "tasaciones-first",
               forceRefresh: true,
             });
-            const resolvedKey = applyImportedPatentPayload({
+            const { vehicleKey: resolvedKey } = applyImportedPatentPayload({
               item: payload.item!,
               vehicleDetails: payload.vehicleDetails,
               patente,
@@ -7284,7 +7134,7 @@ export function CatalogHomeClient({
         seedInventarioRow: currentItem.raw as Record<string, unknown>,
       });
 
-      const resolvedKey = applyImportedPatentPayload({
+      const { vehicleKey: resolvedKey, nextConfig } = applyImportedPatentPayload({
         item: payload.item!,
         vehicleDetails: payload.vehicleDetails,
         patente,
@@ -7306,20 +7156,17 @@ export function CatalogHomeClient({
       }
 
       if (options?.persistEditor !== false) {
-        await new Promise((resolve) => window.setTimeout(resolve, 80));
-        void persistEditorConfigRef.current(configRef.current);
-        router.refresh();
+        lastPersistedConfigRef.current = JSON.stringify(nextConfig);
+        await persistEditorConfigRef.current(nextConfig);
       }
 
-      return { payload, patente, resolvedKey, vehicleKey };
+      return { payload, patente, resolvedKey, vehicleKey, nextConfig };
     },
     [
       applyImportedPatentPayload,
-      config,
       editingVehicleKey,
       itemsByKey,
       managingVehicleKey,
-      router,
       sortedUpcomingAuctions,
     ],
   );
@@ -7518,6 +7365,7 @@ export function CatalogHomeClient({
     let okCount = 0;
     let processed = 0;
     let appliedCount = 0;
+    let latestConfig = configRef.current;
     const failed: string[] = [];
     const incomplete: string[] = [];
 
@@ -7536,6 +7384,7 @@ export function CatalogHomeClient({
             updateEditingForm: false,
             internalOnly: true,
           });
+          latestConfig = result.nextConfig;
           appliedCount += 1;
           if (result.payload.syncDiagnostics?.syncComplete === false) {
             incomplete.push(
@@ -7588,16 +7437,14 @@ export function CatalogHomeClient({
     } finally {
       setGroupSyncAllState(null);
       if (appliedCount > 0) {
-        await new Promise((resolve) => window.setTimeout(resolve, 100));
-        void persistEditorConfigRef.current(configRef.current);
-        router.refresh();
+        lastPersistedConfigRef.current = JSON.stringify(latestConfig);
+        await persistEditorConfigRef.current(latestConfig);
       }
     }
   }, [
     groupManageBaseItems,
     groupSyncAllState?.running,
     runPatentInventorySync,
-    router,
     showSystemNotice,
     syncingVehicleKey,
   ]);
@@ -7878,17 +7725,20 @@ export function CatalogHomeClient({
     trackEvent("admin_logout");
   };
 
-  const topSectionTabs: Array<{ id: SectionId; label: string }> = [
-    { id: "proximos-remates", label: "Proximos remates" },
-    { id: "ventas-directas", label: "Ventas directas" },
-  ];
+  const catalogNavLinks = useMemo(() => {
+    const ventaDirectaHref = "/vehiculos?tipo=venta_directa";
+    const firstRemate =
+      visibleUpcomingRemateGroups[0]?.auction ??
+      sortedRemateAuctions.find((auction) => !hiddenHomeCategoryIds.has(auctionCategoryKey(auction.id)));
+    const proximosRematesHref = firstRemate
+      ? `/vehiculos?evento=${encodeURIComponent(firstRemate.id)}`
+      : "/vehiculos?tipo=remate";
 
-  const handleTopSectionTabClick = (sectionId: SectionId) => {
-    setTopSectionFilter((prev) => (prev === sectionId ? "all" : sectionId));
-    if (typeof document === "undefined") return;
-    const target = document.getElementById(sectionId);
-    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+    return [
+      { id: "proximos-remates" as const, label: "Proximos remates", href: proximosRematesHref },
+      { id: "ventas-directas" as const, label: "Ventas directas", href: ventaDirectaHref },
+    ];
+  }, [hiddenHomeCategoryIds, sortedRemateAuctions, visibleUpcomingRemateGroups]);
 
   const showAdminEditor = isAdmin && adminView === "editor" && !isStandaloneDetailPage;
   const showAdminHeaderControls = isAdmin && adminView === "editor";
@@ -8415,17 +8265,14 @@ export function CatalogHomeClient({
             </button>
             <div className="hidden items-center gap-2 md:flex">
               <nav className="flex flex-wrap gap-2 text-sm">
-                {topSectionTabs.map((tab) => (
-                  <button
+                {catalogNavLinks.map((tab) => (
+                  <Link
                     key={`top-tab-desktop-${tab.id}`}
-                    type="button"
-                    onClick={() => handleTopSectionTabClick(tab.id)}
-                    className={`premium-link-pill ui-focus ${
-                      topSectionFilter === tab.id ? "border-cyan-400 bg-cyan-600 text-white" : ""
-                    }`}
+                    href={tab.href}
+                    className="premium-link-pill ui-focus"
                   >
                     {tab.label}
-                  </button>
+                  </Link>
                 ))}
               </nav>
               {showAdminHeaderControls ? (
@@ -8459,20 +8306,15 @@ export function CatalogHomeClient({
           {mobileMenuOpen ? (
             <div id="mobile-main-menu" className="rounded-lg border border-slate-200 bg-white p-3 md:hidden">
               <nav className="flex flex-col gap-2 text-sm">
-                {topSectionTabs.map((tab) => (
-                  <button
+                {catalogNavLinks.map((tab) => (
+                  <Link
                     key={`top-tab-mobile-${tab.id}`}
-                    type="button"
-                    onClick={() => {
-                      handleTopSectionTabClick(tab.id);
-                      setMobileMenuOpen(false);
-                    }}
-                    className={`premium-link-pill ui-focus text-center ${
-                      topSectionFilter === tab.id ? "border-cyan-400 bg-cyan-600 text-white" : ""
-                    }`}
+                    href={tab.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="premium-link-pill ui-focus text-center"
                   >
                     {tab.label}
-                  </button>
+                  </Link>
                 ))}
               </nav>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -10730,11 +10572,6 @@ export function CatalogHomeClient({
           return null;
         })}
       </div>
-      {config.homeLayout.showFeaturedStrip ? (
-        <div className="relative z-10 mx-auto mb-14 max-w-7xl px-4 sm:px-6 lg:px-8">
-          <FeaturedStrip items={featuredItems} onOpenVehicle={openVehicleDetail} />
-        </div>
-      ) : null}
       <section className="relative z-10 mx-auto mb-14 grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="section-shell">
           <p className="premium-kicker">Confianza VEDISA</p>

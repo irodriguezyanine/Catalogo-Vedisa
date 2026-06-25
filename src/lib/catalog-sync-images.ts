@@ -1,6 +1,39 @@
-/** Fusión de imágenes Glo3D + Autored con prioridad Glo3D para miniatura. */
+/** Fusión de imágenes Glo3D + Autored + Tasaciones con prioridad Glo3D para miniatura y visor. */
 
 export type CatalogThumbnailSource = "glo3d" | "autored" | "inventario" | "none";
+
+export function isGlo3dCatalogImageUrl(url: string): boolean {
+  return /glo3d|firebasestorage|storage\.googleapis|googleusercontent/i.test(url);
+}
+
+/** Fotos subidas en Inventario → pestaña Fotos (Supabase inventario-documentos). */
+export function isTasacionesInventoryPhotoUrl(url: string): boolean {
+  return /inventario-documentos|inventario_documentos/i.test(url);
+}
+
+export function isAutoredGenericModelImageUrl(url: string): boolean {
+  return /autored-public-files\.s3\.amazonaws\.com\/autored\/models\//i.test(url);
+}
+
+function partitionInventarioImages(
+  inventarioImages: string[],
+  reserved: Set<string>,
+): {
+  extraGlo3d: string[];
+  inventarioMisc: string[];
+  tasaciones: string[];
+} {
+  const extraGlo3d: string[] = [];
+  const inventarioMisc: string[] = [];
+  const tasaciones: string[] = [];
+  for (const url of inventarioImages) {
+    if (reserved.has(url)) continue;
+    if (isGlo3dCatalogImageUrl(url)) extraGlo3d.push(url);
+    else if (isTasacionesInventoryPhotoUrl(url)) tasaciones.push(url);
+    else inventarioMisc.push(url);
+  }
+  return { extraGlo3d, inventarioMisc, tasaciones };
+}
 
 export function mergeVehicleImageSources(options: {
   glo3dImages: string[];
@@ -11,16 +44,34 @@ export function mergeVehicleImageSources(options: {
   thumbnail?: string;
   thumbnailSource: CatalogThumbnailSource;
 } {
-  const glo3dImages = options.glo3dImages.filter((url) => url.startsWith("http"));
   const autoredImages = options.autoredImages.filter((url) => url.startsWith("http"));
   const inventarioImages = (options.inventarioImages ?? []).filter((url) => url.startsWith("http"));
+  const reserved = new Set<string>([
+    ...options.glo3dImages.filter((url) => url.startsWith("http")),
+    ...autoredImages,
+  ]);
+  const { extraGlo3d, inventarioMisc, tasaciones } = partitionInventarioImages(
+    inventarioImages,
+    reserved,
+  );
+  const glo3dImages = [
+    ...new Set([
+      ...options.glo3dImages.filter((url) => url.startsWith("http")),
+      ...extraGlo3d,
+    ]),
+  ];
 
-  const thumbnail = glo3dImages[0] ?? autoredImages[0] ?? inventarioImages[0];
+  const thumbnail =
+    glo3dImages[0] ??
+    autoredImages.find((url) => !isAutoredGenericModelImageUrl(url)) ??
+    autoredImages[0] ??
+    inventarioMisc[0] ??
+    tasaciones[0];
   const thumbnailSource: CatalogThumbnailSource = glo3dImages[0]
     ? "glo3d"
     : autoredImages[0]
       ? "autored"
-      : inventarioImages[0]
+      : inventarioMisc[0] || tasaciones[0]
         ? "inventario"
         : "none";
 
@@ -28,7 +79,12 @@ export function mergeVehicleImageSources(options: {
     ...new Set([
       ...glo3dImages,
       ...(glo3dImages.length === 0 ? autoredImages : []),
-      ...inventarioImages.filter((url) => !glo3dImages.includes(url)),
+      ...inventarioMisc.filter(
+        (url) => !glo3dImages.includes(url) && !autoredImages.includes(url),
+      ),
+      ...tasaciones.filter(
+        (url) => !glo3dImages.includes(url) && !autoredImages.includes(url),
+      ),
     ]),
   ];
 

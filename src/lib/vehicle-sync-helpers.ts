@@ -1,7 +1,24 @@
 import type { CatalogItem } from "@/types/catalog";
-import type { EditorConfig } from "@/types/editor";
+import type { EditorConfig, EditorVehicleDetails } from "@/types/editor";
 import { getPatentFromItem } from "@/lib/catalog-keys";
+import {
+  isAutoredGenericModelImageUrl,
+  isGlo3dCatalogImageUrl,
+  isTasacionesInventoryPhotoUrl,
+} from "@/lib/catalog-sync-images";
+import { getEditorOverrideForItem } from "@/lib/catalog-public-inventory";
 import { isPlaceholderVehicleIdentity } from "@/lib/vehicle-identity";
+
+function resolveVehicleDetailsOverride(
+  item: CatalogItem,
+  vehicleKey: string,
+  editorConfig: EditorConfig,
+): EditorVehicleDetails | undefined {
+  return (
+    getEditorOverrideForItem(item, editorConfig.vehicleDetails ?? {}) ??
+    editorConfig.vehicleDetails?.[vehicleKey]
+  );
+}
 
 export function getCatalogItemPatent(item: CatalogItem): string {
   return getPatentFromItem(item);
@@ -22,11 +39,11 @@ export function getCatalogItemModel(item: CatalogItem): string {
 }
 
 function thumbnailLooksLikeGlo3d(url: string): boolean {
-  return /glo3d|firebasestorage|storage\.googleapis|googleusercontent/i.test(url);
+  return isGlo3dCatalogImageUrl(url);
 }
 
 function thumbnailLooksLikeAutoredGeneric(url: string): boolean {
-  return /autored-public-files\.s3\.amazonaws\.com\/autored\/models\//i.test(url);
+  return isAutoredGenericModelImageUrl(url);
 }
 
 export function hasRealVehicleThumbnail(
@@ -34,7 +51,7 @@ export function hasRealVehicleThumbnail(
   vehicleKey: string,
   editorConfig: EditorConfig,
 ): boolean {
-  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const details = resolveVehicleDetailsOverride(item, vehicleKey, editorConfig);
   const raw = item.raw as Record<string, unknown>;
   const candidate =
     details?.thumbnail ??
@@ -54,7 +71,7 @@ export function vehicleTitleNeedsSync(
   editorConfig: EditorConfig,
   isStaleTitle?: (title: string, patente: string) => boolean,
 ): boolean {
-  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const details = resolveVehicleDetailsOverride(item, vehicleKey, editorConfig);
   const patente = getCatalogItemPatent(item);
   const title = (details?.title ?? item.title ?? "").trim();
   if (!title || isStaleTitle?.(title, patente)) return true;
@@ -77,7 +94,7 @@ export function vehicleNeedsQuickSync(
 ): boolean {
   if (vehicleKey.startsWith("manual-")) return false;
 
-  const details = editorConfig.vehicleDetails?.[vehicleKey];
+  const details = resolveVehicleDetailsOverride(item, vehicleKey, editorConfig);
   const raw = item.raw as Record<string, unknown>;
   const view3dUrl =
     details?.view3dUrl ??
@@ -97,8 +114,10 @@ export function vehicleNeedsQuickSync(
     if (thumbnailLooksLikeAutoredGeneric(thumb)) return true;
     if (!thumbnailLooksLikeGlo3d(thumb)) {
       const isUploadedPhoto =
-        /supabase\.co|cloudinary|inventario-documentos|storage/i.test(thumb) &&
-        !thumbnailLooksLikeAutoredGeneric(thumb);
+        isTasacionesInventoryPhotoUrl(thumb) ||
+        (/supabase\.co|cloudinary|storage/i.test(thumb) &&
+          !thumbnailLooksLikeAutoredGeneric(thumb) &&
+          !isGlo3dCatalogImageUrl(thumb));
       if (!isUploadedPhoto) return true;
     }
   }
@@ -111,7 +130,10 @@ export function resolveVehicleThumbnailSrc(
   vehicleKey?: string,
   editorConfig?: EditorConfig,
 ): string {
-  const details = vehicleKey && editorConfig ? editorConfig.vehicleDetails?.[vehicleKey] : undefined;
+  const details =
+    editorConfig && vehicleKey
+      ? resolveVehicleDetailsOverride(item, vehicleKey, editorConfig)
+      : undefined;
   const raw = item.raw as Record<string, unknown>;
   const candidate =
     details?.thumbnail?.trim() ||

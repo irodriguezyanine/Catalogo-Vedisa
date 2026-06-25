@@ -269,6 +269,10 @@ export function mergeEditorConfigAfterServerPersist(
 
   return {
     ...preserved,
+    vehicleDetails: {
+      ...(preserved.vehicleDetails ?? {}),
+      ...(editorSent.vehicleDetails ?? {}),
+    },
     vehicleUpcomingAuctionIds: mergedAssignments,
     sectionVehicleIds: {
       ...preserved.sectionVehicleIds,

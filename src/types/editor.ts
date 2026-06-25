@@ -216,7 +216,7 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
     heroMaxWidth: "xl",
     showHeroChips: true,
     showHeroCtas: true,
-    showFeaturedStrip: true,
+    showFeaturedStrip: false,
     showRecentPublications: false,
     showFavoritesSection: false,
     showHowToSection: true,

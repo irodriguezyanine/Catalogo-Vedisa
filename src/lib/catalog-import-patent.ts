@@ -655,6 +655,7 @@ function buildVehicleDetailsFromSources(
   glo3d?: Glo3dInventoryEntry | null,
   autored?: Record<string, unknown> | null,
   images: string[] = [],
+  preferredThumbnail?: string,
 ): EditorVehicleDetails {
   const glo3dFields = glo3d?.technicalFields ?? {};
   const autoredMerged = autored ? buildMergedRecord(normalizeAutoredImportRecord(autored) ?? autored) : {};
@@ -678,7 +679,10 @@ function buildVehicleDetailsFromSources(
       .filter((part) => part && !isPlaceholderVehicleLabel(part))
       .join(" ")
       .trim() || `Unidad ${patente}`;
-  const thumbnail = images[0] ?? pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]);
+  const thumbnail =
+    preferredThumbnail ??
+    images[0] ??
+    pickString(row, ["thumbnail", "imagen_principal", "foto_portada"]);
 
   return {
     title,
@@ -1344,7 +1348,14 @@ export async function importVehicleByPatent(
 
     return buildImportPatentResult({
       item,
-      vehicleDetails: buildVehicleDetailsFromSources(patente, mergedRow, glo3d, autored, images),
+      vehicleDetails: buildVehicleDetailsFromSources(
+        patente,
+        mergedRow,
+        glo3d,
+        autored,
+        images,
+        mergedImages.thumbnail,
+      ),
       source: resolveImportSource(
         glo3d,
         autored,

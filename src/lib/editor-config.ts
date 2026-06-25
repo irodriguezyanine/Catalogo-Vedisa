@@ -118,8 +118,7 @@ function normalizeConfig(config?: Partial<EditorConfig> | null): EditorConfig {
       heroMaxWidth: migrated?.homeLayout?.heroMaxWidth ?? defaults.homeLayout.heroMaxWidth,
       showHeroChips: migrated?.homeLayout?.showHeroChips ?? defaults.homeLayout.showHeroChips,
       showHeroCtas: migrated?.homeLayout?.showHeroCtas ?? defaults.homeLayout.showHeroCtas,
-      showFeaturedStrip:
-        migrated?.homeLayout?.showFeaturedStrip ?? defaults.homeLayout.showFeaturedStrip,
+      showFeaturedStrip: false,
       showRecentPublications: false,
       showFavoritesSection: false,
       showHowToSection:
