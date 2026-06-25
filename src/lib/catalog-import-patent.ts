@@ -105,6 +105,7 @@ export type ImportPatentResult = {
   syncDiagnostics?: {
     tasacionesFound: boolean;
     tasacionesComplete: boolean;
+    tasacionesMissing?: string[];
     usedExternalApis: boolean;
     glo3dFound: boolean;
     glo3dImageCount: number;
@@ -435,6 +436,7 @@ function buildSyncDiagnostics(
   tasaciones: {
     found: boolean;
     complete: boolean;
+    missing?: string[];
     usedExternalApis: boolean;
   },
 ): NonNullable<ImportPatentResult["syncDiagnostics"]> {
@@ -473,6 +475,7 @@ function buildSyncDiagnostics(
   return {
     tasacionesFound: tasaciones.found,
     tasacionesComplete: tasaciones.complete,
+    tasacionesMissing: tasaciones.missing,
     usedExternalApis: tasaciones.usedExternalApis,
     glo3dFound: Boolean(glo3d),
     glo3dImageCount,
@@ -1363,6 +1366,7 @@ export async function importVehicleByPatent(
       syncDiagnostics: buildSyncDiagnostics(patente, glo3d, autored, mergedImages, hasGlo3dViewer, {
         found: fromTasaciones,
         complete: completeness.complete,
+        missing: completeness.missing,
         usedExternalApis,
       }),
     });

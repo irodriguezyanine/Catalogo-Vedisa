@@ -39,6 +39,7 @@ export function logCatalogSyncPatentResult(
     syncDiagnostics?: {
       tasacionesFound?: boolean;
       tasacionesComplete?: boolean;
+      tasacionesMissing?: string[];
       usedExternalApis?: boolean;
       syncComplete?: boolean;
       thumbnailSource?: string;
@@ -60,6 +61,7 @@ export function logCatalogSyncPatentResult(
     source: result.source,
     tasacionesFound: diag?.tasacionesFound,
     tasacionesComplete: diag?.tasacionesComplete,
+    tasacionesMissing: diag?.tasacionesMissing,
     usedExternalApis: diag?.usedExternalApis,
     syncComplete: diag?.syncComplete,
     thumbnailSource: diag?.thumbnailSource,

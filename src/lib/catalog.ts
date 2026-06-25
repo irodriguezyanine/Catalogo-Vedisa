@@ -2128,6 +2128,8 @@ export async function fetchTasacionesRecordByPatent(
       endpoint.searchParams.set("limit", "50");
       endpoint.searchParams.set("incluir_historicos", "true");
       endpoint.searchParams.set("incluir_medios", "true");
+      endpoint.searchParams.set("fetch_glo3d", "true");
+      endpoint.searchParams.set("persistir_medios", "true");
 
       const response = await fetch(endpoint.toString(), {
         method: "GET",
