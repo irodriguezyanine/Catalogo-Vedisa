@@ -241,9 +241,117 @@ export function resolveCommercialEventBadge(
 
 export type VehicleListCommercialFilter = "all" | "remate" | "venta_directa";
 
+function normalizePatenteKey(value?: string | null): string {
+  return String(value ?? "")
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/-/g, "");
+}
+
+function buildCatalogItemFromEditorAssignment(
+  vehicleKey: string,
+  details: EditorVehicleDetails | undefined,
+  auctionId: string,
+  config: EditorConfig,
+): CatalogItem | null {
+  const patenteFromKey = /^[A-Z0-9]{5,10}$/.test(vehicleKey)
+    ? normalizePatenteKey(vehicleKey)
+    : "";
+  const patente = normalizePatenteKey(details?.patente) || patenteFromKey;
+  if (!patente) return null;
+
+  const auctionsById = new Map((config.upcomingAuctions ?? []).map((auction) => [auction.id, auction]));
+  const auction = auctionsById.get(auctionId);
+  const estadoRetiro =
+    auction && resolveCommercialEventType(auction) === "venta_directa"
+      ? "en_bodega_a_venta_directa"
+      : "en_bodega_a_remate";
+
+  const images = (details?.imagesCsv ?? "")
+    .split(/[\n,;|]+/)
+    .map((part) => part.trim())
+    .filter((url) => url.startsWith("http"));
+  const title =
+    details?.title?.trim() ||
+    [details?.brand, details?.model].filter(Boolean).join(" ").trim() ||
+    `Unidad ${patente}`;
+
+  return {
+    id: vehicleKey,
+    title,
+    subtitle: patente,
+    images,
+    thumbnail: details?.thumbnail?.startsWith("http") ? details.thumbnail : images[0],
+    view3dUrl: details?.view3dUrl,
+    raw: {
+      patente,
+      PATENTE: patente,
+      PPU: patente,
+      stock_number: patente,
+      marca: details?.brand,
+      modelo: details?.model,
+      descripcion: details?.description,
+      source: "editor_assignment_public",
+      estado_retiro: estadoRetiro,
+    },
+  };
+}
+
+/** Incluye patentes asignadas a remates/VD que aún no están en el feed compartido. */
+function mergeAssignedEditorPlaceholders(
+  items: CatalogItem[],
+  config: EditorConfig,
+): CatalogItem[] {
+  const seenPatentes = new Set<string>();
+  const seenKeys = new Set<string>();
+  for (const item of items) {
+    seenKeys.add(getVehicleKey(item));
+    seenKeys.add(item.id);
+    const patente = getPatent(item);
+    if (patente !== "—") seenPatentes.add(patente);
+  }
+
+  const placeholders: CatalogItem[] = [];
+  for (const [vehicleKey, auctionId] of Object.entries(config.vehicleUpcomingAuctionIds ?? {})) {
+    if (!auctionId?.trim()) continue;
+    if (seenKeys.has(vehicleKey)) continue;
+
+    const patenteHint = normalizePatenteKey(vehicleKey);
+    const details =
+      config.vehicleDetails?.[vehicleKey] ??
+      (patenteHint ? config.vehicleDetails?.[patenteHint] : undefined);
+    const placeholder = buildCatalogItemFromEditorAssignment(
+      vehicleKey,
+      details,
+      auctionId,
+      config,
+    );
+    if (!placeholder) continue;
+
+    const patente = getPatent(placeholder);
+    if (patente !== "—" && seenPatentes.has(patente)) continue;
+
+    placeholders.push(placeholder);
+    seenKeys.add(vehicleKey);
+    seenKeys.add(getVehicleKey(placeholder));
+    if (patente !== "—") seenPatentes.add(patente);
+  }
+
+  return placeholders.length > 0 ? [...items, ...placeholders] : items;
+}
+
 export function getVehicleAssignedAuctionId(item: CatalogItem, config: EditorConfig): string | null {
-  const auctionId = config.vehicleUpcomingAuctionIds?.[getVehicleKey(item)];
-  return auctionId?.trim() ? auctionId : null;
+  const key = getVehicleKey(item);
+  const fromKey = config.vehicleUpcomingAuctionIds?.[key]?.trim();
+  if (fromKey) return fromKey;
+  const fromId = config.vehicleUpcomingAuctionIds?.[item.id]?.trim();
+  if (fromId) return fromId;
+  const patente = getPatent(item);
+  if (patente !== "—") {
+    const fromPatente = config.vehicleUpcomingAuctionIds?.[patente]?.trim();
+    if (fromPatente) return fromPatente;
+  }
+  return null;
 }
 
 export function getFilterableAuctionGroups(config: EditorConfig): {
@@ -289,8 +397,11 @@ export function getVisibleCatalogItems(feed: CatalogFeed, config: EditorConfig):
   }
   const soldSet = new Set(config.soldVehicleIds ?? []);
 
-  const items = [...feed.items, ...manualItems].map((item) =>
-    applyCatalogDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
+  const items = mergeAssignedEditorPlaceholders(
+    [...feed.items, ...manualItems].map((item) =>
+      applyCatalogDetailsOverride(item, getEditorOverrideForItem(item, config.vehicleDetails)),
+    ),
+    config,
   );
 
   return items.filter((item) => {
