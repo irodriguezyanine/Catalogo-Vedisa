@@ -1084,6 +1084,39 @@ function collectInventoryPatentesForRainworx(catalogItems: CatalogItem[]): strin
   return [...set];
 }
 
+/** Ítem mínimo para mostrar patentes asignadas al remate que aún no están en el feed de inventario. */
+function catalogItemFromAssignedEditorDetails(
+  patente: string,
+  details: EditorVehicleDetails | undefined,
+  vehicleKey: string,
+): CatalogItem {
+  const images = (details?.imagesCsv ?? "")
+    .split(/[\n,;|]+/)
+    .map((part) => part.trim())
+    .filter((url) => url.startsWith("http"));
+  const title =
+    details?.title?.trim() ||
+    [details?.brand, details?.model].filter(Boolean).join(" ").trim() ||
+    `Unidad ${patente}`;
+  return {
+    id: vehicleKey,
+    title,
+    subtitle: patente,
+    images,
+    thumbnail: details?.thumbnail?.startsWith("http") ? details.thumbnail : images[0],
+    view3dUrl: details?.view3dUrl,
+    raw: {
+      patente,
+      PATENTE: patente,
+      PPU: patente,
+      stock_number: patente,
+      marca: details?.brand,
+      modelo: details?.model,
+      source: "editor_assignment_pending_feed",
+    },
+  };
+}
+
 /** Patente a exigir contra Rainworx: borrador del modal o dato en inventario. */
 function getExpectedPatenteForRainworx(item: CatalogItem, details: EditorVehicleDetails): string | undefined {
   const fromDraft = normalizePatenteKey(details.patente);
@@ -5187,13 +5220,32 @@ export function CatalogHomeClient({
           ? ventaDirectaInventoryOnlyKeys
           : (effectiveSectionVehicleIds[groupManageTarget.sectionId] ?? []),
     );
-    return dedupeCatalogItemsByVehicleKey(
-      activeInventoryItems.filter((item) => isAssignedVehicleKey(assignedKeys, item)),
-    );
+    const fromFeed = activeInventoryItems.filter((item) => isAssignedVehicleKey(assignedKeys, item));
+    const matchedAssignmentKeys = new Set<string>();
+    for (const item of fromFeed) {
+      matchedAssignmentKeys.add(getVehicleKey(item));
+      const patent = normalizePatenteKey(getPatent(item));
+      if (patent && patent !== "—") matchedAssignmentKeys.add(patent);
+    }
+    const placeholders: CatalogItem[] = [];
+    for (const key of assignedKeys) {
+      if (matchedAssignmentKeys.has(key)) continue;
+      const details = config.vehicleDetails[key];
+      const patent = normalizePatenteKey(
+        details?.patente ?? (/^[A-Z0-9]{5,10}$/.test(key) ? key : ""),
+      );
+      if (!patent) continue;
+      if (matchedAssignmentKeys.has(patent)) continue;
+      placeholders.push(catalogItemFromAssignedEditorDetails(patent, details, key));
+      matchedAssignmentKeys.add(key);
+      matchedAssignmentKeys.add(patent);
+    }
+    return dedupeCatalogItemsByVehicleKey([...fromFeed, ...placeholders]);
   }, [
     groupManageTarget,
     activeInventoryItems,
     config.vehicleUpcomingAuctionIds,
+    config.vehicleDetails,
     effectiveSectionVehicleIds,
     ventaDirectaInventoryOnlyKeys,
   ]);
@@ -7127,43 +7179,47 @@ export function CatalogHomeClient({
     return () => window.clearTimeout(timeout);
   }, [adminView, config, isAdmin, isBootstrapping, persistEditorConfig]);
 
+  const refreshAdminInventoryFeed = useCallback(async () => {
+    const response = await fetch("/api/admin/refresh-inventory", { method: "POST" });
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      items?: CatalogItem[];
+      itemCount?: number;
+      config?: EditorConfig;
+      syncStatus?: {
+        checkedAt: string;
+        remateAuctions: number;
+        ventaDirectaAuctions: number;
+        ventaDirectaCatalog: {
+          present: boolean;
+          vehicleCount: number;
+          sharedItemsCount?: number;
+          needsReconcile?: boolean;
+        };
+      };
+    };
+    if (!response.ok || !payload.ok || !payload.items) {
+      throw new Error(payload.error ?? `Error HTTP ${response.status}`);
+    }
+    setLiveFeedItems(payload.items);
+    setImportedInventoryItems([]);
+    lastAutoImportPatentRef.current = "";
+    if (payload.config) applyMergedAdminConfig(payload.config);
+    if (payload.syncStatus) setSharedSyncStatus(payload.syncStatus);
+    router.refresh();
+    return payload;
+  }, [applyMergedAdminConfig, router]);
+
   const refreshInventoryAndSync = useCallback(async () => {
     setRevalidating(true);
     try {
-      const response = await fetch("/api/admin/refresh-inventory", { method: "POST" });
-      const payload = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        items?: CatalogItem[];
-        itemCount?: number;
-        source?: string;
-        config?: EditorConfig;
-        syncStatus?: {
-          checkedAt: string;
-          remateAuctions: number;
-          ventaDirectaAuctions: number;
-          ventaDirectaCatalog: {
-            present: boolean;
-            vehicleCount: number;
-            sharedItemsCount?: number;
-            needsReconcile?: boolean;
-          };
-        };
-      };
-      if (!response.ok || !payload.ok || !payload.items) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
-      setLiveFeedItems(payload.items);
-      setImportedInventoryItems([]);
-      lastAutoImportPatentRef.current = "";
-      if (payload.config) applyMergedAdminConfig(payload.config);
-      if (payload.syncStatus) setSharedSyncStatus(payload.syncStatus);
-      router.refresh();
+      const payload = await refreshAdminInventoryFeed();
       const vd = payload.syncStatus?.ventaDirectaCatalog;
       showSystemNotice(
         "success",
         "Inventario actualizado",
-        `${payload.itemCount ?? payload.items.length} unidades · VD ${vd?.vehicleCount ?? 0} editor · ${vd?.sharedItemsCount ?? 0} Supabase.`,
+        `${payload.itemCount ?? payload.items?.length ?? 0} unidades · VD ${vd?.vehicleCount ?? 0} editor · ${vd?.sharedItemsCount ?? 0} Supabase.`,
       );
     } catch (error) {
       showSystemNotice(
@@ -7174,7 +7230,7 @@ export function CatalogHomeClient({
     } finally {
       setRevalidating(false);
     }
-  }, [applyMergedAdminConfig, router, showSystemNotice]);
+  }, [refreshAdminInventoryFeed, showSystemNotice]);
 
   const adminInventorySyncBusy = revalidating;
 
@@ -7620,6 +7676,13 @@ export function CatalogHomeClient({
         removedFromGroup?: string[];
         photosPreserved?: number;
         rainworxEventTitle?: string;
+        inventarioHydration?: {
+          imported?: string[];
+          enriched?: string[];
+          rainworxOnly?: string[];
+          failed?: Array<{ patente: string; error: string }>;
+          rateLimited?: boolean;
+        };
       };
     },
     contextLabel: string,
@@ -7630,6 +7693,7 @@ export function CatalogHomeClient({
     const added = data.editor?.newPatentes ?? [];
     const removed = data.editor?.removedFromGroup ?? [];
     const photosPreserved = data.editor?.photosPreserved ?? 0;
+    const hydration = data.editor?.inventarioHydration;
     if (skipped.length > 0) {
       showSystemNotice(
         "info",
@@ -7653,7 +7717,28 @@ export function CatalogHomeClient({
       parts.push(`${updated.length} ficha(s) actualizada(s) sin pisar fotos Glo3D`);
     }
     if (added.length > 0) {
-      parts.push(`${added.length} patente(s) nueva(s) agregada(s): ${added.join(", ")}`);
+      parts.push(`${added.length} patente(s) asignada(s) al grupo: ${added.join(", ")}`);
+    }
+    if (hydration) {
+      if ((hydration.imported?.length ?? 0) > 0) {
+        parts.push(`${hydration.imported!.length} alta(s) nueva(s) en inventario/catálogo`);
+      }
+      if ((hydration.enriched?.length ?? 0) > 0) {
+        parts.push(`${hydration.enriched!.length} enriquecida(s) con Tasaciones/Glo3D`);
+      }
+      if ((hydration.rainworxOnly?.length ?? 0) > 0) {
+        parts.push(
+          `${hydration.rainworxOnly!.length} solo Rainworx (sin registro en Tasaciones): ${hydration.rainworxOnly!.join(", ")}`,
+        );
+      }
+      if ((hydration.failed?.length ?? 0) > 0) {
+        parts.push(
+          `${hydration.failed!.length} no importada(s): ${hydration.failed!.map((f) => f.patente).join(", ")}`,
+        );
+      }
+      if (hydration.rateLimited) {
+        parts.push("Glo3D limitó consultas; reintenta en unos minutos las patentes pendientes");
+      }
     }
     if (data.editor?.rainworxEventTitle) {
       parts.push(`Evento renombrado a «${data.editor.rainworxEventTitle}»`);
@@ -7664,8 +7749,10 @@ export function CatalogHomeClient({
     if (photosPreserved > 0) {
       parts.push(`${photosPreserved} miniatura(s) Glo3D/Tasaciones conservada(s)`);
     }
+    const noticeType =
+      hydration?.failed && hydration.failed.length > 0 ? ("info" as const) : ("success" as const);
     showSystemNotice(
-      "success",
+      noticeType,
       "Evento Rainworx sincronizado",
       parts.length > 0
         ? `${n} lote(s) leídos. ${parts.join(". ")}.`
@@ -7799,6 +7886,13 @@ export function CatalogHomeClient({
           newPatentes?: string[];
           removedFromGroup?: string[];
           photosPreserved?: number;
+          inventarioHydration?: {
+            imported?: string[];
+            enriched?: string[];
+            rainworxOnly?: string[];
+            failed?: Array<{ patente: string; error: string }>;
+            rateLimited?: boolean;
+          };
         };
       };
       if (!res.ok) {
@@ -7806,6 +7900,15 @@ export function CatalogHomeClient({
         return;
       }
       await refreshEditorConfigAfterRainworx();
+      try {
+        await refreshAdminInventoryFeed();
+      } catch {
+        showSystemNotice(
+          "info",
+          "Inventario pendiente de refresco",
+          "Rainworx guardó cambios, pero no se pudo recargar el feed. Usa «Actualizar inventario».",
+        );
+      }
       notifyRainworxEventImportOutcome(data, groupManageTargetLabel || "este grupo");
     } catch {
       showSystemNotice("error", "Importación Rainworx", "No se pudo completar la solicitud.");

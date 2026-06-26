@@ -26,6 +26,7 @@ import {
   setCachedTasacionesInventarioMap,
 } from "@/lib/catalog-tasaciones-import";
 import { logCatalogSync, warnCatalogSync } from "@/lib/catalog-sync-debug";
+import { inventarioSeedHasUsableIdentity } from "@/lib/rainworx-inventario-seed";
 import { sleepMs } from "@/lib/glo3d-api";
 import { fetchAutoredPublicationAveragePrice, isAutoredApiConfigured } from "@/lib/autored-api";
 import { buildDefaultVentaDirectaExtendedDescription } from "@/lib/venta-directa-description";
@@ -85,6 +86,8 @@ export type ImportPatentOptions = {
   tasacionesMap?: Map<string, Record<string, unknown>>;
   /** Fila parcial del ítem en catálogo (feed/editor) para completar la importación. */
   seedInventarioRow?: Record<string, unknown>;
+  /** Permite crear inventario solo con seed Rainworx (marca/modelo o fotos) si no hay Tasaciones. */
+  allowRainworxSeedFallback?: boolean;
 };
 
 export type ImportPatentResult = {
@@ -1351,7 +1354,22 @@ export async function importVehicleByPatent(
   if (!sanitizeMarcaValue(String(payload.marca ?? ""))) {
     delete payload.marca;
   }
-  const shouldPersist = Boolean(glo3d || autored || tasacionesRow || options?.forceRefresh);
+
+  const rainworxSeedOnly =
+    !glo3d &&
+    !autoredSynced &&
+    !fromTasaciones &&
+    options?.allowRainworxSeedFallback === true &&
+    inventarioSeedHasUsableIdentity(options?.seedInventarioRow, requestedPatente);
+
+  if (rainworxSeedOnly && options?.seedInventarioRow) {
+    payload = mergePreferMeaningful(options.seedInventarioRow, payload);
+    payload.origen = "rainworx";
+  }
+
+  const shouldPersist = Boolean(
+    glo3d || autored || tasacionesRow || options?.forceRefresh || rainworxSeedOnly,
+  );
 
   const buildResult = (
     row: Record<string, unknown>,
@@ -1410,7 +1428,7 @@ export async function importVehicleByPatent(
     return buildResult(persisted.row, persisted.created, true);
   }
 
-  if (!glo3d && !autoredSynced && !fromTasaciones) {
+  if (!glo3d && !autoredSynced && !fromTasaciones && !rainworxSeedOnly) {
     if (glo3dRateLimited) {
       throw new Glo3dRateLimitError(getGlo3dCircuitRetryAfterMs());
     }

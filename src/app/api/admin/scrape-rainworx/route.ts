@@ -6,9 +6,12 @@ import {
   findRemovedVehicleAssignmentsForAuction,
   syncEditorConfigToSharedTablesWithOptions,
 } from "@/lib/catalog-shared-sync";
+import { ESTADO_RETIRO_VENTA_DIRECTA } from "@/lib/catalog-shared-constants";
 import { applyExclusiveCommercialAssignment } from "@/lib/commercial-category-exclusivity";
 import type { CommercialLane } from "@/lib/commercial-category-exclusivity";
 import { removePatentFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-from-event";
+import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
+import { hydrateRainworxPatentsInInventario } from "@/lib/rainworx-inventario-hydrate";
 import {
   formatClpString,
   mergeEditorVehicleDetails,
@@ -79,6 +82,11 @@ type Body = {
  * Extrae datos de Rainworx (vehiculoschocados.cl / vedisaremates.cl) para alimentar el catálogo.
  * Con `applyToEditor`, escribe en Supabase la configuración del editor (misma clave por patente que `getVehicleKey` en el cliente).
  */
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const maxDuration = 300;
+
+const ESTADO_RETIRO_REMATE = "en_bodega_a_remate";
 export async function POST(request: Request) {
   const cookieStore = await cookies();
   const token = cookieStore.get(ADMIN_SESSION_COOKIE_NAME)?.value;
@@ -341,11 +349,52 @@ export async function POST(request: Request) {
         )
       : [];
     const removalResult = await deleteRemateItemsForRemovedAssignments(removals, normalizedConfig);
-    const finalSaved = await saveEditorConfig(normalizedConfig, session.email);
+    let configForSync = normalizedConfig;
+
+    let inventarioHydration: Awaited<ReturnType<typeof hydrateRainworxPatentsInInventario>> | undefined;
+    if (assignNewLotsAuctionId && rainworxPatenteList.length > 0) {
+      const estadoRetiro =
+        assignNewLotsEventType === "venta_directa"
+          ? ESTADO_RETIRO_VENTA_DIRECTA
+          : ESTADO_RETIRO_REMATE;
+      const hydrateEntries = rainworxPatenteList
+        .map((patente) => {
+          const rainworxDetails =
+            configForSync.vehicleDetails?.[patente] ??
+            mapped.find((row) => row.vehicleKey === patente)?.details;
+          if (!rainworxDetails) return null;
+          return { patente, rainworxDetails };
+        })
+        .filter(
+          (entry): entry is { patente: string; rainworxDetails: (typeof mapped)[number]["details"] } =>
+            entry != null,
+        );
+
+      inventarioHydration = await hydrateRainworxPatentsInInventario(hydrateEntries, {
+        estadoRetiro,
+        allowExternalApisForNew: true,
+      });
+
+      if (Object.keys(inventarioHydration.mergedVehicleDetails).length > 0) {
+        configForSync = {
+          ...configForSync,
+          vehicleDetails: {
+            ...configForSync.vehicleDetails,
+            ...inventarioHydration.mergedVehicleDetails,
+          },
+        };
+        const hydratedSave = await saveEditorConfig(configForSync, session.email);
+        if (hydratedSave.ok) {
+          configForSync = hydratedSave.normalizedConfig ?? configForSync;
+        }
+      }
+    }
+
     const sync = await syncEditorConfigToSharedTablesWithOptions(
-      finalSaved.normalizedConfig ?? normalizedConfig,
+      configForSync,
       assignNewLotsAuctionId ? { onlyAuctionIds: [assignNewLotsAuctionId] } : {},
     );
+    revalidateCatalogSurfaces();
 
     return Response.json({
       ok: true,
@@ -367,6 +416,15 @@ export async function POST(request: Request) {
           assignNewLotsAuctionId && rainworxEventMeta?.title ? assignNewLotsAuctionId : undefined,
         assignedAuctionId: assignNewLotsAuctionId && newPatentes.size > 0 ? assignNewLotsAuctionId : undefined,
         removedFromRemateItems: removalResult.deleted,
+        inventarioHydration: inventarioHydration
+          ? {
+              imported: inventarioHydration.imported,
+              enriched: inventarioHydration.enriched,
+              rainworxOnly: inventarioHydration.rainworxOnly,
+              failed: inventarioHydration.failed,
+              rateLimited: inventarioHydration.rateLimited,
+            }
+          : undefined,
       },
       sync,
     });
