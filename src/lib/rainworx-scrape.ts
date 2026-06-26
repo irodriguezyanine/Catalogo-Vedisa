@@ -281,16 +281,46 @@ export type ScrapeEventOptions = {
   matchPatentes?: string[];
   maxLots?: number;
   delayMs?: number;
+  /** Recorre todas las páginas paginadas del evento Rainworx (default true). */
+  fetchAllPages?: boolean;
+};
+
+export type ScrapeEventCollectionMeta = {
+  lotUrlsFound: number;
+  expectedFromBadges?: number;
+  pagesFetched?: number;
+};
+
+export type ScrapeEventResult = {
+  items: RainworxLotScraped[];
+  collectionMeta?: ScrapeEventCollectionMeta;
 };
 
 /**
  * Descarga la página del evento y luego cada ficha de lote (con pausa entre solicitudes).
  */
-export async function scrapeEventLots(options: ScrapeEventOptions): Promise<RainworxLotScraped[]> {
+export async function scrapeEventLots(options: ScrapeEventOptions): Promise<ScrapeEventResult> {
   const origin = getRainworxOrigin();
   const eventUrl = toAbsoluteUrl(origin, options.eventPageUrl);
-  const html = await fetchRainworxHtml(eventUrl);
-  let urls = extractLotDetailUrls(html, origin);
+  const fetchAllPages = options.fetchAllPages !== false;
+  const maxLots = options.maxLots ?? 500;
+  const delayMs = options.delayMs ?? 200;
+
+  let urls: string[] = [];
+  let collectionMeta: ScrapeEventCollectionMeta | undefined;
+  if (fetchAllPages) {
+    const { collectAllEventLotDetailUrls } = await import("@/lib/rainworx-event-pages");
+    const collected = await collectAllEventLotDetailUrls(eventUrl, Math.min(delayMs, 200));
+    urls = collected.lotUrls;
+    collectionMeta = {
+      lotUrlsFound: collected.lotUrls.length,
+      expectedFromBadges: collected.expectedFromBadges,
+      pagesFetched: collected.pagesFetched,
+    };
+  } else {
+    const html = await fetchRainworxHtml(eventUrl);
+    urls = extractLotDetailUrls(html, origin);
+  }
 
   const wantPatente = normalizePatenteKeyLocal(options.patente);
   const matchSet =
@@ -299,8 +329,6 @@ export async function scrapeEventLots(options: ScrapeEventOptions): Promise<Rain
           options.matchPatentes.map((p) => normalizePatenteKeyLocal(p)).filter(Boolean),
         )
       : null;
-  const maxLots = options.maxLots ?? 80;
-  const delayMs = options.delayMs ?? 200;
 
   const results: RainworxLotScraped[] = [];
 
@@ -329,5 +357,5 @@ export async function scrapeEventLots(options: ScrapeEventOptions): Promise<Rain
     await sleep(delayMs);
   }
 
-  return results;
+  return { items: results, collectionMeta };
 }

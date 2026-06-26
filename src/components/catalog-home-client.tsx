@@ -7676,6 +7676,10 @@ export function CatalogHomeClient({
         removedFromGroup?: string[];
         photosPreserved?: number;
         rainworxEventTitle?: string;
+        rainworxLotsRead?: number;
+        rainworxPatentesResolved?: number;
+        rainworxLotUrlsFound?: number;
+        rainworxExpectedFromBadges?: number;
         inventarioHydration?: {
           imported?: string[];
           enriched?: string[];
@@ -7702,6 +7706,10 @@ export function CatalogHomeClient({
       );
     }
     const n = typeof data.count === "number" ? data.count : applied.length;
+    const lotsRead = data.editor?.rainworxLotsRead ?? n;
+    const patentesResolved = data.editor?.rainworxPatentesResolved;
+    const lotUrlsFound = data.editor?.rainworxLotUrlsFound;
+    const expectedFromBadges = data.editor?.rainworxExpectedFromBadges;
     if (applied.length === 0) {
       showSystemNotice(
         "info",
@@ -7713,6 +7721,14 @@ export function CatalogHomeClient({
       return;
     }
     const parts: string[] = [];
+    if (typeof expectedFromBadges === "number" && typeof lotUrlsFound === "number") {
+      parts.push(`${lotUrlsFound}/${expectedFromBadges} lote(s) activos leídos en Rainworx`);
+    } else {
+      parts.push(`${lotsRead} lote(s) leídos en Rainworx`);
+    }
+    if (typeof patentesResolved === "number") {
+      parts.push(`${patentesResolved} patente(s) aplicadas a ${contextLabel}`);
+    }
     if (updated.length > 0) {
       parts.push(`${updated.length} ficha(s) actualizada(s) sin pisar fotos Glo3D`);
     }
@@ -7755,7 +7771,7 @@ export function CatalogHomeClient({
       noticeType,
       "Evento Rainworx sincronizado",
       parts.length > 0
-        ? `${n} lote(s) leídos. ${parts.join(". ")}.`
+        ? `${parts.join(". ")}.`
         : `${n} lote(s) leídos. Fichas actualizadas en ${contextLabel}: ${applied.join(", ")}.`,
     );
   };

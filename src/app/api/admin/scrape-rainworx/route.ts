@@ -7,9 +7,14 @@ import {
   syncEditorConfigToSharedTablesWithOptions,
 } from "@/lib/catalog-shared-sync";
 import { ESTADO_RETIRO_VENTA_DIRECTA } from "@/lib/catalog-shared-constants";
-import { applyExclusiveCommercialAssignment } from "@/lib/commercial-category-exclusivity";
 import type { CommercialLane } from "@/lib/commercial-category-exclusivity";
 import { removePatentFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-from-event";
+import {
+  assignPatentesToTargetAuction,
+  collectPatentesAssignedToAuction,
+  resolveCommercialLaneForAuction,
+  resolveVehicleKeysForAuctionPatente,
+} from "@/lib/rainworx-auction-scope";
 import { revalidateCatalogSurfaces } from "@/lib/revalidate-catalog";
 import { hydrateRainworxPatentsInInventario } from "@/lib/rainworx-inventario-hydrate";
 import {
@@ -114,6 +119,7 @@ export async function POST(request: Request) {
 
   try {
     let items: RainworxLotScraped[];
+    let rainworxCollectionMeta: import("@/lib/rainworx-scrape").ScrapeEventCollectionMeta | undefined;
     let rainworxEventMeta: RainworxEventPageMeta | undefined;
 
     if (body.lotUrls?.length) {
@@ -143,17 +149,19 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      items = await scrapeEventLots({
+      const scraped = await scrapeEventLots({
         eventPageUrl: body.eventUrl,
         patente: body.patente,
-        ...(addNewLotsFromEvent || syncGroupExclusive || !matchList || matchList.length === 0
-          ? {}
-          : { matchPatentes: matchList }),
+        ...(addNewLotsFromEvent || syncGroupExclusive || assignNewLotsAuctionId || !matchList || matchList.length === 0
+          ? { fetchAllPages: true }
+          : { matchPatentes: matchList, fetchAllPages: false }),
         maxLots:
           body.maxLots ??
-          (addNewLotsFromEvent || syncGroupExclusive ? 200 : matchList && matchList.length > 0 ? 160 : 80),
+          (addNewLotsFromEvent || syncGroupExclusive || assignNewLotsAuctionId ? 500 : matchList && matchList.length > 0 ? 160 : 80),
         delayMs: body.delayMs ?? 250,
       });
+      items = scraped.items;
+      rainworxCollectionMeta = scraped.collectionMeta;
     } else {
       return Response.json(
         { error: "Indica eventUrl o lotUrls en el cuerpo JSON" },
@@ -222,9 +230,15 @@ export async function POST(request: Request) {
     const removedFromGroup = new Set<string>();
     let photosPreserved = 0;
 
-    const groupPatenteSet = new Set(
-      (body.matchInventoryPatentes ?? []).map((p) => normalizePatenteKey(p)).filter(Boolean),
-    );
+    const groupPatenteSet = assignNewLotsAuctionId
+      ? collectPatentesAssignedToAuction(previousConfig, assignNewLotsAuctionId)
+      : new Set(
+          (body.matchInventoryPatentes ?? []).map((p) => normalizePatenteKey(p)).filter(Boolean),
+        );
+
+    const targetLane: CommercialLane | undefined = assignNewLotsAuctionId
+      ? resolveCommercialLaneForAuction(previousConfig, assignNewLotsAuctionId)
+      : undefined;
 
     for (let i = 0; i < mapped.length; i++) {
       const row = mapped[i];
@@ -234,15 +248,39 @@ export async function POST(request: Request) {
       }
 
       const isExistingInGroup = groupPatenteSet.has(row.vehicleKey);
-      const isNewFromEvent = addNewLotsFromEvent && groupPatenteSet.size > 0 && !isExistingInGroup;
+      const isNewFromEvent =
+        Boolean(addNewLotsFromEvent || syncGroupExclusive) &&
+        assignNewLotsAuctionId &&
+        !isExistingInGroup;
+
+      if (assignNewLotsAuctionId && !isExistingInGroup && !addNewLotsFromEvent) {
+        continue;
+      }
+
       const rowMerge: RainworxEditorMergeMode = isNewFromEvent ? "rainworx_wins" : editorMerge;
 
-      const keysToWrite = new Set<string>([row.vehicleKey]);
-      const catalogId = body.catalogItemIds?.[i]?.trim();
-      if (catalogId) keysToWrite.add(catalogId);
-      for (const [k, v] of Object.entries(config.vehicleDetails)) {
-        if (normalizePatenteKey(v.patente) === row.vehicleKey) keysToWrite.add(k);
+      const keysToWrite = new Set<string>();
+      if (assignNewLotsAuctionId) {
+        if (isExistingInGroup) {
+          for (const k of resolveVehicleKeysForAuctionPatente(
+            config,
+            assignNewLotsAuctionId,
+            row.vehicleKey,
+          )) {
+            keysToWrite.add(k);
+          }
+        } else {
+          keysToWrite.add(row.vehicleKey);
+        }
+      } else {
+        keysToWrite.add(row.vehicleKey);
+        for (const [k, v] of Object.entries(config.vehicleDetails)) {
+          if (normalizePatenteKey(v.patente) === row.vehicleKey) keysToWrite.add(k);
+        }
       }
+
+      const catalogId = body.catalogItemIds?.[i]?.trim();
+      if (catalogId && !assignNewLotsAuctionId) keysToWrite.add(catalogId);
 
       let nextDetails = { ...config.vehicleDetails };
       let nextPrices = { ...config.vehiclePrices };
@@ -283,21 +321,35 @@ export async function POST(request: Request) {
       .map((row) => row.vehicleKey)
       .filter((patente): patente is string => Boolean(patente));
 
-    if (syncGroupExclusive && assignNewLotsAuctionId && rainworxPatenteList.length > 0) {
-      const lane: CommercialLane =
-        assignNewLotsEventType === "venta_directa" ? "ventas-directas" : "proximos-remates";
+    const expectedFromBadges = rainworxCollectionMeta?.expectedFromBadges;
+    const lotUrlsFound = rainworxCollectionMeta?.lotUrlsFound;
+    if (
+      expectedFromBadges != null &&
+      lotUrlsFound != null &&
+      expectedFromBadges > 0 &&
+      lotUrlsFound !== expectedFromBadges
+    ) {
+      skipped.push({
+        reason: `Rainworx indica ${expectedFromBadges} lote(s) activo(s) en categorías; se leyeron ${lotUrlsFound} URL(s) de lote.`,
+      });
+    }
 
+    if (syncGroupExclusive && assignNewLotsAuctionId && rainworxPatenteList.length > 0 && targetLane) {
       for (const patente of groupPatenteSet) {
         if (rainworxPatenteList.includes(patente)) continue;
         config = removePatentFromAuctionAssignment(config, assignNewLotsAuctionId, patente);
         removedFromGroup.add(patente);
       }
 
-      const assignment = applyExclusiveCommercialAssignment(
+      const assignment = assignPatentesToTargetAuction(
         config,
-        rainworxPatenteList,
-        { lane, auctionId: assignNewLotsAuctionId },
-        config.upcomingAuctions ?? [],
+        addNewLotsFromEvent
+          ? rainworxPatenteList
+          : rainworxPatenteList.filter((patente) => groupPatenteSet.has(patente)),
+        {
+          lane: targetLane,
+          auctionId: assignNewLotsAuctionId,
+        },
       );
       config = {
         ...config,
@@ -308,15 +360,11 @@ export async function POST(request: Request) {
         if (groupPatenteSet.has(patente)) updatedPatentes.add(patente);
         else newPatentes.add(patente);
       }
-    } else if (addNewLotsFromEvent && assignNewLotsAuctionId && newPatentes.size > 0) {
-      const lane: CommercialLane =
-        assignNewLotsEventType === "venta_directa" ? "ventas-directas" : "proximos-remates";
-      const assignment = applyExclusiveCommercialAssignment(
-        config,
-        [...newPatentes],
-        { lane, auctionId: assignNewLotsAuctionId },
-        config.upcomingAuctions ?? [],
-      );
+    } else if (addNewLotsFromEvent && assignNewLotsAuctionId && newPatentes.size > 0 && targetLane) {
+      const assignment = assignPatentesToTargetAuction(config, [...newPatentes], {
+        lane: targetLane,
+        auctionId: assignNewLotsAuctionId,
+      });
       config = {
         ...config,
         sectionVehicleIds: assignment.sectionVehicleIds,
@@ -412,6 +460,10 @@ export async function POST(request: Request) {
         removedFromGroup: [...removedFromGroup],
         photosPreserved,
         rainworxEventTitle: rainworxEventMeta?.title,
+        rainworxLotsRead: items.length,
+        rainworxPatentesResolved: rainworxPatenteList.length,
+        rainworxLotUrlsFound: lotUrlsFound,
+        rainworxExpectedFromBadges: expectedFromBadges,
         renamedAuctionId:
           assignNewLotsAuctionId && rainworxEventMeta?.title ? assignNewLotsAuctionId : undefined,
         assignedAuctionId: assignNewLotsAuctionId && newPatentes.size > 0 ? assignNewLotsAuctionId : undefined,

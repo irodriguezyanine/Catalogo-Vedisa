@@ -1,6 +1,4 @@
 import { DEFAULT_VENTA_DIRECTA_EVENT_ID } from "@/lib/catalog-shared-constants";
-import { getAuctionCommercialEventType } from "@/lib/commercial-category-exclusivity";
-import type { CommercialLane } from "@/lib/commercial-category-exclusivity";
 import { revertInventarioTrasQuitarDeEvento } from "@/lib/catalog-inventory-remate-sync";
 import {
   deleteRemateItemsForRemovedAssignments,
@@ -79,16 +77,10 @@ export function removePatentFromAuctionAssignment(
     "ventas-directas": [...(config.sectionVehicleIds?.["ventas-directas"] ?? [])],
   };
 
-  const auction = (config.upcomingAuctions ?? []).find((entry) => entry.id === remateId);
-  const lane: CommercialLane =
-    getAuctionCommercialEventType(auction ?? { id: remateId, name: "", date: "" }) === "venta_directa"
-      ? "ventas-directas"
-      : "proximos-remates";
-
   for (const vehicleKey of vehicleKeys) {
-    if (assignments[vehicleKey] !== remateId) continue;
-    delete assignments[vehicleKey];
-    sections[lane] = sections[lane].filter((key) => key !== vehicleKey);
+    if (assignments[vehicleKey] === remateId) delete assignments[vehicleKey];
+    sections["proximos-remates"] = sections["proximos-remates"].filter((key) => key !== vehicleKey);
+    sections["ventas-directas"] = sections["ventas-directas"].filter((key) => key !== vehicleKey);
   }
 
   return {
