@@ -69,3 +69,33 @@ export function resolveCatalogHeroDescription(incoming?: string | null): string 
   }
   return trimmed;
 }
+
+const INTERNAL_HOME_COPY_PATTERN =
+  /sincroniz|tasaciones|subastas vedisa|rainworx|glo3d|autored|sistema interno|vinculados al cat[aá]logo|ecosistema|inventario compartido|origen:/i;
+
+export const PUBLIC_HOME_SECTION_SUBTITLES = {
+  "proximos-remates":
+    "Explora las unidades en agenda, revisa fichas y participa en la fecha del evento.",
+  "ventas-directas":
+    "Compra directa, sin esperar remate · Retiro ágil desde nuestra bodega en Pudahuel.",
+} as const;
+
+export type PublicHomeSectionId = keyof typeof PUBLIC_HOME_SECTION_SUBTITLES;
+
+export function isInternalHomeCopy(value?: string | null): boolean {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return false;
+  return INTERNAL_HOME_COPY_PATTERN.test(trimmed);
+}
+
+/** Subtítulo de sección del home apto para clientes (sin tecnicismos internos). */
+export function resolvePublicHomeSectionSubtitle(
+  sectionId: PublicHomeSectionId,
+  incoming?: string | null,
+): string {
+  const trimmed = String(incoming ?? "").trim();
+  if (trimmed && !isInternalHomeCopy(trimmed)) {
+    return trimmed;
+  }
+  return PUBLIC_HOME_SECTION_SUBTITLES[sectionId];
+}

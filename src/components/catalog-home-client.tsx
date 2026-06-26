@@ -30,6 +30,7 @@ import {
   resolveCatalogHeroDescription,
   resolveCatalogHeroKicker,
   resolveCatalogHeroTitle,
+  resolvePublicHomeSectionSubtitle,
 } from "@/lib/catalog-hero-copy";
 import {
   collectVehicleImageCandidates,
@@ -2534,8 +2535,8 @@ function Section({
   showPatents = false,
 }: SectionProps) {
   const resolvedSubtitle =
-    id === "ventas-directas" && subtitle.includes("Stock disponible")
-      ? "Compra directa, sin esperar remate · Retiro ágil desde nuestra bodega en Pudahuel."
+    id === "proximos-remates" || id === "ventas-directas"
+      ? resolvePublicHomeSectionSubtitle(id, subtitle)
       : subtitle;
 
   return (
@@ -2544,7 +2545,9 @@ function Section({
         <div>
           <p className="premium-kicker">Sección destacada</p>
           <h2 className="text-2xl font-bold text-slate-900 md:text-3xl">{title}</h2>
-          <p className="mt-1 text-sm text-slate-700">{resolvedSubtitle}</p>
+          {resolvedSubtitle ? (
+            <p className="mt-1 text-sm text-slate-700">{resolvedSubtitle}</p>
+          ) : null}
         </div>
         <span className="inline-flex w-fit rounded-full bg-cyan-100 px-3 py-1 text-xs font-semibold text-cyan-950">
           {items.length} publicaciones

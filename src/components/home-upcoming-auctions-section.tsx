@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { CatalogItem } from "@/types/catalog";
 import type { UpcomingAuction } from "@/types/editor";
 import { formatAuctionDaysUntilBadge, formatAuctionHumanSchedule } from "@/lib/auction-display";
+import { PUBLIC_HOME_SECTION_SUBTITLES } from "@/lib/catalog-hero-copy";
 import { resolveVehicleThumbnailSrc } from "@/lib/vehicle-sync-helpers";
 
 type UpcomingAuctionsSectionVariant = "remate" | "venta_directa";
@@ -16,13 +17,13 @@ const SECTION_COPY: Record<
     sectionId: "proximos-remates",
     kicker: "Agenda de remates",
     title: "Próximos remates",
-    subtitle: "Remates sincronizados desde Tasaciones y Subastas Vedisa.",
+    subtitle: PUBLIC_HOME_SECTION_SUBTITLES["proximos-remates"],
   },
   venta_directa: {
     sectionId: "ventas-directas",
     kicker: "",
     title: "Ventas directas",
-    subtitle: "Compra directa, sin esperar remate · Retiro ágil desde nuestra bodega en Pudahuel.",
+    subtitle: PUBLIC_HOME_SECTION_SUBTITLES["ventas-directas"],
   },
 };
 
@@ -40,7 +41,7 @@ export function VentaDirectaEmptyHomeState() {
       </header>
       <div className="rounded-2xl border border-dashed border-cyan-200 bg-cyan-50/40 px-5 py-8 text-center">
         <p className="text-sm font-medium text-slate-800">
-          Los vehículos en venta directa aparecerán aquí en cuanto estén vinculados al catálogo.
+          Pronto publicaremos más vehículos en venta directa. Vuelve a visitarnos.
         </p>
       </div>
     </section>
@@ -59,7 +60,7 @@ export function RematesEmptyHomeState() {
       </header>
       <div className="rounded-2xl border border-dashed border-cyan-200 bg-cyan-50/40 px-5 py-8 text-center">
         <p className="text-sm font-medium text-slate-800">
-          Los vehículos del remate aparecerán aquí en cuanto estén vinculados al catálogo.
+          Pronto publicaremos los vehículos de este remate. Mientras tanto, revisa las ventas directas.
         </p>
         <a href="#ventas-directas" className="ui-focus premium-btn-primary mt-4 inline-flex min-h-11 items-center px-5">
           Ver ventas directas disponibles

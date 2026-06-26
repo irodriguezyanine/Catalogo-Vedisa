@@ -188,7 +188,7 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
   sectionTexts: {
     "proximos-remates": {
       title: "Próximos remates",
-      subtitle: "Vehículos en agenda con mayor prioridad comercial.",
+      subtitle: "Explora las unidades en agenda, revisa fichas y participa en la fecha del evento.",
     },
     "ventas-directas": {
       title: "Ventas Directas",
