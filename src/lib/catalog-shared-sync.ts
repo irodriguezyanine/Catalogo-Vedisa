@@ -1,5 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
-import { revertInventarioTrasQuitarDeRemate, revertInventarioTrasQuitarDeVentaDirecta } from "@/lib/catalog-inventory-remate-sync";
+import {
+  revertInventarioTrasQuitarDeEvento,
+  revertInventarioTrasQuitarDeRemate,
+  revertInventarioTrasQuitarDeVentaDirecta,
+} from "@/lib/catalog-inventory-remate-sync";
 import {
   collectDirectSaleVehicleKeys,
   DEFAULT_VENTA_DIRECTA_EVENT_ID,
@@ -27,6 +31,8 @@ type SyncResult = {
 
 type SyncOptions = {
   deletedRemateIds?: string[];
+  /** Si se indica, solo sincroniza remates/ítems/inventario de estos eventos del editor. */
+  onlyAuctionIds?: string[];
 };
 
 type RemateSyncRow = {
@@ -441,6 +447,8 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   };
 
   const deletedIds = [...new Set((options.deletedRemateIds ?? []).filter((id) => isUuid(id)))];
+  const scopeAuctionIds = [...new Set((options.onlyAuctionIds ?? []).filter((id) => isUuid(id)))];
+  const scopeAuctionSet = scopeAuctionIds.length > 0 ? new Set(scopeAuctionIds) : null;
   if (deletedIds.length > 0) {
     const { error: delItemsError } = await supabase
       .from(REMATES_ITEMS_TABLE)
@@ -476,13 +484,23 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   const catalogAuctionByVehicle = new Map<string, string>();
   for (const [vehicleKey, remateId] of Object.entries(remateAssignments)) {
     if (!isUuid(remateId)) continue;
+    if (scopeAuctionSet && !scopeAuctionSet.has(remateId)) continue;
     const canonical = remateIdAlias.get(remateId) ?? remateId;
     eventByVehicle.set(vehicleKey, canonical);
     if (canonical !== remateId) catalogAuctionByVehicle.set(vehicleKey, remateId);
   }
-  for (const vehicleKey of directSaleKeys) {
-    if (!eventByVehicle.has(vehicleKey)) {
-      eventByVehicle.set(vehicleKey, DEFAULT_VENTA_DIRECTA_EVENT_ID);
+  if (!scopeAuctionSet) {
+    for (const vehicleKey of directSaleKeys) {
+      if (!eventByVehicle.has(vehicleKey)) {
+        eventByVehicle.set(vehicleKey, DEFAULT_VENTA_DIRECTA_EVENT_ID);
+      }
+    }
+  } else if (scopeAuctionSet.has(DEFAULT_VENTA_DIRECTA_EVENT_ID)) {
+    for (const vehicleKey of directSaleKeys) {
+      const assigned = remateAssignments[vehicleKey];
+      if (assigned && scopeAuctionSet.has(assigned)) {
+        eventByVehicle.set(vehicleKey, remateIdAlias.get(assigned) ?? assigned);
+      }
     }
   }
   const remateRows: RemateSyncRow[] = [];
@@ -493,6 +511,7 @@ export async function syncEditorConfigToSharedTablesWithOptions(
       result.skipped.push(`Remate omitido (ID legacy no UUID): ${auction.name}`);
       continue;
     }
+    if (scopeAuctionSet && !scopeAuctionSet.has(auction.id)) continue;
     const canonicalId = remateIdAlias.get(auction.id) ?? auction.id;
     if (upsertedRemateIds.has(canonicalId)) continue;
     upsertedRemateIds.add(canonicalId);
@@ -519,7 +538,11 @@ export async function syncEditorConfigToSharedTablesWithOptions(
     });
   }
 
-  if (directSaleKeys.size > 0 && !remateRows.some((r) => r.id === DEFAULT_VENTA_DIRECTA_EVENT_ID)) {
+  if (
+    directSaleKeys.size > 0 &&
+    !remateRows.some((r) => r.id === DEFAULT_VENTA_DIRECTA_EVENT_ID) &&
+    (!scopeAuctionSet || scopeAuctionSet.has(DEFAULT_VENTA_DIRECTA_EVENT_ID))
+  ) {
     const now = new Date();
     const end = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     remateRows.push({
@@ -556,6 +579,10 @@ export async function syncEditorConfigToSharedTablesWithOptions(
   }
 
   for (const [vehicleKey, estadoRetiro] of inventoryStateByKey.entries()) {
+    if (scopeAuctionSet) {
+      const assigned = remateAssignments[vehicleKey];
+      if (!assigned || !scopeAuctionSet.has(assigned)) continue;
+    }
     const patentResolved = resolveVehiclePatent(config, vehicleKey);
     if (!patentResolved) {
       result.skipped.push(`Unidad omitida sin patente resoluble: ${vehicleKey}`);
@@ -706,6 +733,17 @@ export function findRemovedVehicleAssignments(
   return removals;
 }
 
+/** Asignaciones quitadas solo de un evento concreto del editor. */
+export function findRemovedVehicleAssignmentsForAuction(
+  previous: EditorConfig,
+  next: EditorConfig,
+  auctionId: string,
+): RemovedVehicleAssignment[] {
+  return findRemovedVehicleAssignments(previous, next).filter(
+    (removal) => removal.remateId === auctionId,
+  );
+}
+
 /** Borra en remates_items las unidades que el catálogo dejó de asignar a un evento. */
 export async function deleteRemateItemsForRemovedAssignments(
   removals: RemovedVehicleAssignment[],
@@ -769,8 +807,16 @@ export async function deleteRemateItemsForRemovedAssignments(
       { remate_id: deleteTargetRemateId, patente_norm: patenteNorm },
       { onConflict: "remate_id,patente_norm" },
     );
-    await revertInventarioTrasQuitarDeRemate(patente);
-    await revertInventarioTrasQuitarDeVentaDirecta(patente);
+    await revertInventarioTrasQuitarDeEvento(
+      patente,
+      remateId === DEFAULT_VENTA_DIRECTA_EVENT_ID
+        ? "venta_directa"
+        : resolveCommercialEventType({
+            id: remateId,
+            name: config.upcomingAuctions?.find((entry) => entry.id === remateId)?.name,
+            eventType: config.upcomingAuctions?.find((entry) => entry.id === remateId)?.eventType,
+          }),
+    );
   }
 
   return { deleted, skipped };

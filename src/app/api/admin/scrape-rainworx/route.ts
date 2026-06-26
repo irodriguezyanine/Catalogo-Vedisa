@@ -3,10 +3,9 @@ import { ADMIN_SESSION_COOKIE_NAME, verifyAdminSessionToken } from "@/lib/admin-
 import { getEditorConfig, saveEditorConfig } from "@/lib/editor-config";
 import {
   deleteRemateItemsForRemovedAssignments,
-  findRemovedVehicleAssignments,
-  syncEditorConfigToSharedTables,
+  findRemovedVehicleAssignmentsForAuction,
+  syncEditorConfigToSharedTablesWithOptions,
 } from "@/lib/catalog-shared-sync";
-import { mergeSharedEventsIntoConfig } from "@/lib/catalog-shared-merge";
 import { applyExclusiveCommercialAssignment } from "@/lib/commercial-category-exclusivity";
 import type { CommercialLane } from "@/lib/commercial-category-exclusivity";
 import { removePatentFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-from-event";
@@ -25,6 +24,8 @@ import {
   fetchRainworxHtml,
   getRainworxOrigin,
   parseLotDetailsHtml,
+  parseRainworxEventPage,
+  type RainworxEventPageMeta,
   type RainworxLotScraped,
   scrapeEventLots,
   toAbsoluteUrl,
@@ -105,6 +106,7 @@ export async function POST(request: Request) {
 
   try {
     let items: RainworxLotScraped[];
+    let rainworxEventMeta: RainworxEventPageMeta | undefined;
 
     if (body.lotUrls?.length) {
       items = [];
@@ -114,6 +116,9 @@ export async function POST(request: Request) {
         items.push(parseLotDetailsHtml(html, url));
       }
     } else if (body.eventUrl) {
+      const eventUrlAbs = toAbsoluteUrl(origin, body.eventUrl);
+      const eventHtml = await fetchRainworxHtml(eventUrlAbs);
+      rainworxEventMeta = parseRainworxEventPage(eventHtml, eventUrlAbs);
       const rawMatch = body.matchInventoryPatentes;
       const matchList =
         rawMatch && rawMatch.length > 0
@@ -255,7 +260,47 @@ export async function POST(request: Request) {
       config = { ...config, vehicleDetails: nextDetails, vehiclePrices: nextPrices };
     }
 
-    if (addNewLotsFromEvent && assignNewLotsAuctionId && newPatentes.size > 0) {
+    if (assignNewLotsAuctionId && rainworxEventMeta?.title) {
+      config = {
+        ...config,
+        upcomingAuctions: (config.upcomingAuctions ?? []).map((auction) =>
+          auction.id === assignNewLotsAuctionId
+            ? { ...auction, name: rainworxEventMeta.title! }
+            : auction,
+        ),
+      };
+    }
+
+    const rainworxPatenteList = mapped
+      .map((row) => row.vehicleKey)
+      .filter((patente): patente is string => Boolean(patente));
+
+    if (syncGroupExclusive && assignNewLotsAuctionId && rainworxPatenteList.length > 0) {
+      const lane: CommercialLane =
+        assignNewLotsEventType === "venta_directa" ? "ventas-directas" : "proximos-remates";
+
+      for (const patente of groupPatenteSet) {
+        if (rainworxPatenteList.includes(patente)) continue;
+        config = removePatentFromAuctionAssignment(config, assignNewLotsAuctionId, patente);
+        removedFromGroup.add(patente);
+      }
+
+      const assignment = applyExclusiveCommercialAssignment(
+        config,
+        rainworxPatenteList,
+        { lane, auctionId: assignNewLotsAuctionId },
+        config.upcomingAuctions ?? [],
+      );
+      config = {
+        ...config,
+        sectionVehicleIds: assignment.sectionVehicleIds,
+        vehicleUpcomingAuctionIds: assignment.vehicleUpcomingAuctionIds,
+      };
+      for (const patente of rainworxPatenteList) {
+        if (groupPatenteSet.has(patente)) updatedPatentes.add(patente);
+        else newPatentes.add(patente);
+      }
+    } else if (addNewLotsFromEvent && assignNewLotsAuctionId && newPatentes.size > 0) {
       const lane: CommercialLane =
         assignNewLotsEventType === "venta_directa" ? "ventas-directas" : "proximos-remates";
       const assignment = applyExclusiveCommercialAssignment(
@@ -269,21 +314,6 @@ export async function POST(request: Request) {
         sectionVehicleIds: assignment.sectionVehicleIds,
         vehicleUpcomingAuctionIds: assignment.vehicleUpcomingAuctionIds,
       };
-    }
-
-    if (
-      syncGroupExclusive &&
-      assignNewLotsAuctionId &&
-      groupPatenteSet.size > 0
-    ) {
-      const rainworxPatentes = new Set(
-        mapped.map((row) => row.vehicleKey).filter(Boolean),
-      );
-      for (const patente of groupPatenteSet) {
-        if (rainworxPatentes.has(patente)) continue;
-        config = removePatentFromAuctionAssignment(config, assignNewLotsAuctionId, patente);
-        removedFromGroup.add(patente);
-      }
     }
 
     const saved = await saveEditorConfig(config, session.email);
@@ -303,13 +333,19 @@ export async function POST(request: Request) {
     }
 
     const normalizedConfig = saved.normalizedConfig ?? config;
-    const removals = findRemovedVehicleAssignments(previousConfig, normalizedConfig);
+    const removals = assignNewLotsAuctionId
+      ? findRemovedVehicleAssignmentsForAuction(
+          previousConfig,
+          normalizedConfig,
+          assignNewLotsAuctionId,
+        )
+      : [];
     const removalResult = await deleteRemateItemsForRemovedAssignments(removals, normalizedConfig);
-    const mergedConfig = await mergeSharedEventsIntoConfig(normalizedConfig, {
-      pruneOrphanCatalogAssignments: false,
-    });
-    const finalSaved = await saveEditorConfig(mergedConfig, session.email);
-    const sync = await syncEditorConfigToSharedTables(finalSaved.normalizedConfig ?? mergedConfig);
+    const finalSaved = await saveEditorConfig(normalizedConfig, session.email);
+    const sync = await syncEditorConfigToSharedTablesWithOptions(
+      finalSaved.normalizedConfig ?? normalizedConfig,
+      assignNewLotsAuctionId ? { onlyAuctionIds: [assignNewLotsAuctionId] } : {},
+    );
 
     return Response.json({
       ok: true,
@@ -326,6 +362,9 @@ export async function POST(request: Request) {
         newPatentes: [...newPatentes],
         removedFromGroup: [...removedFromGroup],
         photosPreserved,
+        rainworxEventTitle: rainworxEventMeta?.title,
+        renamedAuctionId:
+          assignNewLotsAuctionId && rainworxEventMeta?.title ? assignNewLotsAuctionId : undefined,
         assignedAuctionId: assignNewLotsAuctionId && newPatentes.size > 0 ? assignNewLotsAuctionId : undefined,
         removedFromRemateItems: removalResult.deleted,
       },

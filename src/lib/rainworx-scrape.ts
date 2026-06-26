@@ -86,13 +86,39 @@ function extractOgImage($: CheerioAPI): string | undefined {
   return href?.trim() || undefined;
 }
 
-function extractTitle($: CheerioAPI): string | undefined {
+function extractTitle($: ReturnType<typeof load>): string | undefined {
+  const h1 = $("h1").first().text().trim();
+  if (h1) return h1;
   const t = $("title").first().text().trim();
   if (t) {
     const cleaned = t.replace(/^[^:]+:\s*/, "").trim();
     return cleaned || t;
   }
   return $('meta[property="og:title"]').attr("content")?.trim();
+}
+
+export type RainworxEventPageMeta = {
+  eventId?: string;
+  title?: string;
+};
+
+function sanitizeRainworxEventTitle(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined;
+  return raw
+    .trim()
+    .replace(/\s*[-|·]\s*RainWorx.*$/i, "")
+    .replace(/\s*[-|·]\s*veh[ií]culos chocados.*$/i, "")
+    .replace(/\s*[-|·]\s*VEDISA.*$/i, "")
+    .trim();
+}
+
+export function parseRainworxEventPage(html: string, eventUrl?: string): RainworxEventPageMeta {
+  const $ = load(html);
+  const title = sanitizeRainworxEventTitle(extractTitle($));
+  const eventId =
+    eventUrl?.match(/\/Event\/Details\/(\d+)/i)?.[1] ??
+    html.match(/\/Event\/Details\/(\d+)/i)?.[1];
+  return { title, eventId };
 }
 
 /** URLs de galería (full size) si existen. */

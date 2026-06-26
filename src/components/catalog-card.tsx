@@ -7,6 +7,10 @@ import {
   formatVehicleCardSubtitle,
   formatVehicleCardTitle,
 } from "@/lib/vehicle-card-display";
+import {
+  sanitizePublicVehicleTitle,
+  stripPatentFromPublicText,
+} from "@/lib/catalog-patent-visibility";
 
 export type VehicleCommercialEventBadge = {
   kind: "remate" | "venta_directa";
@@ -183,7 +187,7 @@ export function CatalogCard({
   originalPriceLabel: originalPriceLabelOverride,
   commercialEventBadge,
   density = "detailed",
-  showPatents = true,
+  showPatents = false,
   onOpen,
   onWhatsappClick,
 }: CatalogCardProps) {
@@ -196,7 +200,12 @@ export function CatalogCard({
   const formattedDate = formatDate(item.auctionDate);
   const patent = getPatent(item);
   const brandModel = getBrandModel(item);
-  const displayTitle = formatVehicleCardTitle(item);
+  const displayTitle = sanitizePublicVehicleTitle(
+    formatVehicleCardTitle(item),
+    patent,
+    showPatents,
+    brandModel,
+  );
   const specsLine = formatVehicleCardSpecsLine(item);
   const imageAlt = formatVehicleCardImageAlt(item);
   const itemKey = getVehicleKey(item);
@@ -231,7 +240,11 @@ export function CatalogCard({
     `${whatsappText}${shareUrl ? `. Link: ${shareUrl}` : ""}`,
   )}&type=phone_number&app_absent=0`;
   const isCompact = density === "compact";
-  const subtitle = formatVehicleCardSubtitle(item.subtitle);
+  const subtitle = stripPatentFromPublicText(
+    formatVehicleCardSubtitle(item.subtitle),
+    patent,
+    showPatents,
+  );
 
   useEffect(() => {
     setCoverSrc(cover);

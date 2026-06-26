@@ -169,7 +169,9 @@ export function VehicleDetailMobile({
           {BackControl}
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-bold leading-tight text-slate-900">{displayTitle}</p>
-            <p className="truncate text-xs text-slate-500">{subtitle?.trim() || patent}</p>
+            {(subtitle?.trim() || patent) ? (
+              <p className="truncate text-xs text-slate-500">{subtitle?.trim() || patent}</p>
+            ) : null}
           </div>
           {conditionLabel ? (
             <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${conditionClasses}`}>

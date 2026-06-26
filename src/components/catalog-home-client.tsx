@@ -44,7 +44,9 @@ import {
   filterPatentDetailFields,
   maskPatentForDisplay,
   maskPatentForPdf,
+  sanitizePublicVehicleTitle,
   shouldShowPatentsToViewer,
+  stripPatentFromPublicText,
 } from "@/lib/catalog-patent-visibility";
 import { getVisibleCatalogItems, getEditorOverrideForItem } from "@/lib/catalog-public-inventory";
 import { applyCatalogDetailsOverride } from "@/lib/catalog-details-override";
@@ -2234,7 +2236,7 @@ function HorizontalCardsRail({
   upcomingAuctionByVehicleKey,
   onOpenVehicle,
   cardDensity,
-  showPatents = true,
+  showPatents = false,
   loading = false,
 }: HorizontalCardsRailProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -2413,7 +2415,7 @@ function CatalogSectionCards({
   upcomingAuctionByVehicleKey,
   onOpenVehicle,
   cardDensity,
-  showPatents = true,
+  showPatents = false,
   loading = false,
 }: CatalogSectionCardsProps & { loading?: boolean }) {
   if (items.length === 0 && !loading) {
@@ -2447,7 +2449,7 @@ function Section({
   upcomingAuctionByVehicleKey,
   onOpenVehicle,
   cardDensity,
-  showPatents = true,
+  showPatents = false,
 }: SectionProps) {
   const resolvedSubtitle =
     id === "ventas-directas" && subtitle.includes("Stock disponible")
@@ -7617,6 +7619,7 @@ export function CatalogHomeClient({
         newPatentes?: string[];
         removedFromGroup?: string[];
         photosPreserved?: number;
+        rainworxEventTitle?: string;
       };
     },
     contextLabel: string,
@@ -7651,6 +7654,9 @@ export function CatalogHomeClient({
     }
     if (added.length > 0) {
       parts.push(`${added.length} patente(s) nueva(s) agregada(s): ${added.join(", ")}`);
+    }
+    if (data.editor?.rainworxEventTitle) {
+      parts.push(`Evento renombrado a «${data.editor.rainworxEventTitle}»`);
     }
     if (removed.length > 0) {
       parts.push(`${removed.length} patente(s) quitada(s) del grupo (no están en Rainworx): ${removed.join(", ")}`);
@@ -10899,7 +10905,11 @@ export function CatalogHomeClient({
                 ? selectedVehicle.title
                 : getModel(selectedVehicle)
             }
-            subtitle={selectedVehicle.subtitle ?? undefined}
+            subtitle={stripPatentFromPublicText(
+              selectedVehicle.subtitle ?? undefined,
+              getPatent(selectedVehicle),
+              showPatents,
+            )}
             priceLabel={selectedVehiclePriceLabel}
             promoEnabled={selectedVehiclePromoMeta.promoEnabled}
             originalPriceLabel={selectedVehiclePromoMeta.originalPriceLabel}
@@ -10965,9 +10975,12 @@ export function CatalogHomeClient({
                     Vehículos disponibles
                   </p>
                   <p className="truncate text-sm font-bold text-slate-900">
-                    {showPatents
-                      ? getPatent(selectedVehicle)
-                      : selectedVehicle.subtitle?.trim() || getModel(selectedVehicle)}
+                    {sanitizePublicVehicleTitle(
+                      selectedVehicle.title,
+                      getPatent(selectedVehicle),
+                      showPatents,
+                      getModel(selectedVehicle),
+                    )}
                   </p>
                 </div>
               </div>
@@ -10987,12 +11000,30 @@ export function CatalogHomeClient({
             <div className={`mb-4 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm ${isStandaloneDetailPage ? "border-slate-200 bg-white" : ""}`}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-xl font-bold text-slate-900">{selectedVehicle.title}</h3>
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {sanitizePublicVehicleTitle(
+                      selectedVehicle.title,
+                      getPatent(selectedVehicle),
+                      showPatents,
+                      getModel(selectedVehicle),
+                    )}
+                  </h3>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {(selectedVehicle.subtitle?.trim() || showPatents) ? (
+                    {stripPatentFromPublicText(
+                      selectedVehicle.subtitle ?? undefined,
+                      getPatent(selectedVehicle),
+                      showPatents,
+                    ) ? (
                       <span className="whitespace-nowrap rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800">
-                        {selectedVehicle.subtitle?.trim() ||
-                          (showPatents ? getPatent(selectedVehicle) : getModel(selectedVehicle))}
+                        {stripPatentFromPublicText(
+                          selectedVehicle.subtitle ?? undefined,
+                          getPatent(selectedVehicle),
+                          showPatents,
+                        )}
+                      </span>
+                    ) : showPatents ? (
+                      <span className="whitespace-nowrap rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800">
+                        {getPatent(selectedVehicle)}
                       </span>
                     ) : null}
                     {selectedVehicleConditionLabel ? (

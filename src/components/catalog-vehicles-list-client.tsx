@@ -19,6 +19,7 @@ import {
   type VehicleListCommercialFilter,
 } from "@/lib/catalog-public-inventory";
 import { mergeAnalyticsPayload } from "@/lib/analytics-context";
+import { formatAuctionHumanSchedule } from "@/lib/auction-display";
 import { resolveCommercialEventType } from "@/lib/catalog-shared-constants";
 import type { CatalogFeed, CatalogItem } from "@/types/catalog";
 import type { EditorConfig } from "@/types/editor";
@@ -30,6 +31,9 @@ type Props = {
 };
 
 const PAGE_SIZE = 24;
+
+const REMATE_WEB_URL =
+  process.env.NEXT_PUBLIC_RAINWORX_URL ?? "https://www.vehiculoschocados.cl";
 
 function parseTipoFilter(value: string | null): VehicleListCommercialFilter {
   if (value === "remate" || value === "venta_directa") return value;
@@ -288,6 +292,15 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
     return auctionsById.get(eventoFilter)?.name ?? null;
   }, [auctionsById, eventoFilter]);
 
+  const activeAuction = useMemo(() => {
+    if (!eventoFilter) return null;
+    return auctionsById.get(eventoFilter) ?? null;
+  }, [auctionsById, eventoFilter]);
+
+  const showRemateParticipationHint = Boolean(
+    activeAuction && resolveCommercialEventType(activeAuction) === "remate",
+  );
+
   useEffect(() => {
     setPage(1);
   }, [searchTerm, tipoFilter, eventoFilter]);
@@ -334,6 +347,57 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
             Listado completo de unidades publicadas con precio, tipo de venta y estado de siniestro cuando aplica.
           </p>
         </header>
+
+        {showRemateParticipationHint && activeAuction ? (
+          <div
+            className="mb-6 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-indigo-50 via-white to-cyan-50/70 p-4 shadow-sm"
+            role="note"
+            aria-label="Información para participar en el remate"
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-indigo-800">
+                  Cómo participar en este remate
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-slate-700">
+                  Las unidades de{" "}
+                  <span className="font-semibold text-slate-900">{activeAuction.name}</span> se rematan en{" "}
+                  <a
+                    href={REMATE_WEB_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-cyan-800 underline decoration-cyan-300 underline-offset-2 hover:text-cyan-950"
+                  >
+                    vehiculoschocados.cl
+                  </a>{" "}
+                  el{" "}
+                  <span className="font-semibold text-slate-900">
+                    {formatAuctionHumanSchedule(activeAuction)}
+                  </span>
+                  . Aquí puedes revisar fichas, fotos y detalles antes del evento.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <a
+                  href={REMATE_WEB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ui-focus inline-flex min-h-10 items-center rounded-full border border-indigo-300 bg-white px-4 text-sm font-semibold text-indigo-800 transition hover:bg-indigo-50"
+                >
+                  Ir al remate web
+                </a>
+                <a
+                  href={`${REMATE_WEB_URL.replace(/\/$/, "")}/Account/Register`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ui-focus inline-flex min-h-10 items-center rounded-full bg-indigo-600 px-4 text-sm font-semibold text-white transition hover:bg-indigo-500"
+                >
+                  Crear cuenta
+                </a>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="mb-6 glass-soft rounded-2xl border border-slate-300/80 bg-white/95 p-4 shadow-md">
           <div className="flex flex-col gap-3">
