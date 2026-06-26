@@ -61,12 +61,6 @@ export function extractEventListingLotUrls(html: string, origin: string): string
       });
   });
 
-  if (out.length === 0) {
-    $('a[href*="/Event/LotDetails/"]').each((_, el) => {
-      pushHref($(el).attr("href"));
-    });
-  }
-
   return out;
 }
 
@@ -81,11 +75,14 @@ export function extractEventPaginationUrls(html: string, eventPageUrl: string): 
   const pages = new Set<string>();
   pages.add(eventUrlAbs);
 
+  const listingPathPrefix = new URL(eventUrlAbs).pathname;
+
   $("ul.pagination a[href]").each((_, el) => {
     const href = $(el).attr("href")?.trim();
     if (!href || href === "#") return;
     const abs = ensureActiveOnlyEventListUrl(toAbsoluteUrl(origin, href));
     if (!abs.includes(`/Event/Details/${eventId}`)) return;
+    if (new URL(abs).pathname !== listingPathPrefix) return;
     pages.add(abs.split("#")[0]!);
   });
 

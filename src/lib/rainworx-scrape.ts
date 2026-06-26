@@ -268,6 +268,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]!, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 function normalizePatenteKeyLocal(patente: string | undefined): string {
   if (!patente?.trim()) return "";
   return patente.toUpperCase().replace(/\s+/g, "").replace(/-/g, "");
@@ -283,6 +302,8 @@ export type ScrapeEventOptions = {
   delayMs?: number;
   /** Recorre todas las páginas paginadas del evento Rainworx (default true). */
   fetchAllPages?: boolean;
+  /** Descargas simultáneas de fichas de lote (default 6 en import masivo). */
+  detailConcurrency?: number;
 };
 
 export type ScrapeEventCollectionMeta = {
@@ -310,7 +331,7 @@ export async function scrapeEventLots(options: ScrapeEventOptions): Promise<Scra
   let collectionMeta: ScrapeEventCollectionMeta | undefined;
   if (fetchAllPages) {
     const { collectAllEventLotDetailUrls } = await import("@/lib/rainworx-event-pages");
-    const collected = await collectAllEventLotDetailUrls(eventUrl, Math.min(delayMs, 200));
+    const collected = await collectAllEventLotDetailUrls(eventUrl, Math.min(delayMs, 80));
     urls = collected.lotUrls;
     collectionMeta = {
       lotUrlsFound: collected.lotUrls.length,
@@ -331,30 +352,32 @@ export async function scrapeEventLots(options: ScrapeEventOptions): Promise<Scra
       : null;
 
   const results: RainworxLotScraped[] = [];
+  const detailConcurrency = options.detailConcurrency ?? (urls.length > 10 ? 6 : 3);
+  const detailDelayMs = urls.length > 10 ? Math.min(delayMs, 80) : delayMs;
 
-  for (const lotUrl of urls) {
-    if (results.length >= maxLots) break;
+  const parsedLots = await mapWithConcurrency(urls, detailConcurrency, async (lotUrl) => {
     const detailHtml = await fetchRainworxHtml(lotUrl);
-    const parsed = parseLotDetailsHtml(detailHtml, lotUrl);
+    return parseLotDetailsHtml(detailHtml, lotUrl);
+  });
+
+  for (const parsed of parsedLots) {
+    if (results.length >= maxLots) break;
     const p = normalizePatenteKeyLocal(
       parsed.detalles.PATENTE ?? parsed.detallesNormalizados.patente,
     );
 
     if (wantPatente) {
-      if (p !== wantPatente) {
-        await sleep(delayMs);
-        continue;
-      }
+      if (p !== wantPatente) continue;
     } else if (matchSet && matchSet.size > 0) {
-      if (!p || !matchSet.has(p)) {
-        await sleep(delayMs);
-        continue;
-      }
+      if (!p || !matchSet.has(p)) continue;
     }
 
     results.push(parsed);
     if (wantPatente && results.length > 0) break;
-    await sleep(delayMs);
+  }
+
+  if (detailDelayMs > 0 && parsedLots.length > detailConcurrency) {
+    await sleep(Math.min(detailDelayMs, 100));
   }
 
   return { items: results, collectionMeta };

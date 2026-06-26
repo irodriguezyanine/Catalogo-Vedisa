@@ -7715,8 +7715,8 @@ export function CatalogHomeClient({
         "info",
         "Evento procesado",
         n === 0
-          ? `Ningún lote del evento coincidió con las patentes de ${contextLabel}.`
-          : "No se escribieron cambios en el editor; revisa coincidencia de patentes.",
+          ? `Rainworx no devolvió lotes activos para ${contextLabel}. Verifica que la URL sea del evento correcto (…/Event/Details/…) y que el evento tenga unidades activas.`
+          : `${n} lote(s) leídos pero no se escribieron cambios; revisa patentes en Rainworx o reintenta la importación.`,
       );
       return;
     }
@@ -7888,6 +7888,7 @@ export function CatalogHomeClient({
           matchInventoryPatentes,
           addNewLotsFromEvent: groupRainworxAddMissing,
           syncGroupExclusive: true,
+          skipDocumentMirror: true,
           assignNewLotsAuctionId: groupManageTarget.auctionId,
           assignNewLotsEventType: groupManageCommercialEventType,
         }),
@@ -7912,7 +7913,15 @@ export function CatalogHomeClient({
         };
       };
       if (!res.ok) {
-        showSystemNotice("error", "Importación Rainworx", data.error ?? `Error HTTP ${res.status}`);
+        const timeoutHint =
+          res.status === 504
+            ? " El servidor tardó demasiado (504). Con eventos grandes puede tardar 1–2 minutos; reintenta en unos segundos."
+            : "";
+        showSystemNotice(
+          "error",
+          "Importación Rainworx",
+          `${data.error ?? `Error HTTP ${res.status}`}.${timeoutHint}`,
+        );
         return;
       }
       await refreshEditorConfigAfterRainworx();

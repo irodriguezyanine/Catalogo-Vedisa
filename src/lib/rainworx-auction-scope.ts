@@ -1,3 +1,4 @@
+import { removeVehicleKeyFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-from-event";
 import { getAuctionCommercialEventType } from "@/lib/commercial-category-exclusivity";
 import type { CommercialLane } from "@/lib/commercial-category-exclusivity";
 import { normalizePatenteKey } from "@/lib/rainworx-to-editor";
@@ -58,6 +59,36 @@ export function resolveCommercialLaneForAuction(
  * Asigna patentes al remate/VD indicado con exclusividad comercial por patente.
  * No modifica otros eventos excepto reasignar la misma patente al target.
  */
+function resolvePatenteForVehicleKey(config: EditorConfig, vehicleKey: string): string {
+  const detailPatente = normalizePatent(config.vehicleDetails?.[vehicleKey]?.patente);
+  if (detailPatente && /^[A-Z0-9]{5,10}$/.test(detailPatente)) return detailPatente;
+  const fromKey = normalizePatent(vehicleKey);
+  return /^[A-Z0-9]{5,10}$/.test(fromKey) ? fromKey : "";
+}
+
+/** Quita del remate/VD cualquier asignación cuya patente no esté en la lista permitida. */
+export function purgeAuctionAssignmentsExceptPatentes(
+  config: EditorConfig,
+  auctionId: string,
+  allowedPatentes: string[],
+): EditorConfig {
+  const allowed = new Set(
+    allowedPatentes.map((patente) => normalizePatent(patente)).filter(Boolean),
+  );
+  let next = config;
+  const assignedKeys = Object.entries(config.vehicleUpcomingAuctionIds ?? {})
+    .filter(([, assignedAuctionId]) => assignedAuctionId === auctionId)
+    .map(([vehicleKey]) => vehicleKey);
+
+  for (const vehicleKey of assignedKeys) {
+    const patente = resolvePatenteForVehicleKey(config, vehicleKey);
+    if (!patente || !allowed.has(patente)) {
+      next = removeVehicleKeyFromAuctionAssignment(next, auctionId, vehicleKey);
+    }
+  }
+  return next;
+}
+
 export function assignPatentesToTargetAuction(
   prev: EditorConfig,
   patentes: string[],

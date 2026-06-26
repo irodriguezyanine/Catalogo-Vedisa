@@ -12,6 +12,7 @@ import { removePatentFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-
 import {
   assignPatentesToTargetAuction,
   collectPatentesAssignedToAuction,
+  purgeAuctionAssignmentsExceptPatentes,
   resolveCommercialLaneForAuction,
   resolveVehicleKeysForAuctionPatente,
 } from "@/lib/rainworx-auction-scope";
@@ -77,6 +78,8 @@ type Body = {
    * (el listado del evento queda como fuente de verdad).
    */
   syncGroupExclusive?: boolean;
+  /** Omite subir documentos a Cloudinary (más rápido en sync masivo por evento). */
+  skipDocumentMirror?: boolean;
   /**
    * Patente normalizada esperada (p. ej. al editar una ficha). Si se envía y no coincide con la del lote Rainworx, no se guarda (409).
    */
@@ -116,6 +119,7 @@ export async function POST(request: Request) {
   const assignNewLotsAuctionId = body.assignNewLotsAuctionId?.trim();
   const assignNewLotsEventType = body.assignNewLotsEventType ?? "remate";
   const syncGroupExclusive = body.syncGroupExclusive !== false;
+  const skipDocumentMirror = Boolean(body.skipDocumentMirror);
 
   try {
     let items: RainworxLotScraped[];
@@ -158,7 +162,8 @@ export async function POST(request: Request) {
         maxLots:
           body.maxLots ??
           (addNewLotsFromEvent || syncGroupExclusive || assignNewLotsAuctionId ? 500 : matchList && matchList.length > 0 ? 160 : 80),
-        delayMs: body.delayMs ?? 250,
+        delayMs: body.delayMs ?? 120,
+        detailConcurrency: 6,
       });
       items = scraped.items;
       rainworxCollectionMeta = scraped.collectionMeta;
@@ -169,7 +174,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (applyToEditor) {
+    if (applyToEditor && !skipDocumentMirror) {
       for (let i = 0; i < items.length; i++) {
         const s = items[i];
         if (!s.documentos.length) continue;
@@ -335,6 +340,12 @@ export async function POST(request: Request) {
     }
 
     if (syncGroupExclusive && assignNewLotsAuctionId && rainworxPatenteList.length > 0 && targetLane) {
+      config = purgeAuctionAssignmentsExceptPatentes(
+        config,
+        assignNewLotsAuctionId,
+        rainworxPatenteList,
+      );
+
       for (const patente of groupPatenteSet) {
         if (rainworxPatenteList.includes(patente)) continue;
         config = removePatentFromAuctionAssignment(config, assignNewLotsAuctionId, patente);
@@ -400,12 +411,17 @@ export async function POST(request: Request) {
     let configForSync = normalizedConfig;
 
     let inventarioHydration: Awaited<ReturnType<typeof hydrateRainworxPatentsInInventario>> | undefined;
-    if (assignNewLotsAuctionId && rainworxPatenteList.length > 0) {
+    const patentesToHydrate =
+      assignNewLotsAuctionId && syncGroupExclusive
+        ? rainworxPatenteList.filter((patente) => newPatentes.has(patente))
+        : rainworxPatenteList;
+
+    if (assignNewLotsAuctionId && patentesToHydrate.length > 0) {
       const estadoRetiro =
         assignNewLotsEventType === "venta_directa"
           ? ESTADO_RETIRO_VENTA_DIRECTA
           : ESTADO_RETIRO_REMATE;
-      const hydrateEntries = rainworxPatenteList
+      const hydrateEntries = patentesToHydrate
         .map((patente) => {
           const rainworxDetails =
             configForSync.vehicleDetails?.[patente] ??

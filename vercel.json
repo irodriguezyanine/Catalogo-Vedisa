@@ -1,5 +1,10 @@
 {
   "framework": "nextjs",
+  "functions": {
+    "src/app/api/admin/scrape-rainworx/route.ts": {
+      "maxDuration": 300
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/warm-catalog",
