@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { shouldShowPatentsToViewer } from "@/lib/catalog-patent-visibility";
+import { AdminAccessLink } from "@/components/admin/admin-access-link";
 import { inferVehicleSiniestradoStatus } from "@/components/catalog-card";
 import {
   buildCommercialEventByVehicleKey,
@@ -330,12 +331,15 @@ export function CatalogVehiclesListClient({ feed, initialConfig }: Props) {
               className="h-auto w-full max-w-[192px] sm:max-w-[208px]"
             />
           </Link>
-          <Link
-            href="/"
-            className="ui-focus rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            Volver al inicio
-          </Link>
+          <div className="flex items-center gap-2">
+            <AdminAccessLink />
+            <Link
+              href="/"
+              className="ui-focus rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Volver al inicio
+            </Link>
+          </div>
         </div>
       </section>
 

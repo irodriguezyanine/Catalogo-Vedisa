@@ -90,6 +90,7 @@ import {
 } from "@/lib/catalog-feed-hydrate";
 import { patchEditorConfigVehicleDetails } from "@/lib/catalog-editor-vehicle-persist";
 import { useGlo3dClientCooldown } from "@/hooks/use-glo3d-client-cooldown";
+import { AdminAccessLink } from "@/components/admin/admin-access-link";
 import { AdminLoginDialog } from "@/components/admin/admin-login-dialog";
 import { EditorVehiculoDocumentos } from "@/components/admin/EditorVehiculoDocumentos";
 import { AnalyticsDashboard } from "@/components/admin/analytics-dashboard";
@@ -2588,6 +2589,7 @@ export function CatalogHomeClient({
   initialAdminView = "home",
   openLoginIfGuest = false,
 }: Props) {
+  const isDedicatedAdminEntry = openLoginIfGuest && initialAdminView === "editor";
   const router = useRouter();
   const isStandaloneDetailPage = Boolean(standaloneVehicleKey?.trim());
   const [canUseDomPortal, setCanUseDomPortal] = useState(false);
@@ -2602,7 +2604,7 @@ export function CatalogHomeClient({
     autoSaveReadyRef.current = true;
   }, [initialConfig]);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [adminView, setAdminView] = useState<"editor" | "home">("home");
+  const [adminView, setAdminView] = useState<"editor" | "home">(initialAdminView);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2716,7 +2718,7 @@ export function CatalogHomeClient({
   const [groupRainworxEventUrl, setGroupRainworxEventUrl] = useState("");
   const [groupRainworxAddMissing, setGroupRainworxAddMissing] = useState(true);
   const [groupRainworxImporting, setGroupRainworxImporting] = useState(false);
-  const [isBootstrapping, setIsBootstrapping] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(isDedicatedAdminEntry);
   const buildVehicleAnalyticsContextRef = useRef<
     (item: CatalogItem, section?: string) => Record<string, unknown>
   >(() => ({}));
@@ -3114,7 +3116,6 @@ export function CatalogHomeClient({
         const session = (await sessionRes.json()) as { loggedIn?: boolean };
         const loggedIn = Boolean(session.loggedIn);
         setIsAdmin(loggedIn);
-        setAdminView(loggedIn && initialAdminView === "editor" ? "editor" : "home");
         if (!loggedIn && openLoginIfGuest) {
           setShowLogin(true);
         }
@@ -8121,7 +8122,11 @@ export function CatalogHomeClient({
 
   const showAdminEditor = isAdmin && adminView === "editor" && !isStandaloneDetailPage;
   const showAdminHeaderControls = isAdmin && adminView === "editor";
-  const showPublicHome = (!isAdmin || adminView === "home") && !isStandaloneDetailPage;
+  const showPublicHome =
+    (!isAdmin || adminView === "home") &&
+    !isStandaloneDetailPage &&
+    !(isDedicatedAdminEntry && (isBootstrapping || !isAdmin));
+  const showAdminEntryLoading = isDedicatedAdminEntry && isBootstrapping && !isStandaloneDetailPage;
   const hasActiveSearch = homeSearchTerm.trim().length > 0;
   const shouldShowHowToSection =
     config.homeLayout.showHowToSection ||
@@ -8675,10 +8680,8 @@ export function CatalogHomeClient({
                     Salir editor
                   </button>
                 </>
-              ) : !isAdmin ? (
-                <button className="ui-focus rounded-full bg-cyan-600 px-3 py-1 text-xs text-white transition hover:-translate-y-0.5 hover:bg-cyan-500" onClick={() => { setShowLogin(true); trackEvent("login_modal_open"); }}>
-                  Login
-                </button>
+              ) : !showAdminHeaderControls ? (
+                <AdminAccessLink onClick={() => trackEvent("admin_access_link_click")} />
               ) : null}
             </div>
           </div>
@@ -8724,10 +8727,14 @@ export function CatalogHomeClient({
                       Salir editor
                     </button>
                   </>
-                ) : !isAdmin ? (
-                  <button className="ui-focus w-full rounded-full bg-cyan-600 px-3 py-1 text-xs text-white" onClick={() => { setShowLogin(true); setMobileMenuOpen(false); trackEvent("login_modal_open"); }}>
-                    Login
-                  </button>
+                ) : !showAdminHeaderControls ? (
+                  <AdminAccessLink
+                    className="ui-focus inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      trackEvent("admin_access_link_click");
+                    }}
+                  />
                 ) : null}
               </div>
             </div>
@@ -8737,6 +8744,20 @@ export function CatalogHomeClient({
           ) : null}
         </div>
       </section>
+      ) : null}
+
+      {showAdminEntryLoading ? (
+        <section className="relative z-10 mx-auto mt-6 max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="section-shell glass-soft flex min-h-[40vh] items-center justify-center p-8">
+            <div className="flex items-center gap-3 text-sm font-medium text-slate-600">
+              <span
+                className="h-5 w-5 animate-spin rounded-full border-2 border-cyan-200 border-t-cyan-600"
+                aria-hidden="true"
+              />
+              Cargando editor del catálogo…
+            </div>
+          </div>
+        </section>
       ) : null}
 
       {showAdminEditor ? (
