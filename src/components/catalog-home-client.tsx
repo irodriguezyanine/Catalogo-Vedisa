@@ -1117,6 +1117,53 @@ function catalogItemFromAssignedEditorDetails(
   };
 }
 
+/** Resuelve ítem para sync aunque solo exista como asignación Rainworx pendiente de feed. */
+function resolveCatalogItemForSync(
+  vehicleKey: string,
+  itemsByKey: Map<string, CatalogItem>,
+  items: CatalogItem[],
+  vehicleDetails: EditorConfig["vehicleDetails"],
+): CatalogItem | undefined {
+  const direct = itemsByKey.get(vehicleKey);
+  if (direct) return direct;
+
+  const patenteFromKey = /^[A-Z0-9]{5,10}$/.test(vehicleKey) ? normalizePatenteKey(vehicleKey) : "";
+  const patenteFromDetails = normalizePatenteKey(vehicleDetails?.[vehicleKey]?.patente ?? "");
+  const patenteNorm = patenteFromKey || patenteFromDetails;
+
+  if (patenteNorm) {
+    for (const item of items) {
+      if (getVehicleKey(item) === vehicleKey) return item;
+      if (normalizePatenteKey(getPatent(item)) === patenteNorm) return item;
+    }
+    const details = vehicleDetails?.[vehicleKey] ?? vehicleDetails?.[patenteNorm];
+    return catalogItemFromAssignedEditorDetails(patenteNorm, details, vehicleKey);
+  }
+
+  const orphanDetails = vehicleDetails?.[vehicleKey];
+  if (orphanDetails) {
+    const patente = normalizePatenteKey(orphanDetails.patente ?? "") || vehicleKey;
+    return catalogItemFromAssignedEditorDetails(patente, orphanDetails, vehicleKey);
+  }
+
+  return undefined;
+}
+
+function getVehicleTableBrandModel(
+  item: CatalogItem,
+  vehicleKey: string,
+  vehicleDetails: EditorConfig["vehicleDetails"],
+): string {
+  const details =
+    vehicleDetails?.[vehicleKey] ?? vehicleDetails?.[normalizePatenteKey(getPatent(item))];
+  const brand =
+    details?.brand?.trim() ||
+    String((item.raw as Record<string, unknown>).marca ?? "").trim();
+  const model = details?.model?.trim() || getModel(item);
+  const joined = [brand, model].filter((part) => part && part !== "Sin Modelo").join(" ");
+  return joined || resolveVehicleListTitle(item, vehicleDetails);
+}
+
 /** Patente a exigir contra Rainworx: borrador del modal o dato en inventario. */
 function getExpectedPatenteForRainworx(item: CatalogItem, details: EditorVehicleDetails): string | undefined {
   const fromDraft = normalizePatenteKey(details.patente);
@@ -2623,6 +2670,7 @@ export function CatalogHomeClient({
   const [groupManageTarget, setGroupManageTarget] = useState<GroupManageTarget | null>(null);
   const [groupManageSearchTerm, setGroupManageSearchTerm] = useState("");
   const [groupManageSelectedKeys, setGroupManageSelectedKeys] = useState<string[]>([]);
+  const [groupManageViewMode, setGroupManageViewMode] = useState<"cards" | "table">("cards");
   const [importedInventoryItems, setImportedInventoryItems] = useState<CatalogItem[]>([]);
   const [batchAssignImporting, setBatchAssignImporting] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualPublicationDraft>(
@@ -6325,6 +6373,7 @@ export function CatalogHomeClient({
     setGroupManageTarget(target);
     setGroupManageSearchTerm("");
     setGroupManageSelectedKeys([]);
+    setGroupManageViewMode("cards");
     setGroupRainworxEventUrl("");
   };
 
@@ -6332,6 +6381,7 @@ export function CatalogHomeClient({
     setGroupManageTarget(null);
     setGroupManageSearchTerm("");
     setGroupManageSelectedKeys([]);
+    setGroupManageViewMode("cards");
     setGroupRainworxEventUrl("");
   };
 
@@ -7289,7 +7339,12 @@ export function CatalogHomeClient({
         internalOnly?: boolean;
       },
     ) => {
-      const currentItem = itemsByKey.get(vehicleKey);
+      const currentItem = resolveCatalogItemForSync(
+        vehicleKey,
+        itemsByKey,
+        items,
+        config.vehicleDetails,
+      );
       if (!currentItem) {
         throw new Error("No se pudo localizar la unidad en inventario.");
       }
@@ -7359,7 +7414,9 @@ export function CatalogHomeClient({
     },
     [
       applyImportedPatentPayload,
+      config,
       editingVehicleKey,
+      items,
       itemsByKey,
       managingVehicleKey,
       persistVehicleSyncSnapshot,
@@ -7377,7 +7434,7 @@ export function CatalogHomeClient({
         );
         return;
       }
-      if (!itemsByKey.get(vehicleKey)) {
+      if (!resolveCatalogItemForSync(vehicleKey, itemsByKey, items, config.vehicleDetails)) {
         showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
         return;
       }
@@ -7439,7 +7496,7 @@ export function CatalogHomeClient({
         );
       }
     },
-    [itemsByKey, runPatentInventorySync, showSystemNotice],
+    [itemsByKey, items, config.vehicleDetails, runPatentInventorySync, showSystemNotice],
   );
 
   const loadTasacionesInventoryIntoEditor = useCallback(async () => {
@@ -7448,7 +7505,9 @@ export function CatalogHomeClient({
       showSystemNotice("info", "Sin Tasaciones", "Las unidades manuales no tienen inventario compartido.");
       return;
     }
-    if (!itemsByKey.get(editingVehicleKey)) {
+    if (
+      !resolveCatalogItemForSync(editingVehicleKey, itemsByKey, items, config.vehicleDetails)
+    ) {
       showSystemNotice("error", "Unidad no encontrada", "No se pudo localizar la unidad en inventario.");
       return;
     }
@@ -7490,7 +7549,7 @@ export function CatalogHomeClient({
         current === editingVehicleKey || current === resolvedKey ? null : current,
       );
     }
-  }, [editingVehicleKey, itemsByKey, runPatentInventorySync, showSystemNotice]);
+  }, [editingVehicleKey, itemsByKey, items, config.vehicleDetails, runPatentInventorySync, showSystemNotice]);
 
   const showPatentDiagnosis = useCallback(
     async (rawPatente: string) => {
@@ -7637,11 +7696,17 @@ export function CatalogHomeClient({
       if (appliedCount > 0) {
         lastPersistedConfigRef.current = JSON.stringify(latestConfig);
         await persistEditorConfigRef.current(latestConfig);
+        try {
+          await refreshAdminInventoryFeed();
+        } catch {
+          // El sync ya guardó fichas; el feed se puede refrescar manualmente.
+        }
       }
     }
   }, [
     groupManageBaseItems,
     groupSyncAllState?.running,
+    refreshAdminInventoryFeed,
     runPatentInventorySync,
     showSystemNotice,
     syncingVehicleKey,
@@ -12337,41 +12402,215 @@ export function CatalogHomeClient({
                 >
                   Limpiar selección
                 </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setGroupManageViewMode((mode) => (mode === "table" ? "cards" : "table"))
+                    }
+                    className={`ui-focus inline-flex h-[34px] w-[34px] items-center justify-center rounded-md border transition ${
+                      groupManageViewMode === "table"
+                        ? "border-cyan-400 bg-cyan-50 text-cyan-800"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                    title={
+                      groupManageViewMode === "table"
+                        ? "Vista tarjetas"
+                        : "Vista tabla (columnas)"
+                    }
+                    aria-label={
+                      groupManageViewMode === "table"
+                        ? "Cambiar a vista tarjetas"
+                        : "Cambiar a vista tabla"
+                    }
+                    aria-pressed={groupManageViewMode === "table"}
+                  >
+                    {groupManageViewMode === "table" ? (
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M3 4.75A1.75 1.75 0 0 1 4.75 3h10.5A1.75 1.75 0 0 1 17 4.75v2.5A1.75 1.75 0 0 1 15.25 9H4.75A1.75 1.75 0 0 1 3 7.25v-2.5ZM3 12.75A1.75 1.75 0 0 1 4.75 11h10.5A1.75 1.75 0 0 1 17 12.75v2.5A1.75 1.75 0 0 1 15.25 17H4.75A1.75 1.75 0 0 1 3 15.25v-2.5Z" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M3 4.75A1.75 1.75 0 0 1 4.75 3h10.5A1.75 1.75 0 0 1 17 4.75v1.5A1.75 1.75 0 0 1 15.25 8H4.75A1.75 1.75 0 0 1 3 6.25v-1.5ZM3 10.75A1.75 1.75 0 0 1 4.75 9h10.5A1.75 1.75 0 0 1 17 10.75v1.5A1.75 1.75 0 0 1 15.25 14H4.75A1.75 1.75 0 0 1 3 12.25v-1.5ZM3 16.75A1.75 1.75 0 0 1 4.75 15h10.5A1.75 1.75 0 0 1 17 16.75v1.5A1.75 1.75 0 0 1 15.25 20H4.75A1.75 1.75 0 0 1 3 18.25v-1.5Z" />
+                      </svg>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (groupManageSelectedKeys.length === 0) return;
+                      if (
+                        !window.confirm(
+                          `¿Marcar ${groupManageSelectedKeys.length} unidad(es) como vendidas? Pasarán a historial y dejarán de mostrarse en el catálogo.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      const markedCount = markVehiclesAsSoldBulk(
+                        groupManageSelectedKeys,
+                        groupManageSoldContext,
+                      );
+                      setGroupManageSelectedKeys([]);
+                      showSystemNotice(
+                        "success",
+                        "Venta masiva registrada",
+                        `${markedCount} unidad(es) pasaron a historial y dejaron de estar visibles.`,
+                      );
+                    }}
+                    disabled={groupManageSelectedKeys.length === 0}
+                    className="ui-focus rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Marcar vendidas ({groupManageSelectedKeys.length})
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {groupManageViewMode === "table" && groupManageSelectedKeys.length > 0 ? (
+              <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50/60 px-3 py-2">
+                <span className="text-xs font-semibold text-cyan-900">
+                  {groupManageSelectedKeys.length} fila(s) seleccionada(s)
+                </span>
                 <button
                   type="button"
                   onClick={() => {
-                    if (groupManageSelectedKeys.length === 0) return;
-                    if (
-                      !window.confirm(
-                        `¿Marcar ${groupManageSelectedKeys.length} unidad(es) como vendidas? Pasarán a historial y dejarán de mostrarse en el catálogo.`,
-                      )
-                    ) {
-                      return;
+                    const key = groupManageSelectedKeys[0];
+                    if (key) void syncVehicleWithGlo3dAutored(key);
+                  }}
+                  disabled={Boolean(syncingVehicleKey || groupSyncAllState?.running)}
+                  className="ui-focus rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-50"
+                >
+                  Sincronizar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const key = groupManageSelectedKeys[0];
+                    if (key) setManagingVehicleKey(key);
+                  }}
+                  className="ui-focus rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Gestionar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    for (const key of groupManageSelectedKeys) {
+                      toggleHidden(key);
                     }
-                    const markedCount = markVehiclesAsSoldBulk(
-                      groupManageSelectedKeys,
-                      groupManageSoldContext,
-                    );
-                    setGroupManageSelectedKeys([]);
                     showSystemNotice(
                       "success",
-                      "Venta masiva registrada",
-                      `${markedCount} unidad(es) pasaron a historial y dejaron de estar visibles.`,
+                      "Visibilidad actualizada",
+                      `${groupManageSelectedKeys.length} unidad(es) actualizada(s) en el home.`,
                     );
                   }}
-                  disabled={groupManageSelectedKeys.length === 0}
-                  className="ui-focus rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="ui-focus rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  Marcar vendidas ({groupManageSelectedKeys.length})
+                  Alternar visibilidad
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void (async () => {
+                      for (const key of [...groupManageSelectedKeys]) {
+                        await removeVehicleFromGroupTarget(key);
+                      }
+                    })();
+                  }}
+                  className="ui-focus rounded border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                >
+                  Quitar del grupo
                 </button>
               </div>
-            </div>
+            ) : null}
 
             <div className="max-h-[52vh] space-y-2 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
               {groupManageItems.length === 0 ? (
                 <p className="px-2 py-3 text-sm text-slate-500">
                   No hay unidades en este grupo con el filtro actual.
                 </p>
+              ) : groupManageViewMode === "table" ? (
+                <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                  <table className="min-w-full border-collapse text-left text-xs">
+                    <thead className="sticky top-0 z-[1] bg-slate-100 text-[11px] uppercase tracking-wide text-slate-600">
+                      <tr>
+                        <th className="w-10 border-b border-slate-200 px-2 py-2">
+                          <span className="sr-only">Seleccionar</span>
+                        </th>
+                        <th className="border-b border-slate-200 px-2 py-2">Patente</th>
+                        <th className="border-b border-slate-200 px-2 py-2">Marca / modelo</th>
+                        <th className="border-b border-slate-200 px-2 py-2">Precio</th>
+                        <th className="border-b border-slate-200 px-2 py-2">Estado</th>
+                        <th className="border-b border-slate-200 px-2 py-2">Sync</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupManageItems.map((item) => {
+                        const key = getVehicleKey(item);
+                        const hidden = mergedHiddenVehicleIds.has(key);
+                        const needsQuickSync = vehicleNeedsQuickSync(
+                          item,
+                          key,
+                          config,
+                          isStaleEditorDraftValue,
+                        );
+                        const selected = groupManageSelectedKeys.includes(key);
+                        return (
+                          <tr
+                            key={`group-table-${key}`}
+                            className={`border-b border-slate-100 last:border-b-0 ${
+                              selected ? "bg-cyan-50/50" : "hover:bg-slate-50"
+                            }`}
+                          >
+                            <td className="px-2 py-1.5 align-middle">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => toggleGroupManageVehicle(key)}
+                                className="h-4 w-4 rounded border-slate-300 text-cyan-600"
+                                aria-label={`Seleccionar ${getPatent(item)}`}
+                              />
+                            </td>
+                            <td className="whitespace-nowrap px-2 py-1.5 font-semibold text-slate-800">
+                              {getPatent(item)}
+                            </td>
+                            <td className="max-w-[14rem] truncate px-2 py-1.5 text-slate-700">
+                              {getVehicleTableBrandModel(item, key, config.vehicleDetails)}
+                            </td>
+                            <td className="whitespace-nowrap px-2 py-1.5 text-slate-600">
+                              {formatPrice(resolveVehiclePriceRaw(item, config.vehiclePrices) ?? undefined) ??
+                                "—"}
+                            </td>
+                            <td className="whitespace-nowrap px-2 py-1.5">
+                              <span
+                                className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                  hidden
+                                    ? "bg-rose-100 text-rose-800"
+                                    : "bg-emerald-100 text-emerald-800"
+                                }`}
+                              >
+                                {hidden ? "Oculto" : "Visible"}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-2 py-1.5">
+                              {needsQuickSync ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void showPatentDiagnosis(getPatent(item))}
+                                  className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-200"
+                                >
+                                  Sin sync
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-emerald-700">OK</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 groupManageItems.map((item) => {
                   const key = getVehicleKey(item);
