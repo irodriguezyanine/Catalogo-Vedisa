@@ -89,6 +89,11 @@ export function purgeAuctionAssignmentsExceptPatentes(
   return next;
 }
 
+/** Cantidad de patentes únicas asignadas a un remate/VD (sin claves huérfanas duplicadas). */
+export function countPatentesAssignedToAuction(config: EditorConfig, auctionId: string): number {
+  return collectPatentesAssignedToAuction(config, auctionId).size;
+}
+
 export function assignPatentesToTargetAuction(
   prev: EditorConfig,
   patentes: string[],

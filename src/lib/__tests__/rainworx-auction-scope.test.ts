@@ -3,6 +3,7 @@ import type { EditorConfig } from "@/types/editor";
 import {
   assignPatentesToTargetAuction,
   collectPatentesAssignedToAuction,
+  countPatentesAssignedToAuction,
   purgeAuctionAssignmentsExceptPatentes,
   resolveVehicleKeysForAuctionPatente,
 } from "@/lib/rainworx-auction-scope";
@@ -85,6 +86,21 @@ describe("rainworx-auction-scope", () => {
     expect(next.vehicleUpcomingAuctionIds.NEW111).toBe("remate-a");
     expect(next.vehicleUpcomingAuctionIds.XYZ789).toBe("vd-b");
     expect(next.sectionVehicleIds["ventas-directas"]).toContain("XYZ789");
+  });
+
+  it("cuenta patentes únicas sin claves huérfanas duplicadas", () => {
+    const config: EditorConfig = {
+      ...baseConfig(),
+      vehicleUpcomingAuctionIds: {
+        ABC123: "remate-a",
+        "uuid-sin-patente": "remate-a",
+        DEF456: "remate-a",
+      },
+    };
+    expect(countPatentesAssignedToAuction(config, "remate-a")).toBe(2);
+    expect(Object.values(config.vehicleUpcomingAuctionIds).filter((id) => id === "remate-a").length).toBe(
+      3,
+    );
   });
 
   it("elimina asignaciones huérfanas que no están en la lista Rainworx", () => {

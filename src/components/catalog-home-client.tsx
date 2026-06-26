@@ -134,6 +134,7 @@ import {
   resolveVehicleCommercialLane,
 } from "@/lib/commercial-category-exclusivity";
 import { removeVehicleKeyFromAuctionAssignment } from "@/lib/catalog-remove-vehicle-from-event";
+import { countPatentesAssignedToAuction } from "@/lib/rainworx-auction-scope";
 import {
   DEFAULT_EDITOR_CONFIG,
   type CommercialEventOrigin,
@@ -9641,9 +9642,7 @@ export function CatalogHomeClient({
                       ) : (
                         <>
                         {group.auctions.map((auction) => {
-                          const count = Object.values(config.vehicleUpcomingAuctionIds).filter(
-                            (id) => id === auction.id,
-                          ).length;
+                          const count = countPatentesAssignedToAuction(config, auction.id);
                           const auctionHidden = hiddenHomeCategoryIds.has(auctionCategoryKey(auction.id));
                           const auctionOrigin = getAuctionEventOrigin(auction);
                           return (
