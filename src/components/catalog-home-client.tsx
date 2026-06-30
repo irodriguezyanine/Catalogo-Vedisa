@@ -100,7 +100,8 @@ import { formatHeroNextRemateLabel } from "@/lib/auction-display";
 import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background-video";
 import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
-import { HomeInventorySearch } from "@/components/home-inventory-search";
+import { CollapsibleMobilePanel } from "@/components/collapsible-mobile-panel";
+import { HomeInventorySearch, HOME_SEARCH_SUGGESTIONS } from "@/components/home-inventory-search";
 import {
   RematesEmptyHomeState,
   UpcomingAuctionsSection,
@@ -10289,10 +10290,78 @@ export function CatalogHomeClient({
       ) : null}
       {config.homeLayout.showSearchBar ? (
       <>
-      <section className="relative z-50 mx-auto w-full max-w-7xl px-3 pt-3 pb-2 sm:px-6 lg:px-8">
-        <div className="glass-soft overflow-visible rounded-2xl border border-slate-300/80 bg-white/95 p-3 shadow-md md:p-4">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <div className="w-full">
+      <section className="relative z-50 mx-auto w-full max-w-7xl px-3 pt-2 pb-1 sm:px-6 sm:pt-3 lg:px-8">
+        <CollapsibleMobilePanel
+          activeCount={activeHomeFilterCount + (homeSearchTerm.trim() ? 1 : 0)}
+          className="glass-soft md:overflow-visible md:rounded-2xl md:border md:border-slate-300/80 md:bg-white/95 md:shadow-md"
+          panelClassName="md:p-4"
+          expandLabel="Expandir búsqueda y filtros"
+          collapseLabel="Ocultar búsqueda y filtros"
+          summary={
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <div className="min-w-0 flex-1">
+                <HomeInventorySearch
+                  value={homeSearchTerm}
+                  onChange={(value) => {
+                    setHomeSearchTerm(value);
+                    trackEvent("home_search_change", { query: value });
+                  }}
+                  onClear={() => {
+                    setHomeSearchTerm("");
+                    trackEvent("home_search_clear");
+                  }}
+                  showPatents={showPatents}
+                  compact
+                  showHeader={false}
+                  showSuggestions={false}
+                  ariaLabel={
+                    showPatents
+                      ? "Buscar vehículos por patente, marca, modelo o categoría"
+                      : "Buscar vehículos por marca, modelo o categoría"
+                  }
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void downloadVisibleCalendarPdf();
+                }}
+                disabled={isDownloadingCalendarPdf}
+                className={`ui-focus inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
+                  isDownloadingCalendarPdf
+                    ? "cursor-wait border-slate-300 bg-slate-100 text-slate-400"
+                    : "border-cyan-300 bg-cyan-50 text-cyan-800"
+                }`}
+                title="Descargar PDF"
+                aria-label="Descargar PDF del catálogo"
+              >
+                <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                  <path d="M10 3.5v8m0 0l-3-3m3 3l3-3M4.5 13.5v2h11v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters ? (
+                <button
+                  type="button"
+                  onClick={() => setShowHomeFiltersMenu((prev) => !prev)}
+                  className="ui-focus relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700"
+                  aria-label="Filtros y orden"
+                  aria-expanded={showHomeFiltersMenu}
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                    <path d="M4 5h12M6 10h8M8 15h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                  {activeHomeFilterCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-slate-800 px-1 text-[10px] font-bold text-white">
+                      {activeHomeFilterCount}
+                    </span>
+                  ) : null}
+                </button>
+              ) : null}
+            </div>
+          }
+        >
+          <div className="space-y-3 p-3 md:space-y-0 md:p-0">
+            <div className="hidden md:block">
               <HomeInventorySearch
                 value={homeSearchTerm}
                 onChange={(value) => {
@@ -10311,24 +10380,43 @@ export function CatalogHomeClient({
                 }
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            <div className="flex flex-wrap gap-1.5 md:hidden">
+              {HOME_SEARCH_SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={`mobile-home-suggestion-${suggestion}`}
+                  type="button"
+                  onClick={() => setHomeSearchTerm(suggestion)}
+                  className={`ui-focus rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                    homeSearchTerm.toLowerCase() === suggestion.toLowerCase()
+                      ? "border-cyan-400 bg-cyan-600 text-white"
+                      : "border-slate-300 bg-white text-slate-700"
+                  }`}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+            <div className="hidden items-center gap-2 md:flex">
               <button
                 type="button"
                 onClick={() => {
                   void downloadVisibleCalendarPdf();
                 }}
                 disabled={isDownloadingCalendarPdf}
-                className={`ui-focus inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                className={`ui-focus inline-flex shrink-0 items-center justify-center rounded-lg border transition ${
                   isDownloadingCalendarPdf
-                    ? "cursor-wait border-slate-300 bg-slate-100 text-slate-500"
-                    : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
+                    ? "h-9 w-9 cursor-wait border-slate-300 bg-slate-100 text-slate-500"
+                    : "h-9 w-9 border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100 md:h-auto md:w-auto md:gap-1.5 md:px-3 md:py-2 md:text-xs md:font-semibold"
                 }`}
-                title="Descargar PDF profesional del calendario visible"
+                title="Descargar PDF del catálogo"
+                aria-label="Descargar PDF del catálogo"
               >
-                <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
                   <path d="M10 3.5v8m0 0l-3-3m3 3l3-3M4.5 13.5v2h11v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-                {isDownloadingCalendarPdf ? "Generando PDF..." : "PDF Catalogo"}
+                <span className="hidden md:inline">
+                  {isDownloadingCalendarPdf ? "Generando PDF..." : "PDF Catálogo"}
+                </span>
               </button>
               {config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters ? (
                 <div className="relative" ref={homeFiltersMenuRef}>
@@ -10356,12 +10444,15 @@ export function CatalogHomeClient({
                   ) : null}
                 </div>
               ) : null}
-              <span className="sr-only" aria-live="polite">
-                {homeVisibleItems.length} resultados encontrados en catálogo.
+              <span className="ml-auto hidden rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 md:inline-flex">
+                {homeVisibleItems.length} resultados
               </span>
             </div>
+            <span className="sr-only" aria-live="polite">
+              {homeVisibleItems.length} resultados encontrados en catálogo.
+            </span>
           </div>
-        </div>
+        </CollapsibleMobilePanel>
       </section>
       {showHomeFiltersMenu &&
       (config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters) ? (

@@ -148,6 +148,39 @@ export function resolveVehiclePriceRaw(
   ]);
 }
 
+export function parsePriceAmount(value?: string | null): number {
+  if (!value?.trim()) return 0;
+  const clean = value.replace(/[^\d]/g, "");
+  const amount = Number(clean);
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
+export function resolveVehiclePriceAmount(
+  item: CatalogItem,
+  priceMap: Record<string, string>,
+): number {
+  return parsePriceAmount(resolveVehiclePriceRaw(item, priceMap));
+}
+
+export function resolveVehicleBrand(item: CatalogItem): string {
+  const raw = item.raw as Record<string, unknown>;
+  const brand = String(raw.marca ?? raw.brand ?? "").trim();
+  return brand;
+}
+
+export type VehiclePriceBucket = "all" | "under_2m" | "2m_5m" | "5m_10m" | "over_10m";
+
+export type VehicleSiniestroFilter = "all" | "siniestrado" | "no_siniestrado";
+
+export function matchesVehiclePriceBucket(amount: number, bucket: VehiclePriceBucket): boolean {
+  if (bucket === "all") return true;
+  if (amount <= 0) return false;
+  if (bucket === "under_2m") return amount < 2_000_000;
+  if (bucket === "2m_5m") return amount >= 2_000_000 && amount < 5_000_000;
+  if (bucket === "5m_10m") return amount >= 5_000_000 && amount < 10_000_000;
+  return amount >= 10_000_000;
+}
+
 function getEditorOverrideForItem(
   item: CatalogItem,
   vehicleDetails: Record<string, EditorVehicleDetails>,

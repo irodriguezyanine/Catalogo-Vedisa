@@ -1,7 +1,6 @@
 "use client";
 
-export const HOME_SEARCH_PLACEHOLDER =
-  "Busca tu SUV, camioneta, sedán, Hyundai, Toyota…";
+export const HOME_SEARCH_PLACEHOLDER = "Busca tu SUV, camioneta, sedán, Hyundai, Toyota…";
 
 export const HOME_SEARCH_SUGGESTIONS = [
   "Toyota",
@@ -20,6 +19,9 @@ type HomeInventorySearchProps = {
   onClear: () => void;
   showPatents: boolean;
   ariaLabel: string;
+  showHeader?: boolean;
+  showSuggestions?: boolean;
+  compact?: boolean;
   children?: React.ReactNode;
 };
 
@@ -29,17 +31,22 @@ export function HomeInventorySearch({
   onClear,
   showPatents,
   ariaLabel,
+  showHeader = true,
+  showSuggestions = true,
+  compact = false,
   children,
 }: HomeInventorySearchProps) {
   const placeholder = showPatents
-    ? `${HOME_SEARCH_PLACEHOLDER} o patente`
-    : HOME_SEARCH_PLACEHOLDER;
+    ? "Busca marca, modelo o patente…"
+    : "Busca marca, modelo…";
 
   return (
     <div className="w-full">
-      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-        Búsqueda de inventario
-      </p>
+      {showHeader ? (
+        <p className="mb-1 hidden text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600 md:block">
+          Búsqueda de inventario
+        </p>
+      ) : null}
       <div className="relative">
         <svg
           viewBox="0 0 20 20"
@@ -55,7 +62,11 @@ export function HomeInventorySearch({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           list="home-search-suggestions"
-          className="ui-focus w-full rounded-xl border-2 border-slate-300 bg-white py-3 pl-10 pr-28 text-sm font-medium text-slate-900 shadow-sm placeholder:text-slate-500"
+          className={`ui-focus w-full rounded-xl border bg-white pl-10 text-sm font-medium text-slate-900 shadow-sm placeholder:text-slate-500 ${
+            compact
+              ? "border-slate-200 py-2 pr-10"
+              : "border-2 border-slate-300 py-3 pr-28"
+          }`}
           aria-label={ariaLabel}
         />
         <datalist id="home-search-suggestions">
@@ -67,28 +78,33 @@ export function HomeInventorySearch({
           <button
             type="button"
             onClick={onClear}
-            className="ui-focus absolute right-2 top-1/2 min-h-11 min-w-11 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+            className={`ui-focus absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 ${
+              compact ? "min-h-8 min-w-8 px-2" : "min-h-11 min-w-11 px-3"
+            }`}
+            aria-label="Limpiar búsqueda"
           >
-            Limpiar
+            ×
           </button>
         ) : null}
       </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {HOME_SEARCH_SUGGESTIONS.map((suggestion) => (
-          <button
-            key={`search-suggestion-${suggestion}`}
-            type="button"
-            onClick={() => onChange(suggestion)}
-            className={`ui-focus rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-              value.toLowerCase() === suggestion.toLowerCase()
-                ? "border-cyan-400 bg-cyan-600 text-white"
-                : "border-slate-300 bg-white text-slate-700 hover:border-cyan-300 hover:bg-cyan-50"
-            }`}
-          >
-            {suggestion}
-          </button>
-        ))}
-      </div>
+      {showSuggestions ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {HOME_SEARCH_SUGGESTIONS.map((suggestion) => (
+            <button
+              key={`search-suggestion-${suggestion}`}
+              type="button"
+              onClick={() => onChange(suggestion)}
+              className={`ui-focus rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                value.toLowerCase() === suggestion.toLowerCase()
+                  ? "border-cyan-400 bg-cyan-600 text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:border-cyan-300 hover:bg-cyan-50"
+              }`}
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {children}
     </div>
   );
