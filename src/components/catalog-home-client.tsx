@@ -101,6 +101,7 @@ import { CatalogHeroBackgroundVideo } from "@/components/catalog-hero-background
 import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
 import { CollapsibleMobilePanel } from "@/components/collapsible-mobile-panel";
+import { ComoParticiparContent } from "@/components/como-participar-content";
 import { HomeInventorySearch, HOME_SEARCH_SUGGESTIONS } from "@/components/home-inventory-search";
 import {
   RematesEmptyHomeState,
@@ -7969,6 +7970,7 @@ export function CatalogHomeClient({
     return [
       { id: "proximos-remates" as const, label: "Proximos remates", href: proximosRematesHref },
       { id: "ventas-directas" as const, label: "Ventas directas", href: ventaDirectaHref },
+      { id: "como-participar" as const, label: "Cómo participar", href: "/como-participar" },
     ];
   }, [hiddenHomeCategoryIds, sortedRemateAuctions, visibleUpcomingRemateGroups]);
 
@@ -10555,8 +10557,15 @@ export function CatalogHomeClient({
                 {config.homeLayout.heroPrimaryCtaLabel || "Ver catálogo completo"}
               </a>
               <a
+                href="/como-participar"
+                className="premium-btn-secondary ui-focus md:hidden"
+                onClick={() => trackEvent("hero_cta_click", { cta: "secondary" })}
+              >
+                {config.homeLayout.heroSecondaryCtaLabel || "Explorar secciones"}
+              </a>
+              <a
                 href={config.homeLayout.heroSecondaryCtaHref || "#como-participar"}
-                className="premium-btn-secondary ui-focus"
+                className="premium-btn-secondary ui-focus hidden md:inline-flex"
                 onClick={() => trackEvent("hero_cta_click", { cta: "secondary" })}
               >
                 {config.homeLayout.heroSecondaryCtaLabel || "Explorar secciones"}
@@ -10606,114 +10615,13 @@ export function CatalogHomeClient({
         {shouldShowHowToSection ? (
         <section
           id="como-participar"
-          className={`section-shell transition-all duration-500 ease-out ${
+          className={`section-shell hidden transition-all duration-500 ease-out md:block ${
             hasActiveSearchOrQuickFilters
               ? "pointer-events-none max-h-0 -translate-y-2 overflow-hidden opacity-0"
               : "max-h-[1400px] translate-y-0 opacity-100"
           }`}
         >
-          <div className="mb-4">
-            <p className="premium-kicker">Cómo participar</p>
-            <h2 className="text-2xl font-bold text-slate-900">¿Cómo participar en los remates?</h2>
-            <p className="mt-2 text-sm text-slate-700">
-              Participar en nuestras subastas online es <strong>fácil y seguro</strong>. Sigue estos pasos:
-            </p>
-          </div>
-          <div className="howto-rail">
-            {[
-              {
-                step: "1",
-                title: "Regístrate",
-                icon: "https://img.icons8.com/color/96/user-male-circle.png",
-                body: (
-                  <>
-                    Crea tu cuenta en{" "}
-                    <a
-                      href="https://vehiculoschocados.cl/Account/Register"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ui-focus font-semibold text-cyan-700 underline"
-                    >
-                      este enlace
-                    </a>{" "}
-                    y confirma tu correo electrónico.
-                  </>
-                ),
-              },
-              {
-                step: "2",
-                title: "Constituye tu garantía",
-                icon: "https://img.icons8.com/color/96/money-bag.png",
-                body: (
-                  <>
-                    Para ofertar, debes constituir tu garantía. Contáctanos por{" "}
-                    <a
-                      href="https://wa.me/56989323397?text=Hola%20quiero%20información%20sobre%20la%20garantía"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ui-focus font-semibold text-cyan-700 underline"
-                    >
-                      WhatsApp
-                    </a>{" "}
-                    o revisa la ayuda{" "}
-                    <a
-                      href="https://vehiculoschocados.cl/Help"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ui-focus font-semibold text-cyan-700 underline"
-                    >
-                      aquí
-                    </a>
-                    .
-                  </>
-                ),
-              },
-              {
-                step: "3",
-                title: "Revisa los lotes",
-                icon: "https://img.icons8.com/color/96/car.png",
-                body: (
-                  <>
-                    Explora los{" "}
-                    <a
-                      href="https://vehiculoschocados.cl/Listing"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ui-focus font-semibold text-cyan-700 underline"
-                    >
-                      vehículos disponibles
-                    </a>{" "}
-                    con fotos, videos y descripciones.
-                  </>
-                ),
-              },
-              {
-                step: "4",
-                title: "Adjudicación y retiro",
-                icon: "https://cdn-icons-png.flaticon.com/128/2162/2162183.png",
-                body: (
-                  <>Escríbenos por WhatsApp para asesorarte. Si resultas adjudicatario, coordinamos pago y retiro en nuestras bodegas.</>
-                ),
-              },
-            ].map((step) => (
-              <div
-                key={step.step}
-                className="howto-step-card h-full rounded-xl border border-slate-200 bg-white px-4 py-6 text-center shadow-sm transition duration-200 hover:-translate-y-1 hover:border-cyan-200 hover:shadow-md"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={step.icon}
-                  alt={step.title}
-                  className="mx-auto mb-4 w-[120px] max-w-full md:w-[96px]"
-                  loading="lazy"
-                />
-                <h3 className="text-base font-bold text-slate-900">
-                  {step.step}. {step.title}
-                </h3>
-                <p className="mt-2 text-sm text-slate-600">{step.body}</p>
-              </div>
-            ))}
-          </div>
+          <ComoParticiparContent />
         </section>
         ) : null}
         {hasActiveSearch ? (
@@ -10912,10 +10820,10 @@ export function CatalogHomeClient({
           return null;
         })}
       </div>
-      <section className="relative z-10 mx-auto mb-14 grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-2 lg:px-8">
+      <section className="relative z-10 mx-auto mb-6 grid max-w-7xl gap-4 px-4 sm:px-6 md:mb-14 md:gap-6 lg:grid-cols-2 lg:px-8">
         <div className="section-shell">
           <p className="premium-kicker">Confianza VEDISA</p>
-          <h2 className="text-2xl font-bold text-slate-900">Experiencia respaldada</h2>
+          <h2 className="text-xl font-bold text-slate-900 md:text-2xl">Experiencia respaldada</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {[
               ["+40 años de experiencia", "Trayectoria especializada en subastas de vehículos de todo tipo y condición."],
@@ -10923,95 +10831,132 @@ export function CatalogHomeClient({
               ["+150 clientes satisfechos", "Relaciones de largo plazo con foco en transparencia y recupero."],
               ["Transferencia en 72 horas", "Gestión administrativa orientada a reducir tiempos y acelerar liquidez."],
             ].map(([title, text]) => (
-              <div key={title} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div key={title} className="rounded-xl border border-slate-200 bg-white p-3 md:p-4">
                 <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
                 <p className="mt-1 text-sm text-slate-600">{text}</p>
               </div>
             ))}
           </div>
         </div>
-        <div className="section-shell">
-          <p className="premium-kicker">Preguntas frecuentes</p>
-          <h2 className="text-2xl font-bold text-slate-900">Resuelve dudas rápidas</h2>
-          <div className="mt-4 space-y-2">
-            {[
-              ["¿Cómo oferto en un remate?", "Regístrate, activa garantía y participa online en la fecha de remate."],
-              ["¿Puedo revisar vehículos antes?", "Sí. Puedes visitar la exhibición presencial para inspección pre-compra."],
-              ["¿Todos los vehículos tienen visor 3D?", "No todos, pero los que lo tienen aparecen marcados como 3D."],
-              ["¿Dónde recibo apoyo comercial?", "Nuestro equipo responde por WhatsApp, correo y canales oficiales de VEDISA."],
-            ].map(([question, answer]) => (
-              <details key={question} className="rounded-lg border border-slate-200 bg-white p-3">
-                <summary className="cursor-pointer text-sm font-semibold text-slate-900">{question}</summary>
-                <p className="mt-2 text-sm text-slate-600">{answer}</p>
-              </details>
-            ))}
-          </div>
-          <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50/70 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-800">Contacto comercial</p>
-            <p className="mt-1 text-sm text-slate-700">
-              <a href="mailto:comercial@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
-                comercial@vedisaremates.cl
-              </a>
-            </p>
-            <p className="mt-1 text-sm text-slate-700">
-              Tasaciones:
-              {" "}
-              <a href="mailto:tasaciones@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
-                tasaciones@vedisaremates.cl
-              </a>
-              {" "}· Retiros:
-              {" "}
-              <a href="mailto:retiros@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
-                retiros@vedisaremates.cl
-              </a>
-            </p>
-          </div>
+        <div className="section-shell !p-0 md:!p-[var(--section-shell-padding,1.5rem)]">
+          <CollapsibleMobilePanel
+            expandLabel="Expandir preguntas frecuentes"
+            collapseLabel="Ocultar preguntas frecuentes"
+            panelClassName="md:p-0"
+            summary={
+              <div className="min-w-0 py-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700">Preguntas frecuentes</p>
+                <p className="truncate text-sm font-bold text-slate-900">Resuelve dudas rápidas</p>
+                <p className="text-[11px] text-slate-500">4 preguntas · contacto comercial</p>
+              </div>
+            }
+          >
+            <div className="space-y-3 p-3 md:space-y-0 md:p-0">
+              <div className="hidden md:block">
+                <p className="premium-kicker">Preguntas frecuentes</p>
+                <h2 className="text-2xl font-bold text-slate-900">Resuelve dudas rápidas</h2>
+              </div>
+              <div className="mt-0 space-y-2 md:mt-4">
+                {[
+                  ["¿Cómo oferto en un remate?", "Regístrate, activa garantía y participa online en la fecha de remate."],
+                  ["¿Puedo revisar vehículos antes?", "Sí. Puedes visitar la exhibición presencial para inspección pre-compra."],
+                  ["¿Todos los vehículos tienen visor 3D?", "No todos, pero los que lo tienen aparecen marcados como 3D."],
+                  ["¿Dónde recibo apoyo comercial?", "Nuestro equipo responde por WhatsApp, correo y canales oficiales de VEDISA."],
+                ].map(([question, answer]) => (
+                  <details key={question} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <summary className="cursor-pointer text-sm font-semibold text-slate-900">{question}</summary>
+                    <p className="mt-2 text-sm text-slate-600">{answer}</p>
+                  </details>
+                ))}
+              </div>
+              <div className="rounded-lg border border-cyan-200 bg-cyan-50/70 p-3 md:mt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-800">Contacto comercial</p>
+                <p className="mt-1 text-sm text-slate-700">
+                  <a href="mailto:comercial@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
+                    comercial@vedisaremates.cl
+                  </a>
+                </p>
+                <p className="mt-1 text-sm text-slate-700">
+                  Tasaciones:
+                  {" "}
+                  <a href="mailto:tasaciones@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
+                    tasaciones@vedisaremates.cl
+                  </a>
+                  {" "}· Retiros:
+                  {" "}
+                  <a href="mailto:retiros@vedisaremates.cl" className="ui-focus text-cyan-700 underline">
+                    retiros@vedisaremates.cl
+                  </a>
+                </p>
+              </div>
+            </div>
+          </CollapsibleMobilePanel>
         </div>
       </section>
-      <section className="relative z-10 mx-auto mb-14 max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="section-shell">
-          <p className="premium-kicker">Asesoría personalizada</p>
-          <h2 className="text-2xl font-bold text-slate-900">Te ayudamos a encontrar tu próxima unidad</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Déjanos tus datos y te contactamos por WhatsApp para asesorarte con tu próxima compra.
-          </p>
-          <div className="mt-4 grid gap-3 md:grid-cols-4">
-            <input
-              value={leadForm.name}
-              onChange={(event) =>
-                setLeadForm((prev) => ({ ...prev, name: event.target.value }))
-              }
-              className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-              placeholder="Nombre"
-              aria-label="Nombre de contacto"
-            />
-            <input
-              value={leadForm.phone}
-              onChange={(event) =>
-                setLeadForm((prev) => ({ ...prev, phone: event.target.value }))
-              }
-              className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-              placeholder="Teléfono"
-              aria-label="Teléfono de contacto"
-            />
-            <input
-              value={leadForm.interest}
-              onChange={(event) =>
-                setLeadForm((prev) => ({ ...prev, interest: event.target.value }))
-              }
-              className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-              placeholder="¿Qué vehículo buscas?"
-              aria-label="Interés de vehículo"
-            />
-            <button
-              type="button"
-              onClick={submitLeadForm}
-              className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
-            >
-              Solicitar asesoría
-            </button>
-          </div>
-          {leadMessage ? <p className="mt-2 text-xs font-semibold text-cyan-700">{leadMessage}</p> : null}
+      <section className="relative z-10 mx-auto mb-6 max-w-7xl px-4 sm:px-6 md:mb-14 lg:px-8">
+        <div className="section-shell !p-0 md:!p-[var(--section-shell-padding,1.5rem)]">
+          <CollapsibleMobilePanel
+            expandLabel="Expandir asesoría personalizada"
+            collapseLabel="Ocultar asesoría personalizada"
+            panelClassName="md:p-0"
+            summary={
+              <div className="min-w-0 py-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700">Asesoría personalizada</p>
+                <p className="truncate text-sm font-bold text-slate-900">Te ayudamos a encontrar tu próxima unidad</p>
+                <p className="text-[11px] text-slate-500">Formulario · contacto por WhatsApp</p>
+              </div>
+            }
+          >
+            <div className="p-3 md:p-0">
+              <div className="hidden md:block">
+                <p className="premium-kicker">Asesoría personalizada</p>
+                <h2 className="text-2xl font-bold text-slate-900">Te ayudamos a encontrar tu próxima unidad</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Déjanos tus datos y te contactamos por WhatsApp para asesorarte con tu próxima compra.
+                </p>
+              </div>
+              <p className="mb-3 text-xs text-slate-600 md:hidden">
+                Déjanos tus datos y te contactamos por WhatsApp.
+              </p>
+              <div className="mt-0 grid gap-3 md:mt-4 md:grid-cols-4">
+                <input
+                  value={leadForm.name}
+                  onChange={(event) =>
+                    setLeadForm((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                  className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Nombre"
+                  aria-label="Nombre de contacto"
+                />
+                <input
+                  value={leadForm.phone}
+                  onChange={(event) =>
+                    setLeadForm((prev) => ({ ...prev, phone: event.target.value }))
+                  }
+                  className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Teléfono"
+                  aria-label="Teléfono de contacto"
+                />
+                <input
+                  value={leadForm.interest}
+                  onChange={(event) =>
+                    setLeadForm((prev) => ({ ...prev, interest: event.target.value }))
+                  }
+                  className="ui-focus rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="¿Qué vehículo buscas?"
+                  aria-label="Interés de vehículo"
+                />
+                <button
+                  type="button"
+                  onClick={submitLeadForm}
+                  className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500"
+                >
+                  Solicitar asesoría
+                </button>
+              </div>
+              {leadMessage ? <p className="mt-2 text-xs font-semibold text-cyan-700">{leadMessage}</p> : null}
+            </div>
+          </CollapsibleMobilePanel>
         </div>
       </section>
       {!isStandaloneDetailPage ? <CatalogSiteFooter /> : null}
