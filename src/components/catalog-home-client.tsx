@@ -220,12 +220,6 @@ type ClientLeadForm = {
   phone: string;
   interest: string;
 };
-type OfferFormState = {
-  customerName: string;
-  customerEmail: string;
-  customerPhone: string;
-  offerAmount: string;
-};
 type OfferFilterField = "all" | "vehicleTitle" | "patent" | "customerName" | "customerEmail" | "customerPhone";
 type SoldFilterField = "all" | "patent" | "title" | "soldCategory" | "auctionName";
 type AnalyticsChartType = "bar" | "line" | "area";
@@ -1635,19 +1629,6 @@ function toCurrencyInput(value: string): string {
   return formatCurrencyAmount(amount);
 }
 
-function buildEmptyOfferForm(): OfferFormState {
-  return {
-    customerName: "",
-    customerEmail: "",
-    customerPhone: "",
-    offerAmount: "",
-  };
-}
-
-function isValidEmailAddress(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
 function getOrCreateAnalyticsIds(): { visitorId: string; sessionId: string } {
   if (typeof window === "undefined") return { visitorId: "ssr", sessionId: "ssr" };
   let visitorId = window.localStorage.getItem(ANALYTICS_VISITOR_ID_KEY) ?? "";
@@ -2725,9 +2706,6 @@ export function CatalogHomeClient({
   const buildVehicleAnalyticsContextRef = useRef<
     (item: CatalogItem, section?: string) => Record<string, unknown>
   >(() => ({}));
-  const [showOfferModal, setShowOfferModal] = useState(false);
-  const [offerForm, setOfferForm] = useState<OfferFormState>(buildEmptyOfferForm);
-  const [offerSending, setOfferSending] = useState(false);
   const [offersRows, setOffersRows] = useState<OfferRecord[]>([]);
   const [offersLoading, setOffersLoading] = useState(false);
   const [offersError, setOffersError] = useState("");
@@ -3088,29 +3066,6 @@ export function CatalogHomeClient({
       window.scrollTo({ top: scrollY, behavior: "auto" });
     };
   }, [isStandaloneDetailPage, selectedVehicle]);
-
-  useEffect(() => {
-    if (selectedVehicle) return;
-    setShowOfferModal(false);
-    setOfferForm(buildEmptyOfferForm());
-    setOfferSending(false);
-  }, [selectedVehicle]);
-
-  useEffect(() => {
-    if (!showOfferModal) return;
-    const selectedKey = selectedVehicle ? getVehicleKey(selectedVehicle) : "";
-    const selectedPriceLabel = selectedVehicle
-      ? formatPrice(resolveVehiclePriceRaw(selectedVehicle, config.vehiclePrices) ?? undefined)
-      : selectedKey
-        ? formatPrice(config.vehiclePrices[selectedKey])
-        : null;
-    const selectedReferenceAmount = parseCurrencyAmount(selectedPriceLabel);
-    if (selectedReferenceAmount <= 0) return;
-    setOfferForm((prev) => {
-      if (prev.offerAmount.trim()) return prev;
-      return { ...prev, offerAmount: formatCurrencyAmount(selectedReferenceAmount) };
-    });
-  }, [showOfferModal, selectedVehicle, config.vehiclePrices]);
 
   useEffect(() => {
     void (async () => {
@@ -4909,113 +4864,6 @@ export function CatalogHomeClient({
     setLeadMessage("Perfecto. Te estamos redirigiendo a WhatsApp para contacto inmediato.");
     window.open(leadWhatsappUrl, "_blank", "noreferrer");
   };
-
-  const openOfferModal = useCallback(() => {
-    if (!selectedVehicle) return;
-    if (selectedVehicleReferencePriceAmount <= 0) {
-      showSystemNotice(
-        "info",
-        "Precio no disponible",
-        "Este vehículo no tiene precio referencial cargado. Contáctanos por WhatsApp para ofertar.",
-      );
-      return;
-    }
-    setShowOfferModal(true);
-    trackEvent("offer_modal_open", {
-      ...(selectedVehicle
-        ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
-        : { itemKey: selectedVehicleKey }),
-    });
-  }, [selectedVehicle, selectedVehicleKey, selectedVehicleReferencePriceAmount, showSystemNotice]);
-
-  const closeOfferModal = useCallback(() => {
-    setShowOfferModal(false);
-    setOfferSending(false);
-    setOfferForm(buildEmptyOfferForm());
-  }, []);
-
-  const submitOffer = useCallback(async () => {
-    if (!selectedVehicle) return;
-    const customerName = offerForm.customerName.trim();
-    const customerEmail = offerForm.customerEmail.trim();
-    const customerPhone = offerForm.customerPhone.trim();
-    const offerAmount = parseCurrencyAmount(offerForm.offerAmount);
-
-    if (!customerName || !customerEmail || !customerPhone || offerAmount <= 0) {
-      showSystemNotice("error", "Campos obligatorios", "Completa nombre, mail, teléfono y oferta para enviar.");
-      trackEvent("offer_submit_invalid", { itemKey: selectedVehicleKey });
-      return;
-    }
-    if (!isValidEmailAddress(customerEmail)) {
-      showSystemNotice("error", "Correo inválido", "Ingresa un mail válido para contactarte.");
-      trackEvent("offer_submit_invalid_email", { itemKey: selectedVehicleKey });
-      return;
-    }
-    if (selectedVehicleReferencePriceAmount <= 0) {
-      showSystemNotice(
-        "error",
-        "Precio referencial no disponible",
-        "No podemos registrar la oferta porque falta el precio referencial de este vehículo.",
-      );
-      return;
-    }
-
-    setOfferSending(true);
-    try {
-      const response = await fetch("/api/offers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          itemKey: selectedVehicleKey,
-          vehicleTitle: getModel(selectedVehicle),
-          patent: getPatent(selectedVehicle),
-          referencePrice: selectedVehicleReferencePriceAmount,
-          offerAmount,
-          customerName,
-          customerEmail,
-          customerPhone,
-        }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) {
-        showSystemNotice(
-          "error",
-          "No pudimos registrar tu oferta",
-          payload.error ?? "Intenta nuevamente en unos segundos.",
-        );
-        trackEvent("offer_submit_error", { itemKey: selectedVehicleKey });
-        return;
-      }
-      trackEvent("offer_submit_success", {
-        ...(selectedVehicle
-          ? buildVehicleAnalyticsContextRef.current(selectedVehicle)
-          : { itemKey: selectedVehicleKey }),
-        offerAmount,
-      });
-      showSystemNotice(
-        "success",
-        "Oferta recibida",
-        "Ya recibimos tu oferta y nos pondremos en contacto contigo en caso de adjudicarse.",
-      );
-      setOfferForm(buildEmptyOfferForm());
-      setShowOfferModal(false);
-    } catch {
-      showSystemNotice(
-        "error",
-        "No pudimos registrar tu oferta",
-        "Intenta nuevamente en unos segundos.",
-      );
-      trackEvent("offer_submit_error", { itemKey: selectedVehicleKey });
-    } finally {
-      setOfferSending(false);
-    }
-  }, [
-    offerForm,
-    selectedVehicle,
-    selectedVehicleKey,
-    selectedVehicleReferencePriceAmount,
-    showSystemNotice,
-  ]);
 
   const shareSelectedVehicle = useCallback(async () => {
     if (!selectedVehicle) return;
@@ -10750,10 +10598,10 @@ export function CatalogHomeClient({
               },
               {
                 step: "4",
-                title: "Ofertar y adjudicación",
+                title: "Adjudicación y retiro",
                 icon: "https://cdn-icons-png.flaticon.com/128/2162/2162183.png",
                 body: (
-                  <>Haz tu oferta en línea. Si ganas, coordinamos tu pago y retiro en nuestras bodegas.</>
+                  <>Escríbenos por WhatsApp para asesorarte. Si resultas adjudicatario, coordinamos pago y retiro en nuestras bodegas.</>
                 ),
               },
             ].map((step) => (
@@ -11034,7 +10882,7 @@ export function CatalogHomeClient({
           <p className="premium-kicker">Asesoría personalizada</p>
           <h2 className="text-2xl font-bold text-slate-900">Te ayudamos a encontrar tu próxima unidad</h2>
           <p className="mt-2 text-sm text-slate-600">
-            Déjanos tus datos y te contactamos por WhatsApp para guiarte en el proceso de oferta.
+            Déjanos tus datos y te contactamos por WhatsApp para asesorarte con tu próxima compra.
           </p>
           <div className="mt-4 grid gap-3 md:grid-cols-4">
             <input
@@ -11129,7 +10977,6 @@ export function CatalogHomeClient({
             priceLabel={selectedVehiclePriceLabel}
             promoEnabled={selectedVehiclePromoMeta.promoEnabled}
             originalPriceLabel={selectedVehiclePromoMeta.originalPriceLabel}
-            referencePriceAmount={selectedVehicleReferencePriceAmount}
             conditionLabel={selectedVehicleConditionLabel}
             conditionClasses={selectedVehicleConditionClasses}
             view3dUrl={selectedVehicle.view3dUrl}
@@ -11145,7 +10992,6 @@ export function CatalogHomeClient({
             whatsappUrl={selectedVehicleWhatsappUrl}
             whatsappLabel={selectedVehiclePrimaryCtaLabel}
             onBack={navigateBackFromVehicleDetail}
-            onOffer={openOfferModal}
             onShare={() => {
               void shareSelectedVehicle();
             }}
@@ -11515,20 +11361,6 @@ export function CatalogHomeClient({
                     >
                       <button
                         type="button"
-                        onClick={openOfferModal}
-                        disabled={selectedVehicleReferencePriceAmount <= 0}
-                        className="ui-focus inline-flex h-10 items-center justify-center rounded-full border border-cyan-300 bg-cyan-50 px-4 text-xs font-semibold text-cyan-700 shadow-md transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Enviar mi precio"
-                        title={
-                          selectedVehicleReferencePriceAmount > 0
-                            ? "Enviar mi precio"
-                            : "No hay precio referencial disponible"
-                        }
-                      >
-                        Enviar mi precio
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => {
                           void shareSelectedVehicle();
                         }}
@@ -11549,13 +11381,14 @@ export function CatalogHomeClient({
                               : { itemKey: selectedVehicleKey }),
                           })
                         }
-                        className="ui-focus inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white shadow-md transition hover:brightness-95"
+                        className="ui-focus inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[#25D366] px-4 text-xs font-semibold text-white shadow-md transition hover:brightness-95"
                         aria-label={selectedVehiclePrimaryCtaLabel}
                         title={selectedVehiclePrimaryCtaLabel}
                       >
-                        <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="currentColor" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
                           <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.46 1.33 4.96L2 22l5.3-1.38a9.83 9.83 0 0 0 4.74 1.21h.01c5.45 0 9.87-4.42 9.87-9.88A9.87 9.87 0 0 0 12.04 2Zm0 18.03h-.01a8.13 8.13 0 0 1-4.14-1.14l-.3-.18-3.15.82.84-3.07-.2-.31a8.13 8.13 0 0 1-1.25-4.3c0-4.51 3.69-8.2 8.22-8.2 4.53 0 8.21 3.68 8.21 8.2 0 4.53-3.69 8.2-8.22 8.2Zm4.49-6.19c-.25-.12-1.49-.73-1.72-.81-.23-.09-.4-.12-.57.12-.17.25-.65.81-.8.97-.15.17-.29.19-.54.06-.25-.12-1.04-.38-1.99-1.22-.74-.66-1.24-1.48-1.39-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.44.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.44-.06-.12-.57-1.37-.78-1.88-.21-.49-.42-.42-.57-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.09 0 1.23.9 2.42 1.03 2.58.12.17 1.77 2.71 4.29 3.8.6.26 1.07.42 1.43.54.6.19 1.15.16 1.59.1.49-.07 1.49-.61 1.7-1.2.21-.59.21-1.1.15-1.2-.06-.1-.23-.16-.48-.28Z" />
                         </svg>
+                        WhatsApp
                       </a>
                       {isStandaloneDetailPage ? (
                         <Link
@@ -12112,119 +11945,6 @@ export function CatalogHomeClient({
                   Crear publicación manual
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showOfferModal && selectedVehicle ? (
-        <div
-          className="fixed inset-0 z-[78] flex items-center justify-center bg-slate-900/70 p-4"
-          onClick={closeOfferModal}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Enviar mi precio"
-            className="max-h-[92vh] w-full max-w-lg overflow-auto rounded-2xl bg-white p-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Enviar mi precio</p>
-                <h3 className="text-lg font-bold text-slate-900">{getModel(selectedVehicle)}</h3>
-                {showPatents ? (
-                  <p className="text-xs text-slate-500">Patente {getPatent(selectedVehicle)}</p>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={closeOfferModal}
-                className="ui-focus rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50"
-              >
-                Cerrar
-              </button>
-            </div>
-
-            <div className="rounded-lg border border-cyan-100 bg-cyan-50/70 p-3">
-              <p className="text-xs uppercase tracking-wide text-cyan-800">Precio referencial</p>
-              <p className="mt-1 text-xl font-black text-slate-900">
-                {selectedVehicleReferencePriceDisplay || selectedVehiclePriceLabel || "No informado"}
-              </p>
-              <p className="mt-1 text-xs text-slate-600">
-                Este valor NO incluye gastos de transferencia ni impuestos.
-              </p>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-slate-600">Nombre *</span>
-                <input
-                  value={offerForm.customerName}
-                  onChange={(event) =>
-                    setOfferForm((prev) => ({ ...prev, customerName: event.target.value }))
-                  }
-                  placeholder="Tu nombre"
-                  className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-slate-600">Mail *</span>
-                <input
-                  type="email"
-                  value={offerForm.customerEmail}
-                  onChange={(event) =>
-                    setOfferForm((prev) => ({ ...prev, customerEmail: event.target.value }))
-                  }
-                  placeholder="correo@ejemplo.com"
-                  className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-slate-600">Número de teléfono *</span>
-                <input
-                  value={offerForm.customerPhone}
-                  onChange={(event) =>
-                    setOfferForm((prev) => ({ ...prev, customerPhone: event.target.value }))
-                  }
-                  placeholder="+56 9 1234 5678"
-                  className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-slate-600">Oferta *</span>
-                <input
-                  value={offerForm.offerAmount}
-                  onChange={(event) =>
-                    setOfferForm((prev) => ({
-                      ...prev,
-                      offerAmount: toCurrencyInput(event.target.value),
-                    }))
-                  }
-                  placeholder="$0"
-                  className="ui-focus w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold"
-                />
-              </label>
-            </div>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeOfferModal}
-                className="ui-focus rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void submitOffer();
-                }}
-                disabled={offerSending}
-                className="ui-focus rounded-md bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:opacity-60"
-              >
-                {offerSending ? "Enviando..." : "Enviar oferta"}
-              </button>
             </div>
           </div>
         </div>

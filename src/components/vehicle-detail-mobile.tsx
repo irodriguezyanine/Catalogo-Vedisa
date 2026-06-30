@@ -26,7 +26,6 @@ type VehicleDetailMobileProps = {
   priceLabel: string | null;
   promoEnabled: boolean;
   originalPriceLabel: string | null;
-  referencePriceAmount: number;
   conditionLabel: string | null;
   conditionClasses: string;
   view3dUrl?: string | null;
@@ -42,7 +41,6 @@ type VehicleDetailMobileProps = {
   whatsappUrl: string;
   whatsappLabel: string;
   onBack: () => void;
-  onOffer: () => void;
   onShare: () => void;
   onWhatsappTrack?: () => void;
   backHref?: string;
@@ -89,7 +87,6 @@ export function VehicleDetailMobile({
   priceLabel,
   promoEnabled,
   originalPriceLabel,
-  referencePriceAmount,
   conditionLabel,
   conditionClasses,
   view3dUrl,
@@ -105,7 +102,6 @@ export function VehicleDetailMobile({
   whatsappUrl,
   whatsappLabel,
   onBack,
-  onOffer,
   onShare,
   onWhatsappTrack,
   backHref,
@@ -379,26 +375,19 @@ export function VehicleDetailMobile({
 
       <footer className="shrink-0 border-t border-slate-200 bg-white/95 px-3 py-2.5 pb-[calc(env(safe-area-inset-bottom)+10px)] backdrop-blur-md">
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onOffer}
-            disabled={referencePriceAmount <= 0}
-            className="ui-focus min-w-0 flex-1 rounded-full bg-cyan-600 px-4 py-3 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Enviar mi precio
-          </button>
           <a
             href={whatsappUrl}
             target="_blank"
             rel="noreferrer"
             onClick={onWhatsappTrack}
-            className="ui-focus inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#25D366] text-white shadow-sm"
+            className="ui-focus inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] px-4 py-3 text-sm font-semibold text-white shadow-sm"
             aria-label={whatsappLabel}
             title={whatsappLabel}
           >
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="currentColor" aria-hidden="true">
               <path d="M12.04 2C6.58 2 2.16 6.42 2.16 11.88c0 1.75.46 3.46 1.33 4.96L2 22l5.3-1.38a9.83 9.83 0 0 0 4.74 1.21h.01c5.45 0 9.87-4.42 9.87-9.88A9.87 9.87 0 0 0 12.04 2Zm0 18.03h-.01a8.13 8.13 0 0 1-4.14-1.14l-.3-.18-3.15.82.84-3.07-.2-.31a8.13 8.13 0 0 1-1.25-4.3c0-4.51 3.69-8.2 8.22-8.2 4.53 0 8.21 3.68 8.21 8.2 0 4.53-3.69 8.2-8.22 8.2Zm4.49-6.19c-.25-.12-1.49-.73-1.72-.81-.23-.09-.4-.12-.57.12-.17.25-.65.81-.8.97-.15.17-.29.19-.54.06-.25-.12-1.04-.38-1.99-1.22-.74-.66-1.24-1.48-1.39-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.44.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.44-.06-.12-.57-1.37-.78-1.88-.21-.49-.42-.42-.57-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.09 0 1.23.9 2.42 1.03 2.58.12.17 1.77 2.71 4.29 3.8.6.26 1.07.42 1.43.54.6.19 1.15.16 1.59.1.49-.07 1.49-.61 1.7-1.2.21-.59.21-1.1.15-1.2-.06-.1-.23-.16-.48-.28Z" />
             </svg>
+            <span className="truncate">{whatsappLabel}</span>
           </a>
           <button
             type="button"
