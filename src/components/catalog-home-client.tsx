@@ -102,6 +102,7 @@ import { CatalogSiteFooter } from "@/components/catalog-site-footer";
 import { FloatingWhatsappButton } from "@/components/floating-whatsapp-button";
 import { CollapsibleMobilePanel } from "@/components/collapsible-mobile-panel";
 import { ComoParticiparContent } from "@/components/como-participar-content";
+import { HomeCommercialInfoPanel } from "@/components/home-commercial-info-panel";
 import { HomeInventorySearch, HOME_SEARCH_SUGGESTIONS } from "@/components/home-inventory-search";
 import {
   RematesEmptyHomeState,
@@ -10296,7 +10297,7 @@ export function CatalogHomeClient({
         <CollapsibleMobilePanel
           activeCount={activeHomeFilterCount + (homeSearchTerm.trim() ? 1 : 0)}
           className="glass-soft md:overflow-visible md:rounded-2xl md:border md:border-slate-300/80 md:bg-white/95 md:shadow-md"
-          panelClassName="md:p-4"
+          panelClassName="md:p-3"
           expandLabel="Expandir búsqueda y filtros"
           collapseLabel="Ocultar búsqueda y filtros"
           summary={
@@ -10375,10 +10376,69 @@ export function CatalogHomeClient({
                   trackEvent("home_search_clear");
                 }}
                 showPatents={showPatents}
+                dense
                 ariaLabel={
                   showPatents
                     ? "Buscar vehículos por patente, marca, modelo o categoría"
                     : "Buscar vehículos por marca, modelo o categoría"
+                }
+                toolbar={
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void downloadVisibleCalendarPdf();
+                      }}
+                      disabled={isDownloadingCalendarPdf}
+                      className={`ui-focus inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition ${
+                        isDownloadingCalendarPdf
+                          ? "cursor-wait border-slate-300 bg-slate-100 text-slate-500"
+                          : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
+                      }`}
+                      title="Descargar PDF del catálogo"
+                      aria-label="Descargar PDF del catálogo"
+                    >
+                      <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                        <path d="M10 3.5v8m0 0l-3-3m3 3l3-3M4.5 13.5v2h11v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      {isDownloadingCalendarPdf ? "Generando…" : "PDF"}
+                    </button>
+                    {config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters ? (
+                      <div className="relative" ref={homeFiltersMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setShowHomeFiltersMenu((prev) => !prev)}
+                          className="ui-focus relative inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          aria-label="Abrir filtros y orden"
+                          aria-expanded={showHomeFiltersMenu}
+                          title="Filtros y orden"
+                        >
+                          <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                            <path d="M4 5h12M6 10h8M8 15h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                          </svg>
+                          Filtros
+                          {activeHomeFilterCount > 0 ? (
+                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-slate-800 px-1 text-[10px] font-bold text-white">
+                              {activeHomeFilterCount}
+                            </span>
+                          ) : null}
+                        </button>
+                        {showHomeFiltersMenu ? (
+                          <div className="absolute right-0 z-50 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+                            {renderHomeFiltersContent({ closeOnSortSelect: true, mobile: false })}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                }
+                suggestionsTrailing={
+                  <span
+                    className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
+                    aria-live="polite"
+                  >
+                    {homeVisibleItems.length} resultado{homeVisibleItems.length === 1 ? "" : "s"}
+                  </span>
                 }
               />
             </div>
@@ -10397,58 +10457,6 @@ export function CatalogHomeClient({
                   {suggestion}
                 </button>
               ))}
-            </div>
-            <div className="hidden items-center gap-2 md:flex">
-              <button
-                type="button"
-                onClick={() => {
-                  void downloadVisibleCalendarPdf();
-                }}
-                disabled={isDownloadingCalendarPdf}
-                className={`ui-focus inline-flex shrink-0 items-center justify-center rounded-lg border transition ${
-                  isDownloadingCalendarPdf
-                    ? "h-9 w-9 cursor-wait border-slate-300 bg-slate-100 text-slate-500"
-                    : "h-9 w-9 border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100 md:h-auto md:w-auto md:gap-1.5 md:px-3 md:py-2 md:text-xs md:font-semibold"
-                }`}
-                title="Descargar PDF del catálogo"
-                aria-label="Descargar PDF del catálogo"
-              >
-                <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
-                  <path d="M10 3.5v8m0 0l-3-3m3 3l3-3M4.5 13.5v2h11v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span className="hidden md:inline">
-                  {isDownloadingCalendarPdf ? "Generando PDF..." : "PDF Catálogo"}
-                </span>
-              </button>
-              {config.homeLayout.showSortSelector || config.homeLayout.showQuickFilters ? (
-                <div className="relative" ref={homeFiltersMenuRef}>
-                  <button
-                    type="button"
-                    onClick={() => setShowHomeFiltersMenu((prev) => !prev)}
-                    className="ui-focus relative flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    aria-label="Abrir filtros y orden"
-                    aria-expanded={showHomeFiltersMenu}
-                    title="Filtros y orden"
-                  >
-                    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
-                      <path d="M4 5h12M6 10h8M8 15h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                    </svg>
-                    {activeHomeFilterCount > 0 ? (
-                      <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-slate-800 px-1 text-[10px] font-bold text-white">
-                        {activeHomeFilterCount}
-                      </span>
-                    ) : null}
-                  </button>
-                  {showHomeFiltersMenu ? (
-                    <div className="absolute right-0 z-50 mt-2 hidden w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl md:block">
-                      {renderHomeFiltersContent({ closeOnSortSelect: true, mobile: false })}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              <span className="ml-auto hidden rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 md:inline-flex">
-                {homeVisibleItems.length} resultados
-              </span>
             </div>
             <span className="sr-only" aria-live="polite">
               {homeVisibleItems.length} resultados encontrados en catálogo.
@@ -10580,26 +10588,8 @@ export function CatalogHomeClient({
             </div>
           </div>
           {config.homeLayout.showCommercialPanel ? (
-          <div className="premium-panel lg:col-span-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Información comercial</p>
-            <div className="mt-4 space-y-3">
-              <div className="info-tile">
-                <p className="text-[11px] uppercase tracking-widest text-slate-500">📍 Exhibición presencial</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">Arturo Prat 6457, Noviciado, Pudahuel</p>
-              </div>
-              <div className="info-tile">
-                <p className="text-[11px] uppercase tracking-widest text-slate-500">🕒 Horario</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">Lunes a Viernes 9:00 - 13:00 / 14:00 - 17:00</p>
-              </div>
-              <div className="info-tile">
-                <p className="text-[11px] uppercase tracking-widest text-slate-500">💻 Remates 100% online</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">Plataforma pública con registro multimedia 3D, trazabilidad y soporte de contact center</p>
-              </div>
-              <div className="info-tile">
-                <p className="text-[11px] uppercase tracking-widest text-slate-500">🏢 Oficinas</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">Américo Vespucio 2880, Piso 7</p>
-              </div>
-            </div>
+          <div className="premium-panel hidden lg:col-span-4 lg:block">
+            <HomeCommercialInfoPanel />
           </div>
           ) : null}
         </section>
@@ -10820,23 +10810,60 @@ export function CatalogHomeClient({
           return null;
         })}
       </div>
-      <section className="relative z-10 mx-auto mb-6 grid max-w-7xl gap-4 px-4 sm:px-6 md:mb-14 md:gap-6 lg:grid-cols-2 lg:px-8">
-        <div className="section-shell">
-          <p className="premium-kicker">Confianza VEDISA</p>
-          <h2 className="text-xl font-bold text-slate-900 md:text-2xl">Experiencia respaldada</h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {[
-              ["+40 años de experiencia", "Trayectoria especializada en subastas de vehículos de todo tipo y condición."],
-              ["+2.500 vehículos al mes", "Capacidad operativa para alto volumen con procesos estandarizados y ágiles."],
-              ["+150 clientes satisfechos", "Relaciones de largo plazo con foco en transparencia y recupero."],
-              ["Transferencia en 72 horas", "Gestión administrativa orientada a reducir tiempos y acelerar liquidez."],
-            ].map(([title, text]) => (
-              <div key={title} className="rounded-xl border border-slate-200 bg-white p-3 md:p-4">
-                <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-                <p className="mt-1 text-sm text-slate-600">{text}</p>
-              </div>
-            ))}
+      {config.homeLayout.showCommercialPanel ? (
+        <section className="relative z-10 mx-auto mb-4 max-w-7xl px-4 sm:px-6 lg:hidden lg:px-8">
+          <div className="section-shell !p-0">
+            <CollapsibleMobilePanel
+              expandLabel="Expandir información comercial"
+              collapseLabel="Ocultar información comercial"
+              panelClassName="md:p-0"
+              summary={
+                <div className="min-w-0 py-0.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700">Información comercial</p>
+                  <p className="truncate text-sm font-bold text-slate-900">Exhibición, horarios y oficinas</p>
+                  <p className="text-[11px] text-slate-500">Pudahuel · remates online</p>
+                </div>
+              }
+            >
+              <HomeCommercialInfoPanel className="p-3" showTitle={false} />
+            </CollapsibleMobilePanel>
           </div>
+        </section>
+      ) : null}
+      <section className="relative z-10 mx-auto mb-6 grid max-w-7xl gap-4 px-4 sm:px-6 md:mb-14 md:gap-6 lg:grid-cols-2 lg:px-8">
+        <div className="section-shell !p-0 md:!p-[var(--section-shell-padding,1.5rem)]">
+          <CollapsibleMobilePanel
+            expandLabel="Expandir confianza Vedisa"
+            collapseLabel="Ocultar confianza Vedisa"
+            panelClassName="md:p-0"
+            summary={
+              <div className="min-w-0 py-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700">Confianza VEDISA</p>
+                <p className="truncate text-sm font-bold text-slate-900">Experiencia respaldada</p>
+                <p className="text-[11px] text-slate-500">+40 años · +2.500 vehículos/mes</p>
+              </div>
+            }
+          >
+            <div className="p-3 md:p-0">
+              <div className="hidden md:block">
+                <p className="premium-kicker">Confianza VEDISA</p>
+                <h2 className="text-xl font-bold text-slate-900 md:text-2xl">Experiencia respaldada</h2>
+              </div>
+              <div className="mt-0 grid gap-3 sm:grid-cols-2 md:mt-4">
+                {[
+                  ["+40 años de experiencia", "Trayectoria especializada en subastas de vehículos de todo tipo y condición."],
+                  ["+2.500 vehículos al mes", "Capacidad operativa para alto volumen con procesos estandarizados y ágiles."],
+                  ["+150 clientes satisfechos", "Relaciones de largo plazo con foco en transparencia y recupero."],
+                  ["Transferencia en 72 horas", "Gestión administrativa orientada a reducir tiempos y acelerar liquidez."],
+                ].map(([title, text]) => (
+                  <div key={title} className="rounded-xl border border-slate-200 bg-white p-3 md:p-4">
+                    <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+                    <p className="mt-1 text-sm text-slate-600">{text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CollapsibleMobilePanel>
         </div>
         <div className="section-shell !p-0 md:!p-[var(--section-shell-padding,1.5rem)]">
           <CollapsibleMobilePanel
