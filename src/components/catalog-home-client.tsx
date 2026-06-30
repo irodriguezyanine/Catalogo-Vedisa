@@ -10605,13 +10605,27 @@ export function CatalogHomeClient({
         {shouldShowHowToSection ? (
         <section
           id="como-participar"
-          className={`section-shell hidden transition-all duration-500 ease-out md:block ${
+          className={`section-shell hidden scroll-mt-24 transition-all duration-500 ease-out md:block md:!p-0 ${
             hasActiveSearchOrQuickFilters
               ? "pointer-events-none max-h-0 -translate-y-2 overflow-hidden opacity-0"
-              : "max-h-[1400px] translate-y-0 opacity-100"
+              : "max-h-[720px] translate-y-0 opacity-100"
           }`}
         >
-          <ComoParticiparContent />
+          <CollapsibleMobilePanel
+            mode="always"
+            expandLabel="Expandir cómo participar"
+            collapseLabel="Ocultar cómo participar"
+            panelClassName="px-3 pb-3 pt-0"
+            summary={
+              <div className="min-w-0 py-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700">Cómo participar</p>
+                <p className="truncate text-sm font-bold text-slate-900">¿Cómo participar en los remates?</p>
+                <p className="text-[11px] text-slate-500">4 pasos · registro, garantía, lotes y retiro</p>
+              </div>
+            }
+          >
+            <ComoParticiparContent compact showIntro={false} />
+          </CollapsibleMobilePanel>
         </section>
         ) : null}
         {hasActiveSearch ? (
